@@ -370,6 +370,291 @@
           </section>
         <% } %>
       </main>
+      <style nonce="<%= cspNonce || '' %>">
+        #comments .comment-box,
+        #comments .comment-item {
+          grid-template-columns: 34px minmax(0, 1fr);
+          gap: 0.54rem;
+          padding: 0;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+        }
+        #comments .comment-item--reply {
+          grid-template-columns: 30px minmax(0, 1fr);
+        }
+        #comments .comment-avatar {
+          width: 34px;
+          height: 34px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          background: rgba(255, 255, 255, 0.03);
+        }
+        #comments .comment-item--reply .comment-avatar {
+          width: 30px;
+          height: 30px;
+        }
+        #comments .comment-items {
+          gap: 0.78rem;
+        }
+        #comments .comment-form {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          column-gap: 0.9rem;
+          row-gap: 0.16rem;
+          align-items: end;
+        }
+        #comments .comment-form > .comment-authbar,
+        #comments .comment-form > .comment-form-notice,
+        #comments .comment-form > .comment-turnstile,
+        #comments .comment-form > .comment-textarea,
+        #comments .comment-form > .comment-mention-panel {
+          grid-column: 1 / -1;
+        }
+        #comments .comment-form > .comment-compose-meta {
+          grid-column: 1 / 2;
+          justify-content: flex-start;
+          gap: 0.62rem;
+          min-width: 0;
+        }
+        #comments .comment-form > .comment-submit {
+          grid-column: 2 / 3;
+          display: flex;
+          justify-content: flex-end;
+          align-self: end;
+          margin: -0.02rem 0 0;
+        }
+        #comments .comment-tools {
+          gap: 0.28rem;
+        }
+        #comments .comment-tools .comment-char-counter {
+          margin-left: 0.28rem;
+          font-size: 0.73rem;
+        }
+        #comments .comment-body {
+          gap: 0.18rem;
+          min-width: 0;
+        }
+        #comments .comment-bubble {
+          display: inline-grid;
+          gap: 0.16rem;
+          width: fit-content;
+          max-width: min(100%, 760px);
+          padding: 0.44rem 0.72rem 0.5rem;
+          border-radius: 0.88rem;
+          background: rgba(255, 255, 255, 0.09);
+        }
+        #comments .comment-item--reply .comment-bubble {
+          background: rgba(255, 255, 255, 0.07);
+        }
+        #comments .comment-header {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.42rem;
+          width: auto;
+          max-width: none;
+          padding: 0;
+          border-radius: 0;
+          background: transparent;
+        }
+        #comments .comment-author {
+          font-size: 0.93rem;
+          line-height: 1.2;
+        }
+        #comments .comment-badge {
+          padding: 0.06rem 0.34rem;
+          border-radius: 0.32rem;
+          font-size: 0.62rem;
+          opacity: 0.88;
+        }
+        #comments .comment-chapter-tag {
+          display: none;
+        }
+        #comments .comment-text {
+          display: block;
+          width: auto;
+          max-width: none;
+          margin: 0;
+          padding: 0;
+          border-radius: 0;
+          background: transparent;
+          line-height: 1.42;
+          font-size: 0.92rem;
+        }
+        #comments .comment-sticker {
+          width: 54px;
+          height: 54px;
+          margin: 0.06rem 0.14rem;
+        }
+        #comments .comment-time {
+          font-size: 0.72rem;
+          color: rgba(248, 248, 242, 0.56);
+          display: inline-flex;
+          align-items: center;
+          line-height: 1.15;
+          white-space: nowrap;
+        }
+        #comments .comment-meta {
+          margin-top: 0.08rem;
+          margin-left: 0.18rem;
+          display: flex;
+          align-items: center;
+          flex-wrap: nowrap;
+          gap: 0.74rem;
+          max-width: 100%;
+        }
+        #comments .comment-actions {
+          margin-top: 0;
+          gap: 0.74rem;
+          display: inline-flex;
+          flex-wrap: nowrap;
+          color: rgba(248, 248, 242, 0.52);
+          font-size: 0.72rem;
+          line-height: 1.15;
+        }
+        #comments .comment-actions form,
+        #comments .comment-actions > button {
+          display: inline-flex;
+          align-items: center;
+          margin: 0;
+        }
+        #comments .comment-action {
+          padding: 0;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+          opacity: 0.72;
+          gap: 0.14rem;
+          font-family: var(--font-body);
+          line-height: 1.15;
+          font-weight: 600;
+        }
+        #comments .comment-action i,
+        #comments .comment-action svg {
+          display: none;
+        }
+        #comments .comment-action__label {
+          display: inline-block;
+          opacity: 0.88;
+        }
+        #comments .comment-action__count {
+          opacity: 0.74;
+        }
+        #comments .comment-action:hover,
+        #comments .comment-action:focus-visible {
+          background: transparent;
+          color: rgba(248, 248, 242, 0.76);
+          opacity: 0.9;
+        }
+        #comments .comment-action.is-active {
+          color: rgba(248, 248, 242, 0.8);
+          opacity: 0.86;
+        }
+        #comments .comment-action.is-muted,
+        #comments .comment-action[disabled] {
+          opacity: 0.42;
+        }
+        #comments .comment-action--delete {
+          margin-left: 0.04rem;
+          color: rgba(255, 124, 124, 0.74);
+        }
+        #comments .comment-action--delete:hover,
+        #comments .comment-action--delete:focus-visible {
+          color: rgba(255, 146, 146, 0.95);
+        }
+        #comments .comment-replies {
+          margin-top: 0.46rem;
+          gap: 0.56rem;
+          padding-left: 0.7rem;
+          border-left: 1px solid rgba(255, 255, 255, 0.16);
+        }
+        #comments .comment-textarea {
+          border: 1px solid rgba(255, 255, 255, 0.13);
+          background: rgba(255, 255, 255, 0.02);
+          transition: border-color 0.14s ease;
+        }
+        #comments .comment-textarea:hover {
+          border-color: rgba(255, 255, 255, 0.22);
+          background: rgba(255, 255, 255, 0.02);
+        }
+        #comments .comment-textarea:focus,
+        #comments .comment-textarea:focus-visible {
+          box-shadow: none;
+          outline: none;
+          border-color: rgba(255, 255, 255, 0.28);
+          background: rgba(255, 255, 255, 0.022);
+        }
+        @media (max-width: 760px) {
+          #comments .comment-box,
+          #comments .comment-item {
+            grid-template-columns: 30px minmax(0, 1fr);
+            gap: 0.46rem;
+          }
+          #comments .comment-avatar {
+            width: 30px;
+            height: 30px;
+          }
+          #comments .comment-item--reply {
+            grid-template-columns: 25px minmax(0, 1fr);
+          }
+          #comments .comment-item--reply .comment-avatar {
+            width: 25px;
+            height: 25px;
+          }
+          #comments .comment-bubble {
+            max-width: 100%;
+            padding: 0.4rem 0.64rem 0.46rem;
+            border-radius: 0.82rem;
+          }
+          #comments .comment-header {
+            gap: 0.34rem;
+          }
+          #comments .comment-author {
+            font-size: 0.89rem;
+          }
+          #comments .comment-text {
+            font-size: 0.87rem;
+          }
+          #comments .comment-sticker {
+            width: 46px;
+            height: 46px;
+          }
+          #comments .comment-actions {
+            gap: 0.6rem;
+            font-size: 0.69rem;
+            flex-wrap: nowrap;
+          }
+          #comments .comment-meta {
+            margin-left: 0.12rem;
+            gap: 0.54rem;
+            flex-wrap: nowrap;
+          }
+          #comments .comment-time[data-time-mobile] {
+            font-size: 0;
+            line-height: 1;
+          }
+          #comments .comment-time[data-time-mobile]::after {
+            content: attr(data-time-mobile);
+            font-size: 0.68rem;
+            line-height: 1.1;
+          }
+          #comments .comment-form {
+            column-gap: 0.62rem;
+            row-gap: 0.14rem;
+          }
+          #comments .comment-form > .comment-submit {
+            justify-content: flex-end;
+            margin-top: -0.02rem;
+          }
+          #comments .comment-form > .comment-compose-meta {
+            gap: 0.44rem;
+          }
+          #comments .comment-replies {
+            padding-left: 0.56rem;
+            gap: 0.46rem;
+          }
+        }
+      </style>
       <script nonce="<%= cspNonce || '' %>">
         (() => {
           const commentsRoot = document.querySelector("#comments");
@@ -405,6 +690,7 @@
             const script = document.createElement("script");
             script.src = scriptSrc;
             script.defer = true;
+            script.nonce = "<%= cspNonce || '' %>";
             document.head.appendChild(script);
           };
 

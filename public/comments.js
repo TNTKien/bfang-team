@@ -52,6 +52,50 @@ const toSafeCount = (value) => {
   return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
 };
 
+const toCompactTimeAgo = (value) => {
+  const text = toSafeText(value) || "Vừa xong";
+  return text.replace(/\s+trước$/i, "").trim();
+};
+
+const getFirstVisibleBadge = (badgesInput) => {
+  const badges = Array.isArray(badgesInput) ? badgesInput : [];
+  for (let i = 0; i < badges.length; i += 1) {
+    const badge = badges[i];
+    if (!badge) continue;
+    const label = String(badge.label || "").trim();
+    if (!label) continue;
+    const code = String(badge.code || "").trim().toLowerCase();
+    const normalizedLabel = label.toLowerCase();
+    if (
+      code === "member" ||
+      normalizedLabel.includes("member") ||
+      normalizedLabel.includes("thanh vien") ||
+      normalizedLabel.includes("thành viên")
+    ) {
+      continue;
+    }
+    return badge;
+  }
+  return null;
+};
+
+const syncCommentActionCount = (button, attributeName, value) => {
+  if (!button || !attributeName) return;
+  const count = toSafeCount(value);
+  let countEl = button.querySelector(`[${attributeName}]`);
+  if (count <= 0) {
+    if (countEl) countEl.remove();
+    return;
+  }
+  if (!countEl) {
+    countEl = document.createElement("span");
+    countEl.className = "comment-action__count";
+    countEl.setAttribute(attributeName, "");
+    button.appendChild(countEl);
+  }
+  countEl.textContent = String(count);
+};
+
 const COMMENT_TEXTAREA_LIMIT = 500;
 const COMMENT_MENTION_MAX_QUERY = 32;
 const COMMENT_MENTION_DEBOUNCE_MS = 140;
@@ -2609,14 +2653,9 @@ const buildLikeForm = (comment) => {
   label.className = "comment-action__label";
   label.textContent = "Thích";
 
-  const count = document.createElement("span");
-  count.className = "comment-action__count";
-  count.setAttribute("data-comment-like-count", "");
-  count.textContent = String(likeCount);
-
   button.innerHTML = icons.like;
   button.appendChild(label);
-  button.appendChild(count);
+  syncCommentActionCount(button, "data-comment-like-count", likeCount);
   form.appendChild(button);
   return form;
 };
@@ -2641,14 +2680,9 @@ const buildReportForm = (comment) => {
   label.className = "comment-action__label";
   label.textContent = "Báo cáo";
 
-  const count = document.createElement("span");
-  count.className = "comment-action__count";
-  count.setAttribute("data-comment-report-count", "");
-  count.textContent = String(reportCount);
-
   button.innerHTML = icons.report;
   button.appendChild(label);
-  button.appendChild(count);
+  syncCommentActionCount(button, "data-comment-report-count", reportCount);
   form.appendChild(button);
   return form;
 };
@@ -2677,6 +2711,7 @@ const buildReplyForm = (action, parentId) => {
   wrapper.className = "comment-reply";
 
   const form = document.createElement("form");
+  form.className = "comment-form comment-form--reply";
   form.method = "post";
   form.action = action;
 
@@ -2736,6 +2771,8 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
   const avatar = buildAvatar(comment.avatarUrl);
   const body = document.createElement("div");
   body.className = "comment-body";
+  const bubble = document.createElement("div");
+  bubble.className = "comment-bubble";
 
   const header = document.createElement("div");
   header.className = "comment-header";
@@ -2764,12 +2801,7 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
     author.style.setProperty("--user-color", userColor);
   }
 
-  const badgesRaw = comment && comment.badges ? comment.badges : [];
-  const badges = Array.isArray(badgesRaw) ? badgesRaw : [];
-  const topBadgeItem = badges.find((badgeItem) => {
-    const label = badgeItem && badgeItem.label ? String(badgeItem.label).trim() : "";
-    return Boolean(label);
-  });
+  const topBadgeItem = getFirstVisibleBadge(comment && comment.badges ? comment.badges : []);
   if (topBadgeItem) {
     const label = String(topBadgeItem.label).trim();
     const color = topBadgeItem.color ? String(topBadgeItem.color).trim() : "";
@@ -2782,10 +2814,6 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
     badge.textContent = label;
     author.appendChild(badge);
   }
-
-  const time = document.createElement("span");
-  time.className = "comment-time";
-  time.textContent = comment.timeAgo || "Vừa xong";
 
   header.appendChild(author);
   if (showChapterLabel) {
@@ -2800,7 +2828,11 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
       header.appendChild(chapterTag);
     }
   }
-  header.appendChild(time);
+  const time = document.createElement("span");
+  time.className = "comment-time";
+  const timeText = toSafeText(comment && comment.timeAgo ? comment.timeAgo : "") || "Vừa xong";
+  time.textContent = timeText;
+  time.dataset.timeMobile = toCompactTimeAgo(timeText);
 
   const text = document.createElement("p");
   text.className = "comment-text";
@@ -2823,9 +2855,15 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
 
   actions.appendChild(buildDeleteButton());
 
-  body.appendChild(header);
-  body.appendChild(text);
-  body.appendChild(actions);
+  const meta = document.createElement("div");
+  meta.className = "comment-meta";
+  meta.appendChild(time);
+  meta.appendChild(actions);
+
+  bubble.appendChild(header);
+  bubble.appendChild(text);
+  body.appendChild(bubble);
+  body.appendChild(meta);
 
   if (!isReply) {
     body.appendChild(buildReplyForm(actionBase, comment.id));
@@ -3446,10 +3484,7 @@ const setLikeButtonState = (button, liked, likeCount) => {
   const active = Boolean(liked);
   button.classList.toggle("is-active", active);
   button.setAttribute("data-liked", active ? "1" : "0");
-  const countEl = button.querySelector("[data-comment-like-count]");
-  if (countEl) {
-    countEl.textContent = String(toSafeCount(likeCount));
-  }
+  syncCommentActionCount(button, "data-comment-like-count", likeCount);
 };
 
 const setReportButtonState = (button, reported, reportCount) => {
@@ -3457,10 +3492,7 @@ const setReportButtonState = (button, reported, reportCount) => {
   const flagged = Boolean(reported);
   button.classList.toggle("is-muted", flagged);
   button.setAttribute("data-reported", flagged ? "1" : "0");
-  const countEl = button.querySelector("[data-comment-report-count]");
-  if (countEl) {
-    countEl.textContent = String(toSafeCount(reportCount));
-  }
+  syncCommentActionCount(button, "data-comment-report-count", reportCount);
   button.disabled = flagged;
 };
 

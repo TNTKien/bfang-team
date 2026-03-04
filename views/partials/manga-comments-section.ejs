@@ -14,6 +14,25 @@
     if (safeTarget <= 1) return `/manga/${manga.slug}#comments`;
     return `/manga/${manga.slug}?commentPage=${safeTarget}#comments`;
   }; %>
+  <% const isMemberBadge = (badge) => {
+    if (!badge) return false;
+    const label = String(badge.label || "").trim();
+    if (!label) return false;
+    const code = String(badge.code || "").trim().toLowerCase();
+    const normalizedLabel = label.toLowerCase();
+    return code === "member" ||
+      normalizedLabel.includes("member") ||
+      normalizedLabel.includes("thanh vien") ||
+      normalizedLabel.includes("thành viên");
+  }; %>
+  <% const pickTopBadge = (badgesInput) => {
+    const badges = Array.isArray(badgesInput) ? badgesInput : [];
+    return badges.find((badge) => {
+      if (!badge) return false;
+      const label = String(badge.label || "").trim();
+      return Boolean(label) && !isMemberBadge(badge);
+    });
+  }; %>
   <div class="section-header">
     <h2>Bình luận (<%= commentCount %>)</h2>
     <span class="section-line"></span>
@@ -85,88 +104,100 @@
             <% } %>
           </div>
           <div class="comment-body">
-            <div class="comment-header">
-              <span
-                class="comment-author <%= comment.authorUserId ? "comment-author--interactive" : "" %>"
-                <% if (comment.userColor) { %>style="--user-color: <%= comment.userColor %>"<% } %>
-                <% if (comment.authorUserId) { %>
-                  role="link"
-                  tabindex="0"
-                  data-comment-author-trigger
-                  data-comment-user-id="<%= comment.authorUserId %>"
-                  <% if (comment.authorUsername) { %>data-comment-username="<%= comment.authorUsername %>"<% } %>
-                <% } %>
-              >
-                <span class="comment-author__name"><%= comment.author %></span>
-                <% const commentTopBadge = (comment.badges || []).find((badge) => badge && String(badge.label || "").trim()); %>
-                <% if (commentTopBadge) { %>
-                  <span
-                    class="comment-badge"
-                    <% if (commentTopBadge.color) { %>style="--badge-color: <%= commentTopBadge.color %>; --badge-bg: <%= `${commentTopBadge.color}22` %>"<% } %>
+            <% const commentTopBadge = pickTopBadge(comment.badges || []); %>
+            <% const commentLikeCount = Number(comment.likeCount) > 0 ? Math.floor(Number(comment.likeCount)) : 0; %>
+            <% const commentReportCount = Number(comment.reportCount) > 0 ? Math.floor(Number(comment.reportCount)) : 0; %>
+            <div class="comment-bubble">
+              <div class="comment-header">
+                <span
+                  class="comment-author <%= comment.authorUserId ? "comment-author--interactive" : "" %>"
+                  <% if (comment.userColor) { %>style="--user-color: <%= comment.userColor %>"<% } %>
+                  <% if (comment.authorUserId) { %>
+                    role="link"
+                    tabindex="0"
+                    data-comment-author-trigger
+                    data-comment-user-id="<%= comment.authorUserId %>"
+                    <% if (comment.authorUsername) { %>data-comment-username="<%= comment.authorUsername %>"<% } %>
+                  <% } %>
+                >
+                  <span class="comment-author__name"><%= comment.author %></span>
+                  <% if (commentTopBadge) { %>
+                    <span
+                      class="comment-badge"
+                      <% if (commentTopBadge.color) { %>style="--badge-color: <%= commentTopBadge.color %>; --badge-bg: <%= `${commentTopBadge.color}22` %>"<% } %>
+                    >
+                      <%= commentTopBadge.label %>
+                    </span>
+                  <% } %>
+                </span>
+                <% if (comment.chapterNumberText) { %>
+                  <a
+                    class="comment-chapter-tag"
+                    href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(comment.chapterNumberText) %>"
                   >
-                    <%= commentTopBadge.label %>
-                  </span>
+                    Chương <%= comment.chapterNumberText %>
+                  </a>
                 <% } %>
-              </span>
-              <% if (comment.chapterNumberText) { %>
-                <a
-                  class="comment-chapter-tag"
-                  href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(comment.chapterNumberText) %>"
-                >
-                  Chương <%= comment.chapterNumberText %>
-                </a>
-              <% } %>
-              <span class="comment-time"><%= formatTimeAgo(comment.createdAt) %></span>
+              </div>
+              <p
+                class="comment-text"
+                data-comment-raw="<%= comment.content %>"
+                data-comment-mentions="<%= JSON.stringify(comment.mentions || []) %>"
+              ><%= comment.content %></p>
             </div>
-            <p
-              class="comment-text"
-              data-comment-raw="<%= comment.content %>"
-              data-comment-mentions="<%= JSON.stringify(comment.mentions || []) %>"
-            ><%= comment.content %></p>
-            <div class="comment-actions">
-              <form method="post" action="/comments/<%= comment.id %>/like">
+            <% const commentTimeText = formatTimeAgo(comment.createdAt); %>
+            <% const commentTimeCompact = commentTimeText.replace(/\s+trước$/i, "").trim(); %>
+            <div class="comment-meta">
+              <span class="comment-time" data-time-mobile="<%= commentTimeCompact %>"><%= commentTimeText %></span>
+              <div class="comment-actions">
+                <form method="post" action="/comments/<%= comment.id %>/like">
+                  <button
+                    class="comment-action comment-action--like <%= comment.liked ? "is-active" : "" %>"
+                    type="submit"
+                    data-comment-like
+                    data-liked="<%= comment.liked ? "1" : "0" %>"
+                  >
+                    <i class="fa-solid fa-thumbs-up" aria-hidden="true"></i>
+                    <span class="comment-action__label">Thích</span>
+                    <% if (commentLikeCount > 0) { %>
+                      <span class="comment-action__count" data-comment-like-count><%= commentLikeCount %></span>
+                    <% } %>
+                  </button>
+                </form>
+                <% if (!comment.parentId) { %>
+                <button class="comment-action comment-action--reply" type="button" data-comment-reply>
+                    <i class="fa-solid fa-reply" aria-hidden="true"></i>
+                    Trả lời
+                  </button>
+                <% } %>
+                <form method="post" action="/comments/<%= comment.id %>/report">
+                  <button
+                    class="comment-action comment-action--report <%= comment.reported ? "is-muted" : "" %>"
+                    type="submit"
+                    data-comment-report
+                    data-reported="<%= comment.reported ? "1" : "0" %>"
+                    <%= comment.reported ? "disabled" : "" %>
+                  >
+                    <i class="fa-regular fa-flag" aria-hidden="true"></i>
+                    <span class="comment-action__label">Báo cáo</span>
+                    <% if (commentReportCount > 0) { %>
+                      <span class="comment-action__count" data-comment-report-count><%= commentReportCount %></span>
+                    <% } %>
+                  </button>
+                </form>
                 <button
-                  class="comment-action comment-action--like <%= comment.liked ? "is-active" : "" %>"
-                  type="submit"
-                  data-comment-like
-                  data-liked="<%= comment.liked ? "1" : "0" %>"
+                  class="comment-action comment-action--delete"
+                  type="button"
+                  data-comment-delete
+                  hidden
                 >
-                  <i class="fa-solid fa-thumbs-up" aria-hidden="true"></i>
-                  <span class="comment-action__label">Thích</span>
-                  <span class="comment-action__count" data-comment-like-count><%= comment.likeCount || 0 %></span>
+                  <i class="fa-regular fa-trash-can" aria-hidden="true"></i>
+                  Xóa
                 </button>
-              </form>
-              <% if (!comment.parentId) { %>
-              <button class="comment-action comment-action--reply" type="button" data-comment-reply>
-                  <i class="fa-solid fa-reply" aria-hidden="true"></i>
-                  Trả lời
-                </button>
-              <% } %>
-              <form method="post" action="/comments/<%= comment.id %>/report">
-                <button
-                  class="comment-action comment-action--report <%= comment.reported ? "is-muted" : "" %>"
-                  type="submit"
-                  data-comment-report
-                  data-reported="<%= comment.reported ? "1" : "0" %>"
-                  <%= comment.reported ? "disabled" : "" %>
-                >
-                  <i class="fa-regular fa-flag" aria-hidden="true"></i>
-                  <span class="comment-action__label">Báo cáo</span>
-                  <span class="comment-action__count" data-comment-report-count><%= comment.reportCount || 0 %></span>
-                </button>
-              </form>
-              <button
-                class="comment-action comment-action--delete"
-                type="button"
-                data-comment-delete
-                hidden
-              >
-                <i class="fa-regular fa-trash-can" aria-hidden="true"></i>
-                Xóa
-              </button>
+              </div>
             </div>
             <div class="comment-reply">
-              <form method="post" action="/manga/<%= manga.slug %>/comments">
+              <form class="comment-form comment-form--reply" method="post" action="/manga/<%= manga.slug %>/comments">
                 <input type="hidden" name="parent_id" value="<%= comment.id %>" />
                 <textarea
                   class="comment-textarea"
@@ -208,79 +239,91 @@
                       <% } %>
                     </div>
                     <div class="comment-body">
-                      <div class="comment-header">
-                        <span
-                          class="comment-author <%= reply.authorUserId ? "comment-author--interactive" : "" %>"
-                          <% if (reply.userColor) { %>style="--user-color: <%= reply.userColor %>"<% } %>
-                          <% if (reply.authorUserId) { %>
-                            role="link"
-                            tabindex="0"
-                            data-comment-author-trigger
-                            data-comment-user-id="<%= reply.authorUserId %>"
-                            <% if (reply.authorUsername) { %>data-comment-username="<%= reply.authorUsername %>"<% } %>
-                          <% } %>
-                        >
-                          <span class="comment-author__name"><%= reply.author %></span>
-                          <% const replyTopBadge = (reply.badges || []).find((badge) => badge && String(badge.label || "").trim()); %>
-                          <% if (replyTopBadge) { %>
-                            <span
-                              class="comment-badge"
-                              <% if (replyTopBadge.color) { %>style="--badge-color: <%= replyTopBadge.color %>; --badge-bg: <%= `${replyTopBadge.color}22` %>"<% } %>
+                      <% const replyTopBadge = pickTopBadge(reply.badges || []); %>
+                      <% const replyLikeCount = Number(reply.likeCount) > 0 ? Math.floor(Number(reply.likeCount)) : 0; %>
+                      <% const replyReportCount = Number(reply.reportCount) > 0 ? Math.floor(Number(reply.reportCount)) : 0; %>
+                      <div class="comment-bubble">
+                        <div class="comment-header">
+                          <span
+                            class="comment-author <%= reply.authorUserId ? "comment-author--interactive" : "" %>"
+                            <% if (reply.userColor) { %>style="--user-color: <%= reply.userColor %>"<% } %>
+                            <% if (reply.authorUserId) { %>
+                              role="link"
+                              tabindex="0"
+                              data-comment-author-trigger
+                              data-comment-user-id="<%= reply.authorUserId %>"
+                              <% if (reply.authorUsername) { %>data-comment-username="<%= reply.authorUsername %>"<% } %>
+                            <% } %>
+                          >
+                            <span class="comment-author__name"><%= reply.author %></span>
+                            <% if (replyTopBadge) { %>
+                              <span
+                                class="comment-badge"
+                                <% if (replyTopBadge.color) { %>style="--badge-color: <%= replyTopBadge.color %>; --badge-bg: <%= `${replyTopBadge.color}22` %>"<% } %>
+                              >
+                                <%= replyTopBadge.label %>
+                              </span>
+                            <% } %>
+                          </span>
+                          <% if (reply.chapterNumberText) { %>
+                            <a
+                              class="comment-chapter-tag"
+                              href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(reply.chapterNumberText) %>"
                             >
-                              <%= replyTopBadge.label %>
-                            </span>
+                              Chương <%= reply.chapterNumberText %>
+                            </a>
                           <% } %>
-                        </span>
-                        <% if (reply.chapterNumberText) { %>
-                          <a
-                            class="comment-chapter-tag"
-                            href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(reply.chapterNumberText) %>"
-                          >
-                            Chương <%= reply.chapterNumberText %>
-                          </a>
-                        <% } %>
-                        <span class="comment-time"><%= formatTimeAgo(reply.createdAt) %></span>
+                        </div>
+                        <p
+                          class="comment-text"
+                          data-comment-raw="<%= reply.content %>"
+                          data-comment-mentions="<%= JSON.stringify(reply.mentions || []) %>"
+                        ><%= reply.content %></p>
                       </div>
-                      <p
-                        class="comment-text"
-                        data-comment-raw="<%= reply.content %>"
-                        data-comment-mentions="<%= JSON.stringify(reply.mentions || []) %>"
-                      ><%= reply.content %></p>
-                      <div class="comment-actions">
-                        <form method="post" action="/comments/<%= reply.id %>/like">
+                      <% const replyTimeText = formatTimeAgo(reply.createdAt); %>
+                      <% const replyTimeCompact = replyTimeText.replace(/\s+trước$/i, "").trim(); %>
+                      <div class="comment-meta">
+                        <span class="comment-time" data-time-mobile="<%= replyTimeCompact %>"><%= replyTimeText %></span>
+                        <div class="comment-actions">
+                          <form method="post" action="/comments/<%= reply.id %>/like">
+                            <button
+                              class="comment-action comment-action--like <%= reply.liked ? "is-active" : "" %>"
+                              type="submit"
+                              data-comment-like
+                              data-liked="<%= reply.liked ? "1" : "0" %>"
+                            >
+                              <i class="fa-solid fa-thumbs-up" aria-hidden="true"></i>
+                              <span class="comment-action__label">Thích</span>
+                              <% if (replyLikeCount > 0) { %>
+                                <span class="comment-action__count" data-comment-like-count><%= replyLikeCount %></span>
+                              <% } %>
+                            </button>
+                          </form>
+                          <form method="post" action="/comments/<%= reply.id %>/report">
+                            <button
+                              class="comment-action comment-action--report <%= reply.reported ? "is-muted" : "" %>"
+                              type="submit"
+                              data-comment-report
+                              data-reported="<%= reply.reported ? "1" : "0" %>"
+                              <%= reply.reported ? "disabled" : "" %>
+                            >
+                              <i class="fa-regular fa-flag" aria-hidden="true"></i>
+                              <span class="comment-action__label">Báo cáo</span>
+                              <% if (replyReportCount > 0) { %>
+                                <span class="comment-action__count" data-comment-report-count><%= replyReportCount %></span>
+                              <% } %>
+                            </button>
+                          </form>
                           <button
-                            class="comment-action comment-action--like <%= reply.liked ? "is-active" : "" %>"
-                            type="submit"
-                            data-comment-like
-                            data-liked="<%= reply.liked ? "1" : "0" %>"
+                            class="comment-action comment-action--delete"
+                            type="button"
+                            data-comment-delete
+                            hidden
                           >
-                            <i class="fa-solid fa-thumbs-up" aria-hidden="true"></i>
-                            <span class="comment-action__label">Thích</span>
-                            <span class="comment-action__count" data-comment-like-count><%= reply.likeCount || 0 %></span>
+                            <i class="fa-regular fa-trash-can" aria-hidden="true"></i>
+                            Xóa
                           </button>
-                        </form>
-                        <form method="post" action="/comments/<%= reply.id %>/report">
-                          <button
-                            class="comment-action comment-action--report <%= reply.reported ? "is-muted" : "" %>"
-                            type="submit"
-                            data-comment-report
-                            data-reported="<%= reply.reported ? "1" : "0" %>"
-                            <%= reply.reported ? "disabled" : "" %>
-                          >
-                            <i class="fa-regular fa-flag" aria-hidden="true"></i>
-                            <span class="comment-action__label">Báo cáo</span>
-                            <span class="comment-action__count" data-comment-report-count><%= reply.reportCount || 0 %></span>
-                          </button>
-                        </form>
-                        <button
-                          class="comment-action comment-action--delete"
-                          type="button"
-                          data-comment-delete
-                          hidden
-                        >
-                          <i class="fa-regular fa-trash-can" aria-hidden="true"></i>
-                          Xóa
-                        </button>
+                        </div>
                       </div>
                     </div>
                   </li>
