@@ -61,6 +61,29 @@
   const mangaHeadStyles = {
     fontAwesome: false
   };
+
+  const mangaCatalogSpeculationTargets = [];
+  const mangaCatalogSpeculationSeen = new Set();
+  (mangaLibrary || []).forEach((item, index) => {
+    if (index >= 18) return;
+    const safeSlug = item && item.slug ? String(item.slug).trim() : "";
+    if (!safeSlug) return;
+    const href = `/manga/${encodeURIComponent(safeSlug)}`;
+    if (mangaCatalogSpeculationSeen.has(href)) return;
+    mangaCatalogSpeculationSeen.add(href);
+    mangaCatalogSpeculationTargets.push(href);
+  });
+  const mangaCatalogSpeculationRules = mangaCatalogSpeculationTargets.length
+    ? {
+      prefetch: [
+        {
+          source: "list",
+          urls: mangaCatalogSpeculationTargets,
+          eagerness: "moderate"
+        }
+      ]
+    }
+    : null;
 %>
 <!DOCTYPE html>
 <html lang="vi">
@@ -69,6 +92,9 @@
     headStyles: mangaHeadStyles
   }) %>
   <body>
+    <% if (mangaCatalogSpeculationRules) { %>
+      <script type="speculationrules" nonce="<%= cspNonce || "" %>"><%- JSON.stringify(mangaCatalogSpeculationRules) %></script>
+    <% } %>
     <div class="site">
       <%- include("partials/header") %>
       <main>

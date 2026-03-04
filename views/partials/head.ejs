@@ -49,6 +49,7 @@
     confirm: true,
     auth: true,
     serviceWorker: !isAdminRequest,
+    fastNav: !isAdminRequest && !isChapterPath,
     flowbite: isAdminRequest,
     readingHistory: false,
     notifications: false,
@@ -274,6 +275,9 @@
   <% } %>
   <% if (isHeadScriptEnabled("serviceWorker")) { %>
     <script src="<%= assetUrl("/sw-register.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("fastNav")) { %>
+    <script src="<%= assetUrl("/fast-nav.js") %>" defer></script>
   <% } %>
   <% if (isHeadScriptEnabled("readingHistory")) { %>
     <script src="<%= assetUrl("/reading-history.js") %>" defer></script>

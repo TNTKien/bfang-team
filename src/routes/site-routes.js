@@ -121,6 +121,7 @@ const registerSiteRoutes = (app, deps) => {
   const HOMEPAGE_CACHE_TTL_MS = 45 * 1000;
   const HOMEPAGE_LATEST_LIMIT = 8;
   const HOMEPAGE_RANDOM_SLICE_LIMIT = 16;
+  const COMMENT_PANEL_PER_PAGE = 20;
   const NOTIFICATION_TYPE_TEAM_JOIN_REQUEST = "team_join_request";
   const NOTIFICATION_TYPE_TEAM_JOIN_APPROVED = "team_join_approved";
   const NOTIFICATION_TYPE_TEAM_JOIN_REJECTED = "team_join_rejected";
@@ -207,6 +208,48 @@ const registerSiteRoutes = (app, deps) => {
 
   const normalizeForumTextLength = (value) =>
     decodeBasicHtmlEntities(stripHtmlTags(value)).replace(/\s+/g, " ").trim().length;
+
+  const buildDefaultCommentPagination = ({
+    page = 1,
+    perPage = COMMENT_PANEL_PER_PAGE,
+    totalCount = 0
+  } = {}) => {
+    const safePerPageValue = Number(perPage);
+    const safePerPage = Number.isFinite(safePerPageValue)
+      ? Math.max(1, Math.min(50, Math.floor(safePerPageValue)))
+      : COMMENT_PANEL_PER_PAGE;
+    const safeTotalCount = Math.max(Number(totalCount) || 0, 0);
+    const totalPages = Math.max(1, Math.ceil(safeTotalCount / safePerPage));
+    const requestedPage = Number.isFinite(Number(page)) ? Math.max(1, Math.floor(Number(page))) : 1;
+    const currentPage = Math.min(requestedPage, totalPages);
+
+    return {
+      page: currentPage,
+      perPage: safePerPage,
+      totalPages,
+      totalTopLevel: safeTotalCount,
+      hasPrev: currentPage > 1,
+      hasNext: currentPage < totalPages,
+      prevPage: Math.max(1, currentPage - 1),
+      nextPage: Math.min(totalPages, currentPage + 1)
+    };
+  };
+
+  const resolveVisibleCommentCount = async ({ mangaId, chapterNumber }) => {
+    const commentScope = resolveCommentScope({ mangaId, chapterNumber });
+    if (!commentScope) return 0;
+
+    const countRow = await dbGet(
+      `
+        SELECT COUNT(*) as count
+        FROM comments
+        WHERE ${commentScope.whereVisible}
+          AND COALESCE(client_request_id, '') NOT ILIKE ?
+      `,
+      [...commentScope.params, "forum-%"]
+    );
+    return countRow ? Number(countRow.count) || 0 : 0;
+  };
 
   const FORUM_SECTION_SLUGS = new Set([
     "thao-luan-chung",
@@ -5801,6 +5844,8 @@ app.get(
 app.get(
   "/manga",
   asyncHandler(async (req, res) => {
+    res.set("Cache-Control", FAST_NAV_PAGE_CACHE_CONTROL);
+
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
     const rawInclude = req.query.include;
     const rawExclude = req.query.exclude;
@@ -6066,17 +6111,40 @@ app.get(
     const commentPageRaw = Number(req.query.commentPage);
     const commentPage =
       Number.isFinite(commentPageRaw) && commentPageRaw > 0 ? Math.floor(commentPageRaw) : 1;
+    const commentsFlag = (req.query.comments || "").toString().trim().toLowerCase();
+    const commentsRequestedExplicitly =
+      commentsFlag === "1" || commentsFlag === "true" || commentsFlag === "yes";
+    const hasCommentPageQuery = hasOwnObjectKey(req.query || {}, "commentPage");
+    const commentsHydrated = commentsRequestedExplicitly || hasCommentPageQuery;
 
-    const commentData = await getPaginatedCommentTree({
-      mangaId: mangaRow.id,
-      chapterNumber: null,
-      page: commentPage,
-      perPage: 20,
-      session: req.session
-    });
+    let commentData = null;
+    if (commentsHydrated) {
+      commentData = await getPaginatedCommentTree({
+        mangaId: mangaRow.id,
+        chapterNumber: null,
+        page: commentPage,
+        perPage: COMMENT_PANEL_PER_PAGE,
+        session: req.session
+      });
+    } else {
+      const initialCommentCount = await resolveVisibleCommentCount({
+        mangaId: mangaRow.id,
+        chapterNumber: null
+      });
+      commentData = {
+        comments: [],
+        count: initialCommentCount,
+        pagination: buildDefaultCommentPagination({
+          page: 1,
+          perPage: COMMENT_PANEL_PER_PAGE,
+          totalCount: initialCommentCount
+        })
+      };
+    }
 
     const mappedManga = mapMangaRow(mangaRow);
     const groupTeamLinks = await listGroupTeamLinks(mangaRow.group_name || "");
+    const commentsLoadUrl = `/manga/${encodeURIComponent(mangaRow.slug)}?comments=1`;
     const mangaDescription = normalizeSeoText(
       mangaRow.description || `Đọc manga ${mangaRow.title} tại BFANG Team.`,
       180
@@ -6129,6 +6197,8 @@ app.get(
       comments: commentData.comments,
       commentCount: commentData.count,
       commentPagination: commentData.pagination,
+      commentsHydrated,
+      commentsLoadUrl,
       seo: buildSeoPayload(req, {
         title: `${mangaRow.title} | Đọc manga`,
         description: mangaDescription,

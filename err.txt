@@ -1,0 +1,48 @@
+TokenError: Bad Request
+    at OAuth2Strategy.parseErrorResponse (C:\Users\lsc\Documents\project\web1\node_modules\passport-oauth2\lib\strategy.js:373:12)
+    at OAuth2Strategy._createOAuthError (C:\Users\lsc\Documents\project\web1\node_modules\passport-oauth2\lib\strategy.js:420:16)
+    at C:\Users\lsc\Documents\project\web1\node_modules\passport-oauth2\lib\strategy.js:177:45
+    at C:\Users\lsc\Documents\project\web1\node_modules\oauth\lib\oauth2.js:196:18
+    at passBackControl (C:\Users\lsc\Documents\project\web1\node_modules\oauth\lib\oauth2.js:132:9)
+    at IncomingMessage.<anonymous> (C:\Users\lsc\Documents\project\web1\node_modules\oauth\lib\oauth2.js:157:7)
+    at IncomingMessage.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'invalid_grant',
+  uri: undefined,
+  status: 500
+}
+Error: Connection terminated unexpectedly
+    at C:\Users\lsc\Documents\project\web1\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+Error: Connection terminated unexpectedly
+    at C:\Users\lsc\Documents\project\web1\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async dbAll (C:\Users\lsc\Documents\project\web1\app.js:372:18)
+    at async dbGet (C:\Users\lsc\Documents\project\web1\app.js:367:16)
+    at async C:\Users\lsc\Documents\project\web1\src\routes\site-routes.js:6053:20
+Error: connect ETIMEDOUT 51.79.250.89:5432
+    at C:\Users\lsc\Documents\project\web1\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+  errno: -4039,
+  code: 'ETIMEDOUT',
+  syscall: 'connect',
+  address: '51.79.250.89',
+  port: 5432
+}
+Error: connect ETIMEDOUT 51.79.250.89:5432
+    at C:\Users\lsc\Documents\project\web1\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+  errno: -4039,
+  code: 'ETIMEDOUT',
+  syscall: 'connect',
+  address: '51.79.250.89',
+  port: 5432
+}
+Error: read ECONNRESET
+    at C:\Users\lsc\Documents\project\web1\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+  errno: -4077,
+  code: 'ECONNRESET',
+  syscall: 'read'
+}

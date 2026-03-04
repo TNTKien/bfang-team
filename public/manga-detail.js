@@ -1,9 +1,11 @@
 (() => {
-  const facebook = document.querySelector("[data-share-facebook]");
-  const instagram = document.querySelector("[data-share-instagram]");
-  if (!facebook && !instagram) return;
+  const BOUND_SHARE_ATTR = "data-manga-share-bound";
+  const BOUND_DESC_ATTR = "data-description-bound";
+  const descriptionControllers = [];
+  let resizeTimer = null;
 
   const getUrl = () => window.location.href.split("#")[0];
+
   const getTitle = () => {
     const h1 = document.querySelector(".detail-info h1") || document.querySelector("h1");
     const text = h1 ? (h1.textContent || "").trim() : "";
@@ -19,7 +21,7 @@
         await navigator.clipboard.writeText(text);
         return true;
       } catch (_err) {
-        // ignore
+        // Ignore clipboard API failures.
       }
     }
 
@@ -40,138 +42,204 @@
     }
   };
 
-  if (facebook) {
-    facebook.href = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(getUrl())}`;
-    facebook.target = "_blank";
-    facebook.rel = "noopener";
-  }
+  const initShareButtons = (root) => {
+    const scope = root && root.querySelectorAll ? root : document;
+    const facebookButtons = Array.from(scope.querySelectorAll("[data-share-facebook]"));
+    const instagramButtons = Array.from(scope.querySelectorAll("[data-share-instagram]"));
 
-  if (instagram) {
-    const label = instagram.querySelector("[data-share-label]");
-    const getLabel = () => {
-      const target = label || instagram;
-      return (target.textContent || "Instagram").trim() || "Instagram";
-    };
-    const setLabel = (value) => {
-      const text = (value || "").toString();
-      if (label) {
-        label.textContent = text;
-        return;
-      }
-      instagram.textContent = text;
-    };
-    const original = getLabel();
+    facebookButtons.forEach((facebook) => {
+      facebook.href = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(getUrl())}`;
+      facebook.target = "_blank";
+      facebook.rel = "noopener";
+    });
 
-    instagram.addEventListener("click", async (event) => {
-      event.preventDefault();
-      const url = getUrl();
-      const title = getTitle();
+    instagramButtons.forEach((instagram) => {
+      if (instagram.getAttribute(BOUND_SHARE_ATTR) === "1") return;
+      instagram.setAttribute(BOUND_SHARE_ATTR, "1");
 
-      if (navigator.share) {
-        try {
-          await navigator.share({ title, url });
+      const label = instagram.querySelector("[data-share-label]");
+      const getLabel = () => {
+        const target = label || instagram;
+        return (target.textContent || "Instagram").trim() || "Instagram";
+      };
+      const setLabel = (value) => {
+        const text = (value || "").toString();
+        if (label) {
+          label.textContent = text;
           return;
-        } catch (_err) {
-          // user cancelled or share failed
+        }
+        instagram.textContent = text;
+      };
+
+      const original = getLabel();
+      instagram.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const url = getUrl();
+        const title = getTitle();
+
+        if (navigator.share) {
+          try {
+            await navigator.share({ title, url });
+            return;
+          } catch (_err) {
+            // User canceled share dialog.
+          }
+        }
+
+        const copied = await copyText(url);
+        setLabel(copied ? "\u0110\u00e3 copy link" : "Kh\u00f4ng copy \u0111\u01b0\u1ee3c");
+        window.setTimeout(() => {
+          setLabel(original);
+        }, 1400);
+      });
+    });
+  };
+
+  const createDescriptionController = (wrapper) => {
+    const content = wrapper.querySelector("[data-description-content]");
+    const toggle = wrapper.querySelector("[data-description-toggle]");
+    if (!content || !toggle) return null;
+
+    const fullText = (content.textContent || "").replace(/\r\n?/g, "\n").trim();
+    if (!fullText) {
+      toggle.hidden = true;
+      toggle.removeAttribute("aria-expanded");
+      return null;
+    }
+
+    const getMax = () => {
+      const base = Number(wrapper.dataset.descriptionMax) || 280;
+      const mobile = Number(wrapper.dataset.descriptionMaxMobile) || Math.round(base * 0.72);
+      if (window.matchMedia && window.matchMedia("(max-width: 560px)").matches) {
+        return mobile;
+      }
+      return base;
+    };
+
+    const truncate = (text, max) => {
+      if (text.length <= max) {
+        return { text, truncated: false };
+      }
+
+      const slice = text.slice(0, max).trimEnd();
+      let lastBreak = -1;
+      for (let index = slice.length - 1; index >= 0; index -= 1) {
+        if (/\s/.test(slice[index])) {
+          lastBreak = index;
+          break;
         }
       }
+      const cut = lastBreak > Math.floor(max * 0.6) ? slice.slice(0, lastBreak).trimEnd() : slice;
+      return { text: cut, truncated: true };
+    };
 
-      const copied = await copyText(url);
-      setLabel(copied ? "\u0110\u00e3 copy link" : "Kh\u00f4ng copy \u0111\u01b0\u1ee3c");
-      window.setTimeout(() => {
-        setLabel(original);
-      }, 1400);
-    });
-  }
-})();
+    const setState = (expanded) => {
+      wrapper.classList.toggle("is-expanded", expanded);
+      wrapper.classList.toggle("is-collapsed", !expanded);
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+      toggle.textContent = expanded ? "Thu g\u1ecdn" : "Xem th\u00eam";
+    };
 
-(() => {
-  const wrapper = document.querySelector("[data-description-wrap]");
-  if (!wrapper) return;
-
-  const content = wrapper.querySelector("[data-description-content]");
-  const toggle = wrapper.querySelector("[data-description-toggle]");
-  if (!content || !toggle) return;
-
-  const fullText = (content.textContent || "").replace(/\r\n?/g, "\n").trim();
-  if (!fullText) {
-    toggle.hidden = true;
-    toggle.removeAttribute("aria-expanded");
-    return;
-  }
-
-  const getMax = () => {
-    const base = Number(wrapper.dataset.descriptionMax) || 280;
-    const mobile = Number(wrapper.dataset.descriptionMaxMobile) || Math.round(base * 0.72);
-    if (window.matchMedia && window.matchMedia("(max-width: 560px)").matches) {
-      return mobile;
-    }
-    return base;
-  };
-
-  const truncate = (text, max) => {
-    if (text.length <= max) {
-      return { text, truncated: false };
-    }
-
-    const slice = text.slice(0, max).trimEnd();
-    let lastBreak = -1;
-    for (let index = slice.length - 1; index >= 0; index -= 1) {
-      const char = slice[index];
-      if (/\s/.test(char)) {
-        lastBreak = index;
-        break;
+    const collapse = () => {
+      const result = truncate(fullText, getMax());
+      if (!result.truncated) {
+        content.textContent = fullText;
+        toggle.hidden = true;
+        wrapper.classList.remove("is-expanded", "is-collapsed");
+        toggle.removeAttribute("aria-expanded");
+        return;
       }
-    }
-    const cut = lastBreak > Math.floor(max * 0.6) ? slice.slice(0, lastBreak).trimEnd() : slice;
-    return { text: cut, truncated: true };
-  };
 
-  const setState = (expanded) => {
-    wrapper.classList.toggle("is-expanded", expanded);
-    wrapper.classList.toggle("is-collapsed", !expanded);
-    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-    toggle.textContent = expanded ? "Thu g\u1ecdn" : "Xem th\u00eam";
-  };
+      content.textContent = `${result.text}...`;
+      toggle.hidden = false;
+      setState(false);
+    };
 
-  const collapse = () => {
-    const max = getMax();
-    const result = truncate(fullText, max);
-
-    if (!result.truncated) {
+    const expand = () => {
       content.textContent = fullText;
-      toggle.hidden = true;
-      wrapper.classList.remove("is-expanded", "is-collapsed");
-      toggle.removeAttribute("aria-expanded");
-      return;
-    }
+      toggle.hidden = false;
+      setState(true);
+    };
 
-    content.textContent = `${result.text}...`;
-    toggle.hidden = false;
-    setState(false);
-  };
+    toggle.addEventListener("click", () => {
+      if (wrapper.classList.contains("is-expanded")) {
+        collapse();
+        return;
+      }
+      expand();
+    });
 
-  const expand = () => {
-    content.textContent = fullText;
-    toggle.hidden = false;
-    setState(true);
-  };
-
-  toggle.addEventListener("click", () => {
-    if (wrapper.classList.contains("is-expanded")) {
+    window.requestAnimationFrame(() => {
       collapse();
-      return;
-    }
-    expand();
-  });
+    });
+
+    return {
+      wrapper,
+      collapse
+    };
+  };
+
+  const initDescription = (root) => {
+    const scope = root && root.querySelectorAll ? root : document;
+    const wrappers = Array.from(scope.querySelectorAll("[data-description-wrap]"));
+    wrappers.forEach((wrapper) => {
+      if (!(wrapper instanceof HTMLElement)) return;
+      if (wrapper.getAttribute(BOUND_DESC_ATTR) === "1") return;
+      wrapper.setAttribute(BOUND_DESC_ATTR, "1");
+      const controller = createDescriptionController(wrapper);
+      if (controller) {
+        descriptionControllers.push(controller);
+      }
+    });
+  };
+
+  const refreshDescriptionOnResize = () => {
+    const activeControllers = [];
+    descriptionControllers.forEach((controller) => {
+      if (!controller || !controller.wrapper || !controller.wrapper.isConnected) {
+        return;
+      }
+      controller.collapse();
+      activeControllers.push(controller);
+    });
+    descriptionControllers.length = 0;
+    activeControllers.forEach((controller) => {
+      descriptionControllers.push(controller);
+    });
+  };
+
+  const initMangaDetail = (root) => {
+    initShareButtons(root);
+    initDescription(root);
+  };
+
+  window.BfangMangaDetail = window.BfangMangaDetail || {};
+  window.BfangMangaDetail.init = initMangaDetail;
+
+  if (document.readyState === "loading") {
+    document.addEventListener(
+      "DOMContentLoaded",
+      () => {
+        initMangaDetail(document);
+      },
+      { once: true }
+    );
+  } else {
+    initMangaDetail(document);
+  }
 
   window.addEventListener("resize", () => {
-    if (wrapper.classList.contains("is-expanded")) return;
-    collapse();
+    if (resizeTimer) {
+      window.clearTimeout(resizeTimer);
+    }
+    resizeTimer = window.setTimeout(() => {
+      resizeTimer = null;
+      refreshDescriptionOnResize();
+    }, 120);
   });
 
-  window.requestAnimationFrame(() => {
-    collapse();
+  window.addEventListener("bfang:pagechange", () => {
+    initMangaDetail(document);
   });
 })();
 

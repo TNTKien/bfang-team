@@ -1,19 +1,27 @@
 (() => {
   const HISTORY_ENDPOINT = "/account/reading-history";
 
-  const detailContinueEl = document.querySelector("[data-reading-detail-continue]");
-  const readingProgressEl = document.querySelector("[data-reading-progress]");
-  const historyPage = document.querySelector("[data-reading-history-page]");
+  let detailContinueEl = null;
+  let readingProgressEl = null;
+  let historyPage = null;
+  let historyLockedEl = null;
+  let historyContentEl = null;
+  let historyStatusEl = null;
+  let historyEmptyEl = null;
+  let historyListEl = null;
 
-  if (!detailContinueEl && !readingProgressEl && !historyPage) {
-    return;
-  }
+  const captureReadingHistoryNodes = () => {
+    detailContinueEl = document.querySelector("[data-reading-detail-continue]");
+    readingProgressEl = document.querySelector("[data-reading-progress]");
+    historyPage = document.querySelector("[data-reading-history-page]");
+    historyLockedEl = historyPage ? historyPage.querySelector("[data-reading-history-locked]") : null;
+    historyContentEl = historyPage ? historyPage.querySelector("[data-reading-history-content]") : null;
+    historyStatusEl = historyPage ? historyPage.querySelector("[data-reading-history-status]") : null;
+    historyEmptyEl = historyPage ? historyPage.querySelector("[data-reading-history-empty]") : null;
+    historyListEl = historyPage ? historyPage.querySelector("[data-reading-history-list]") : null;
+  };
 
-  const historyLockedEl = historyPage ? historyPage.querySelector("[data-reading-history-locked]") : null;
-  const historyContentEl = historyPage ? historyPage.querySelector("[data-reading-history-content]") : null;
-  const historyStatusEl = historyPage ? historyPage.querySelector("[data-reading-history-status]") : null;
-  const historyEmptyEl = historyPage ? historyPage.querySelector("[data-reading-history-empty]") : null;
-  const historyListEl = historyPage ? historyPage.querySelector("[data-reading-history-list]") : null;
+  captureReadingHistoryNodes();
 
   let historyCache = [];
   let historyMapCache = new Map();
@@ -384,6 +392,12 @@
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return;
     refreshFromCurrentSession();
+  });
+
+  window.addEventListener("bfang:pagechange", () => {
+    captureReadingHistoryNodes();
+    progressSaved = false;
+    refreshFromSession(null, { resolveSession: true }).catch(() => null);
   });
 
   refreshFromSession(null, { resolveSession: true }).catch(() => null);

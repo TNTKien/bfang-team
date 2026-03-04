@@ -954,7 +954,6 @@
     });
   };
 
-  let komaBootstrapped = false;
   const scheduleNonCriticalTask = (callback) => {
     if (typeof callback !== "function") return;
     if (typeof window.requestIdleCallback === "function") {
@@ -970,8 +969,6 @@
   };
 
   const bootstrapKomaStreams = () => {
-    if (komaBootstrapped) return;
-    komaBootstrapped = true;
     initKomaInfiniteLoop();
     initKomaSliceLazyBackgrounds();
     initKomaStreamMouseDrag();
@@ -984,7 +981,6 @@
     if (!streams.length) return;
 
     const fallbackBootstrap = () => {
-      if (komaBootstrapped) return;
       scheduleNonCriticalTask(bootstrapKomaStreams);
     };
 
@@ -1016,7 +1012,7 @@
       });
 
       window.setTimeout(() => {
-        if (didTrigger || komaBootstrapped) return;
+        if (didTrigger) return;
         observer.disconnect();
         fallbackBootstrap();
       }, 1800);
@@ -1031,7 +1027,6 @@
     window.addEventListener(
       "pageshow",
       () => {
-        if (komaBootstrapped) return;
         fallbackBootstrap();
       },
       { once: true }
@@ -1125,6 +1120,9 @@
   }
 
   initKomaStreamsDeferred();
+  window.addEventListener("bfang:pagechange", () => {
+    bootstrapKomaStreams();
+  });
 
   const openLoginProviderDialog = ({ silent } = {}) => {
     const shouldSilenceAlert = Boolean(silent);

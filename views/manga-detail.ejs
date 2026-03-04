@@ -335,324 +335,40 @@
           <% } %>
         </section>
 
-        <section
-          id="comments"
-          class="section container"
-          data-comment-mention-url="/manga/<%= manga.slug %>/comment-mentions"
-          data-comment-manga-slug="<%= manga.slug %>"
-          data-comment-manga-title="<%= manga.title %>"
-          data-comment-scope="manga"
-        >
-          <% const commentPage = commentPagination && commentPagination.page ? Number(commentPagination.page) : 1; %>
-          <% const commentTotalPages = commentPagination && commentPagination.totalPages ? Number(commentPagination.totalPages) : 1; %>
-          <% const commentPageHref = (targetPage) => {
-            const safeTarget = Number.isFinite(targetPage) && targetPage > 0 ? Math.floor(targetPage) : 1;
-            if (safeTarget <= 1) return `/manga/${manga.slug}#comments`;
-            return `/manga/${manga.slug}?commentPage=${safeTarget}#comments`;
-          }; %>
-          <div class="section-header">
-            <h2>Bình luận (<%= commentCount %>)</h2>
-            <span class="section-line"></span>
-          </div>
-          <div class="comment-box">
-            <div class="comment-avatar" aria-hidden="true" data-auth-widget>
-              <img
-                class="comment-avatar__img"
-                alt=""
-                hidden
-                loading="lazy"
-                referrerpolicy="no-referrer"
-                data-auth-avatar
-              />
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-                <circle cx="12" cy="8" r="4" />
-                <path d="M4 20c1.6-3.5 5-5 8-5s6.4 1.5 8 5" />
-              </svg>
+        <% if (commentsHydrated) { %>
+          <%- include("partials/manga-comments-section", {
+            manga,
+            comments,
+            commentCount,
+            commentPagination
+          }) %>
+        <% } else { %>
+          <section
+            id="comments"
+            class="section container"
+            data-comment-lazy="1"
+            data-comment-load-url="<%= commentsLoadUrl %>"
+            data-comment-mention-url="/manga/<%= manga.slug %>/comment-mentions"
+            data-comment-manga-slug="<%= manga.slug %>"
+            data-comment-manga-title="<%= manga.title %>"
+            data-comment-scope="manga"
+            data-comment-script-src="<%= cacheBust('/comments.js', assetVersion) %>"
+          >
+            <div class="section-header">
+              <h2>Bình luận (<%= commentCount %>)</h2>
+              <span class="section-line"></span>
             </div>
-            <form class="comment-form" method="post" action="/manga/<%= manga.slug %>/comments">
-              <div class="comment-authbar" data-auth-widget>
-                <button class="button button--ghost comment-authbar__login" type="button" data-auth-login>
-                  Đăng nhập
-                </button>
-                <div class="comment-authbar__profile" hidden data-auth-profile>
-                  <strong class="comment-authbar__name" data-auth-name></strong>
-                </div>
-              </div>
-              <textarea
-                class="comment-textarea"
-                name="content"
-                rows="3"
-                maxlength="500"
-                placeholder="Viết bình luận..."
-                required
-              ></textarea>
-              <div class="comment-submit">
-                <button class="button" type="submit">Gửi bình luận</button>
-              </div>
-            </form>
-          </div>
-
-          <% if (comments.length === 0) { %>
-            <p class="note" data-comment-empty-note="1">Chưa có bình luận nào.</p>
-          <% } else { %>
-            <ul class="comment-items">
-              <% comments.forEach((comment) => { %>
-                <li
-                  id="comment-<%= comment.id %>"
-                  class="comment-item"
-                  data-comment-id="<%= comment.id %>"
-                  data-comment-author-id="<%= comment.authorUserId || "" %>"
-                  data-comment-parent-author-id=""
-                >
-                  <div class="comment-avatar" aria-hidden="true">
-                    <% if (comment.avatarUrl) { %>
-                      <img
-                        class="comment-avatar__img"
-                        src="<%= comment.avatarUrl %>"
-                        alt=""
-                        loading="lazy"
-                        referrerpolicy="no-referrer"
-                      />
-                    <% } else { %>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-                        <circle cx="12" cy="8" r="4" />
-                        <path d="M4 20c1.6-3.5 5-5 8-5s6.4 1.5 8 5" />
-                      </svg>
-                    <% } %>
-                  </div>
-                  <div class="comment-body">
-                    <div class="comment-header">
-                      <span
-                        class="comment-author <%= comment.authorUserId ? "comment-author--interactive" : "" %>"
-                        <% if (comment.userColor) { %>style="--user-color: <%= comment.userColor %>"<% } %>
-                        <% if (comment.authorUserId) { %>
-                          role="link"
-                          tabindex="0"
-                          data-comment-author-trigger
-                          data-comment-user-id="<%= comment.authorUserId %>"
-                          <% if (comment.authorUsername) { %>data-comment-username="<%= comment.authorUsername %>"<% } %>
-                        <% } %>
-                      >
-                        <span class="comment-author__name"><%= comment.author %></span>
-                        <% const commentTopBadge = (comment.badges || []).find((badge) => badge && String(badge.label || "").trim()); %>
-                        <% if (commentTopBadge) { %>
-                          <span
-                            class="comment-badge"
-                            <% if (commentTopBadge.color) { %>style="--badge-color: <%= commentTopBadge.color %>; --badge-bg: <%= `${commentTopBadge.color}22` %>"<% } %>
-                          >
-                            <%= commentTopBadge.label %>
-                          </span>
-                        <% } %>
-                      </span>
-                      <% if (comment.chapterNumberText) { %>
-                        <a
-                          class="comment-chapter-tag"
-                          href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(comment.chapterNumberText) %>"
-                        >
-                          Chương <%= comment.chapterNumberText %>
-                        </a>
-                      <% } %>
-                      <span class="comment-time"><%= formatTimeAgo(comment.createdAt) %></span>
-                    </div>
-                    <p
-                      class="comment-text"
-                      data-comment-raw="<%= comment.content %>"
-                      data-comment-mentions="<%= JSON.stringify(comment.mentions || []) %>"
-                    ><%= comment.content %></p>
-                    <div class="comment-actions">
-                      <form method="post" action="/comments/<%= comment.id %>/like">
-                        <button
-                          class="comment-action comment-action--like <%= comment.liked ? "is-active" : "" %>"
-                          type="submit"
-                          data-comment-like
-                          data-liked="<%= comment.liked ? "1" : "0" %>"
-                        >
-                          <i class="fa-solid fa-thumbs-up" aria-hidden="true"></i>
-                          <span class="comment-action__label">Thích</span>
-                          <span class="comment-action__count" data-comment-like-count><%= comment.likeCount || 0 %></span>
-                        </button>
-                      </form>
-                      <% if (!comment.parentId) { %>
-                      <button class="comment-action comment-action--reply" type="button" data-comment-reply>
-                          <i class="fa-solid fa-reply" aria-hidden="true"></i>
-                          Trả lời
-                        </button>
-                      <% } %>
-                      <form method="post" action="/comments/<%= comment.id %>/report">
-                        <button
-                          class="comment-action comment-action--report <%= comment.reported ? "is-muted" : "" %>"
-                          type="submit"
-                          data-comment-report
-                          data-reported="<%= comment.reported ? "1" : "0" %>"
-                          <%= comment.reported ? "disabled" : "" %>
-                        >
-                          <i class="fa-regular fa-flag" aria-hidden="true"></i>
-                          <span class="comment-action__label">Báo cáo</span>
-                          <span class="comment-action__count" data-comment-report-count><%= comment.reportCount || 0 %></span>
-                        </button>
-                      </form>
-                      <button
-                        class="comment-action comment-action--delete"
-                        type="button"
-                        data-comment-delete
-                        hidden
-                      >
-                        <i class="fa-regular fa-trash-can" aria-hidden="true"></i>
-                        Xóa
-                      </button>
-                    </div>
-                    <div class="comment-reply">
-                      <form method="post" action="/manga/<%= manga.slug %>/comments">
-                        <input type="hidden" name="parent_id" value="<%= comment.id %>" />
-                        <textarea
-                          class="comment-textarea"
-                          name="content"
-                          rows="2"
-                          maxlength="500"
-                          placeholder="Viết trả lời..."
-                          required
-                        ></textarea>
-                        <div class="comment-submit">
-                          <button class="button" type="submit">Gửi trả lời</button>
-                        </div>
-                      </form>
-                    </div>
-                    <% if (comment.replies && comment.replies.length) { %>
-                      <ul class="comment-replies">
-                        <% comment.replies.forEach((reply) => { %>
-                          <li
-                            id="comment-<%= reply.id %>"
-                            class="comment-item comment-item--reply"
-                            data-comment-id="<%= reply.id %>"
-                            data-comment-author-id="<%= reply.authorUserId || "" %>"
-                            data-comment-parent-author-id="<%= comment.authorUserId || "" %>"
-                          >
-                            <div class="comment-avatar" aria-hidden="true">
-                              <% if (reply.avatarUrl) { %>
-                                <img
-                                  class="comment-avatar__img"
-                                  src="<%= reply.avatarUrl %>"
-                                  alt=""
-                                  loading="lazy"
-                                  referrerpolicy="no-referrer"
-                                />
-                              <% } else { %>
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-                                  <circle cx="12" cy="8" r="4" />
-                                  <path d="M4 20c1.6-3.5 5-5 8-5s6.4 1.5 8 5" />
-                                </svg>
-                              <% } %>
-                            </div>
-                            <div class="comment-body">
-                              <div class="comment-header">
-                                <span
-                                  class="comment-author <%= reply.authorUserId ? "comment-author--interactive" : "" %>"
-                                  <% if (reply.userColor) { %>style="--user-color: <%= reply.userColor %>"<% } %>
-                                  <% if (reply.authorUserId) { %>
-                                    role="link"
-                                    tabindex="0"
-                                    data-comment-author-trigger
-                                    data-comment-user-id="<%= reply.authorUserId %>"
-                                    <% if (reply.authorUsername) { %>data-comment-username="<%= reply.authorUsername %>"<% } %>
-                                  <% } %>
-                                >
-                                  <span class="comment-author__name"><%= reply.author %></span>
-                                  <% const replyTopBadge = (reply.badges || []).find((badge) => badge && String(badge.label || "").trim()); %>
-                                  <% if (replyTopBadge) { %>
-                                    <span
-                                      class="comment-badge"
-                                      <% if (replyTopBadge.color) { %>style="--badge-color: <%= replyTopBadge.color %>; --badge-bg: <%= `${replyTopBadge.color}22` %>"<% } %>
-                                    >
-                                      <%= replyTopBadge.label %>
-                                    </span>
-                                  <% } %>
-                                </span>
-                                <% if (reply.chapterNumberText) { %>
-                                  <a
-                                    class="comment-chapter-tag"
-                                    href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(reply.chapterNumberText) %>"
-                                  >
-                                    Chương <%= reply.chapterNumberText %>
-                                  </a>
-                                <% } %>
-                                <span class="comment-time"><%= formatTimeAgo(reply.createdAt) %></span>
-                              </div>
-                              <p
-                                class="comment-text"
-                                data-comment-raw="<%= reply.content %>"
-                                data-comment-mentions="<%= JSON.stringify(reply.mentions || []) %>"
-                              ><%= reply.content %></p>
-                              <div class="comment-actions">
-                                <form method="post" action="/comments/<%= reply.id %>/like">
-                                  <button
-                                    class="comment-action comment-action--like <%= reply.liked ? "is-active" : "" %>"
-                                    type="submit"
-                                    data-comment-like
-                                    data-liked="<%= reply.liked ? "1" : "0" %>"
-                                  >
-                                    <i class="fa-solid fa-thumbs-up" aria-hidden="true"></i>
-                                    <span class="comment-action__label">Thích</span>
-                                    <span class="comment-action__count" data-comment-like-count><%= reply.likeCount || 0 %></span>
-                                  </button>
-                                </form>
-                                <form method="post" action="/comments/<%= reply.id %>/report">
-                                  <button
-                                    class="comment-action comment-action--report <%= reply.reported ? "is-muted" : "" %>"
-                                    type="submit"
-                                    data-comment-report
-                                    data-reported="<%= reply.reported ? "1" : "0" %>"
-                                    <%= reply.reported ? "disabled" : "" %>
-                                  >
-                                    <i class="fa-regular fa-flag" aria-hidden="true"></i>
-                                    <span class="comment-action__label">Báo cáo</span>
-                                    <span class="comment-action__count" data-comment-report-count><%= reply.reportCount || 0 %></span>
-                                  </button>
-                                </form>
-                                <button
-                                  class="comment-action comment-action--delete"
-                                  type="button"
-                                  data-comment-delete
-                                  hidden
-                                >
-                                  <i class="fa-regular fa-trash-can" aria-hidden="true"></i>
-                                  Xóa
-                                </button>
-                              </div>
-                            </div>
-                          </li>
-                        <% }) %>
-                      </ul>
-                    <% } %>
-                  </div>
-                </li>
-              <% }) %>
-            </ul>
-          <% } %>
-
-          <% if (commentTotalPages > 1) { %>
-            <nav class="comment-pagination" aria-label="Phân trang bình luận">
-              <a
-                class="button button--ghost comment-pagination__nav <%= commentPagination && commentPagination.hasPrev ? "" : "is-disabled" %>"
-                href="<%= commentPagination && commentPagination.hasPrev ? commentPageHref(commentPagination.prevPage) : "#" %>"
-                aria-label="Trang trước"
-                <%= commentPagination && commentPagination.hasPrev ? "" : 'tabindex="-1" aria-disabled="true"' %>
-              >
-                <i class="fa-solid fa-chevron-left" aria-hidden="true"></i>
-                <span class="sr-only">Trang trước</span>
-              </a>
-              <span class="chip comment-pagination__meta">Trang <%= commentPage %>/<%= commentTotalPages %></span>
-              <a
-                class="button button--ghost comment-pagination__nav <%= commentPagination && commentPagination.hasNext ? "" : "is-disabled" %>"
-                href="<%= commentPagination && commentPagination.hasNext ? commentPageHref(commentPagination.nextPage) : "#" %>"
-                aria-label="Trang sau"
-                <%= commentPagination && commentPagination.hasNext ? "" : 'tabindex="-1" aria-disabled="true"' %>
-              >
-                <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
-                <span class="sr-only">Trang sau</span>
-              </a>
-            </nav>
-          <% } %>
-        </section>
+            <div class="panel">
+              <p class="note">Đang tải bình luận...</p>
+              <noscript>
+                <p class="note">
+                  Trình duyệt của bạn đã tắt JavaScript.
+                  <a class="inline-link" href="<%= `${commentsLoadUrl}#comments` %>">Bấm vào đây để xem bình luận.</a>
+                </p>
+              </noscript>
+            </div>
+          </section>
+        <% } %>
       </main>
       <script nonce="<%= cspNonce || '' %>">
         (() => {
@@ -660,6 +376,7 @@
           if (!commentsRoot) return;
 
           const scriptSrc = "<%= cacheBust('/comments.js', assetVersion) %>";
+          const isLazyCommentsSection = commentsRoot.hasAttribute("data-comment-lazy");
           let loaded = false;
           let observer = null;
 
@@ -677,7 +394,13 @@
             if (loaded) return;
             loaded = true;
             cleanup();
-            if (document.querySelector(`script[src="${scriptSrc}"]`)) return;
+            commentsRoot.setAttribute("data-comment-auto-hydrate", "1");
+            if (document.querySelector(`script[src="${scriptSrc}"]`)) {
+              if (window.BfangComments && typeof window.BfangComments.refresh === "function") {
+                window.BfangComments.refresh();
+              }
+              return;
+            }
 
             const script = document.createElement("script");
             script.src = scriptSrc;
@@ -707,7 +430,7 @@
               },
               {
                 root: null,
-                rootMargin: "1100px 0px",
+                rootMargin: isLazyCommentsSection ? "320px 0px" : "1100px 0px",
                 threshold: 0.01
               }
             );

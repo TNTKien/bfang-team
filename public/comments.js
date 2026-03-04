@@ -3293,8 +3293,10 @@ const replaceCommentsSectionFromPage = async (targetUrl, options) => {
   try {
     const response = await fetch(targetUrl.toString(), {
       method: "GET",
+      cache: "no-store",
       headers: {
-        Accept: "text/html"
+        Accept: "text/html",
+        "X-BFANG-Comments-Fresh": "1"
       },
       credentials: "same-origin"
     });
@@ -3340,6 +3342,68 @@ const replaceCommentsSectionFromPage = async (targetUrl, options) => {
     const activeSection = document.querySelector(commentSelectors.section);
     if (activeSection) {
       activeSection.removeAttribute("aria-busy");
+    }
+  }
+};
+
+let isLazyCommentHydrationLoading = false;
+
+const resolveLazyCommentHydrationUrl = (section) => {
+  if (!section) return null;
+
+  const rawUrl = (section.getAttribute("data-comment-load-url") || "").toString().trim();
+  if (!rawUrl) return null;
+
+  try {
+    const targetUrl = new URL(rawUrl, window.location.href);
+    if (targetUrl.origin !== window.location.origin) return null;
+    return targetUrl;
+  } catch (_err) {
+    return null;
+  }
+};
+
+const hydrateLazyCommentsSection = async (options) => {
+  const settings = options && typeof options === "object" ? options : {};
+  const force = Boolean(settings.force);
+  const section = document.querySelector(`${commentSelectors.section}[data-comment-lazy='1']`);
+  if (!section) return true;
+  if (isLazyCommentHydrationLoading && !force) return false;
+
+  const targetUrl = resolveLazyCommentHydrationUrl(section);
+  if (!targetUrl) return false;
+
+  isLazyCommentHydrationLoading = true;
+  section.setAttribute("aria-busy", "true");
+  section.setAttribute("data-comment-load-state", "loading");
+
+  const triggerButton = section.querySelector("[data-comment-load-trigger]");
+  if (triggerButton) {
+    triggerButton.disabled = true;
+  }
+
+  try {
+    const hydrated = await replaceCommentsSectionFromPage(targetUrl, { pushHistory: false });
+    if (!hydrated) {
+      section.setAttribute("data-comment-load-state", "error");
+      return false;
+    }
+    return true;
+  } catch (_err) {
+    section.setAttribute("data-comment-load-state", "error");
+    return false;
+  } finally {
+    isLazyCommentHydrationLoading = false;
+    const activeSection = document.querySelector(`${commentSelectors.section}[data-comment-lazy='1']`);
+    if (activeSection) {
+      activeSection.removeAttribute("aria-busy");
+      if (activeSection.getAttribute("data-comment-load-state") === "loading") {
+        activeSection.removeAttribute("data-comment-load-state");
+      }
+      const activeTrigger = activeSection.querySelector("[data-comment-load-trigger]");
+      if (activeTrigger) {
+        activeTrigger.disabled = false;
+      }
     }
   }
 };
@@ -3745,6 +3809,13 @@ const handleCommentSubmit = async (form) => {
 document.addEventListener("click", (event) => {
   if (!isPrimaryUnmodifiedClick(event)) return;
 
+  const loadCommentsButton = event.target.closest("[data-comment-load-trigger]");
+  if (loadCommentsButton) {
+    event.preventDefault();
+    hydrateLazyCommentsSection({ force: true }).catch(() => null);
+    return;
+  }
+
   const pageLink = event.target.closest("#comments .comment-pagination a[href]");
   if (pageLink) {
     const hrefRaw = (pageLink.getAttribute("href") || "").toString().trim();
@@ -4029,9 +4100,26 @@ window.addEventListener("bfang:me", (event) => {
   refreshReactionStates().catch(() => null);
 });
 
-refreshDeleteVisibility().catch(() => null);
-refreshCommentPermissionVisibility().catch(() => null);
-refreshReactionStates().catch(() => null);
-initCommentRichText();
-initCommentCharCounters();
-revealCommentTargetFromHash({ behavior: "auto", showFallback: true });
+const refreshCommentsPageUi = () => {
+  const lazySection = document.querySelector(`${commentSelectors.section}[data-comment-lazy='1']`);
+  const canAutoHydrate =
+    !lazySection || lazySection.getAttribute("data-comment-auto-hydrate") === "1";
+  if (canAutoHydrate) {
+    hydrateLazyCommentsSection().catch(() => null);
+  }
+  refreshDeleteVisibility().catch(() => null);
+  refreshCommentPermissionVisibility().catch(() => null);
+  refreshReactionStates().catch(() => null);
+  initCommentRichText();
+  initCommentCharCounters();
+  revealCommentTargetFromHash({ behavior: "auto", showFallback: true });
+};
+
+window.BfangComments = window.BfangComments || {};
+window.BfangComments.refresh = refreshCommentsPageUi;
+
+window.addEventListener("bfang:pagechange", () => {
+  refreshCommentsPageUi();
+});
+
+refreshCommentsPageUi();
