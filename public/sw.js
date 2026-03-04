@@ -210,16 +210,81 @@ const networkFirstWithFallback = async (event, request, cacheName, maxEntries) =
   }
 };
 
+const getNavigationPreloadResponse = async (event) => {
+  if (!event || !event.request || event.request.mode !== "navigate") return null;
+  if (!("preloadResponse" in event)) return null;
+  try {
+    const preloadResponse = await event.preloadResponse;
+    return preloadResponse || null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const buildFetchFailureResponse = (request) => {
+  const acceptHeader = (request && request.headers ? request.headers.get("Accept") : "") || "";
+  const acceptsHtml = request && request.mode === "navigate"
+    ? true
+    : acceptHeader.toLowerCase().includes("text/html");
+
+  if (acceptsHtml) {
+    return new Response("Khong the ket noi mang. Vui long thu lai.", {
+      status: 503,
+      statusText: "Service Unavailable",
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store"
+      }
+    });
+  }
+
+  return new Response("", {
+    status: 504,
+    statusText: "Gateway Timeout",
+    headers: {
+      "Cache-Control": "no-store"
+    }
+  });
+};
+
+const resolveFetchFailure = async (request, url) => {
+  if (request && request.mode === "navigate") {
+    try {
+      const pageCache = await caches.open(PAGE_CACHE_NAME);
+      const cacheRequest = buildPageCacheRequest(url);
+      const pageCached = await pageCache.match(cacheRequest);
+      if (pageCached) return pageCached;
+    } catch (_error) {
+      // Ignore cache read failures.
+    }
+  }
+
+  try {
+    const cachedResponse = await caches.match(request);
+    if (cachedResponse) return cachedResponse;
+  } catch (_error) {
+    // Ignore cache read failures.
+  }
+
+  return buildFetchFailureResponse(request);
+};
+
 const handleFetch = async (event, url) => {
   const { request } = event;
 
   const pathname = url.pathname || "/";
   if (isServiceWorkerScript(pathname) || shouldBypassPath(pathname)) {
+    if (request.mode === "navigate") {
+      const preloadResponse = await getNavigationPreloadResponse(event);
+      if (preloadResponse) return preloadResponse;
+    }
     return fetch(request);
   }
 
   if (request.mode === "navigate") {
     if (!isMangaDetailPath(pathname)) {
+      const preloadResponse = await getNavigationPreloadResponse(event);
+      if (preloadResponse) return preloadResponse;
       return fetch(request);
     }
 
@@ -228,10 +293,21 @@ const handleFetch = async (event, url) => {
     const cachedResponse = await pageCache.match(cacheRequest);
     const prefetchMeta = readPrefetchMeta(cachedResponse);
 
-    const refreshCachedNavigation = async () => {
+    const refreshCachedNavigation = async ({ allowNetworkFallback = true } = {}) => {
       try {
-        const preloadResponse = await event.preloadResponse;
-        const networkResponse = preloadResponse || (await fetch(request));
+        const preloadResponse = await getNavigationPreloadResponse(event);
+        if (preloadResponse) {
+          await cacheHtmlPageResponse({
+            request: cacheRequest,
+            response: preloadResponse,
+            cachedAt: Date.now()
+          });
+          return preloadResponse;
+        }
+
+        if (!allowNetworkFallback) return null;
+
+        const networkResponse = await fetch(request);
         await cacheHtmlPageResponse({
           request: cacheRequest,
           response: networkResponse,
@@ -245,14 +321,19 @@ const handleFetch = async (event, url) => {
 
     if (cachedResponse) {
       if (prefetchMeta.isFresh) {
-        event.waitUntil(prefetchPageNavigation(url.toString()));
+        event.waitUntil(
+          (async () => {
+            await refreshCachedNavigation({ allowNetworkFallback: false });
+            await prefetchPageNavigation(url.toString());
+          })()
+        );
       } else {
-        event.waitUntil(refreshCachedNavigation());
+        event.waitUntil(refreshCachedNavigation({ allowNetworkFallback: true }));
       }
       return cachedResponse;
     }
 
-    const networkResponse = await refreshCachedNavigation();
+    const networkResponse = await refreshCachedNavigation({ allowNetworkFallback: true });
     if (networkResponse) {
       return networkResponse;
     }
@@ -329,7 +410,9 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(handleFetch(event, url));
+  event.respondWith(
+    handleFetch(event, url).catch(() => resolveFetchFailure(request, url))
+  );
 });
 
 const invalidatePageCacheUrls = async (rawUrls) => {
