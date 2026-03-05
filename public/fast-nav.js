@@ -65,6 +65,9 @@
     return url.origin === window.location.origin && isFastNavigablePath(url.pathname);
   };
 
+  const initialUrl = toUrl(window.location.href);
+  if (!isFastNavigableUrl(initialUrl)) return;
+
   const toCacheKey = (url) => {
     const parsed = toUrl(url);
     if (!parsed) return "";

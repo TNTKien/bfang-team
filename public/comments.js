@@ -100,7 +100,7 @@ const COMMENT_TEXTAREA_LIMIT = 500;
 const COMMENT_MENTION_MAX_QUERY = 32;
 const COMMENT_MENTION_DEBOUNCE_MS = 140;
 const COMMENT_MENTION_CACHE_MS = 30 * 1000;
-const COMMENT_MENTION_FETCH_LIMIT = 3;
+const COMMENT_MENTION_FETCH_LIMIT = 6;
 const COMMENT_FORM_NOTICE_AUTO_HIDE_MS = 5500;
 const COMMENT_LINK_LABEL_FETCH_LIMIT = 40;
 const COMMENT_FRESH_BYPASS_QUERY_PARAM = "__bfv";
@@ -866,6 +866,62 @@ const getCommentCounterText = (textarea) => {
   };
 };
 
+const ensureCommentSubmitButton = (form) => {
+  if (!form || !form.querySelector) return;
+  const submitButton = form.querySelector(".comment-submit .button[type='submit']");
+  if (!(submitButton instanceof HTMLButtonElement)) return;
+  if (submitButton.dataset.commentSendReady === "1") return;
+
+  const labelText = toSafeText(submitButton.textContent, 120) || "Gửi";
+  submitButton.classList.add("comment-submit__button");
+  submitButton.setAttribute("aria-label", labelText);
+  submitButton.textContent = "";
+
+  const label = document.createElement("span");
+  label.className = "comment-submit__label";
+  label.textContent = labelText;
+
+  const icon = document.createElement("i");
+  icon.className = "fa-solid fa-paper-plane comment-submit__icon";
+  icon.setAttribute("aria-hidden", "true");
+
+  submitButton.appendChild(label);
+  submitButton.appendChild(icon);
+  submitButton.dataset.commentSendReady = "1";
+};
+
+const ensureCommentComposeShell = (textarea) => {
+  if (!(textarea instanceof HTMLTextAreaElement)) return null;
+  const form = textarea.form || (textarea.closest ? textarea.closest("form") : null);
+  if (!form) return null;
+
+  let shell = textarea.closest(".comment-compose-shell");
+  if (!shell) {
+    shell = document.createElement("div");
+    shell.className = "comment-compose-shell";
+    textarea.insertAdjacentElement("beforebegin", shell);
+    shell.appendChild(textarea);
+  }
+
+  const mentionPanel = form.querySelector("[data-comment-mention-panel]");
+  if (mentionPanel && mentionPanel.parentElement !== shell) {
+    shell.appendChild(mentionPanel);
+  }
+
+  const composeMeta = form.querySelector(".comment-compose-meta");
+  if (composeMeta && composeMeta.parentElement !== shell) {
+    shell.appendChild(composeMeta);
+  }
+
+  const submitWrap = form.querySelector(".comment-submit");
+  if (submitWrap && submitWrap.parentElement !== shell) {
+    shell.appendChild(submitWrap);
+  }
+
+  ensureCommentSubmitButton(form);
+  return shell;
+};
+
 const clearCommentFormNoticeTimer = (form) => {
   if (!form) return;
   const existingTimer = commentFormNoticeTimerMap.get(form);
@@ -886,8 +942,11 @@ const ensureCommentFormNotice = (form) => {
   notice.hidden = true;
 
   const submitWrap = form.querySelector(".comment-submit");
+  const composeShell = form.querySelector(".comment-compose-shell");
   if (submitWrap && submitWrap.parentElement === form) {
     submitWrap.insertAdjacentElement("beforebegin", notice);
+  } else if (composeShell && composeShell.parentElement === form) {
+    composeShell.insertAdjacentElement("beforebegin", notice);
   } else {
     form.appendChild(notice);
   }
@@ -1042,8 +1101,11 @@ const ensureCommentTurnstileState = (form) => {
   wrap.appendChild(error);
 
   const submitWrap = form.querySelector(".comment-submit");
+  const composeShell = form.querySelector(".comment-compose-shell");
   if (submitWrap && submitWrap.parentElement === form) {
     submitWrap.insertAdjacentElement("beforebegin", wrap);
+  } else if (composeShell && composeShell.parentElement === form) {
+    composeShell.insertAdjacentElement("beforebegin", wrap);
   } else {
     form.appendChild(wrap);
   }
@@ -1237,6 +1299,46 @@ const insertCommentTextAtCursor = (textarea, rawText) => {
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
+const insertCommentMentionTrigger = (textarea) => {
+  if (!textarea) return false;
+
+  const currentValue = textarea.value == null ? "" : String(textarea.value);
+  const start = Number.isFinite(textarea.selectionStart)
+    ? Math.max(0, textarea.selectionStart)
+    : currentValue.length;
+  const end = Number.isFinite(textarea.selectionEnd) ? Math.max(start, textarea.selectionEnd) : start;
+  const before = currentValue.slice(0, start);
+  const after = currentValue.slice(end);
+  const needsLeadingSpace = Boolean(before && !/\s$/.test(before));
+  const mentionToken = `${needsLeadingSpace ? " " : ""}@`;
+  const nextValue = `${before}${mentionToken}${after}`;
+  const limit = getCommentTextareaLimit(textarea);
+  if (nextValue.length > limit) {
+    window.alert(`Đã đạt giới hạn ${limit} ký tự.`);
+    textarea.focus();
+    return false;
+  }
+
+  const caretPosition = before.length + mentionToken.length;
+  if (typeof textarea.setRangeText === "function") {
+    textarea.setRangeText(mentionToken, start, end, "end");
+  } else {
+    textarea.value = nextValue;
+  }
+
+  if (typeof textarea.setSelectionRange === "function") {
+    try {
+      textarea.setSelectionRange(caretPosition, caretPosition);
+    } catch (_err) {
+      // ignore
+    }
+  }
+
+  textarea.focus();
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+};
+
 const getCommentMentionApiPath = (textarea) => {
   const section = textarea && textarea.closest ? textarea.closest(commentSelectors.section) : null;
   if (!section || !section.dataset) return "";
@@ -1320,6 +1422,16 @@ const hideAllCommentMentionPanels = (keepTextarea) => {
   });
 };
 
+const findCommentMentionStateByTextarea = (textarea) => {
+  if (!textarea) return null;
+  let matchedState = null;
+  commentMentionStates.forEach((state) => {
+    if (!state || state.textarea !== textarea || matchedState) return;
+    matchedState = state;
+  });
+  return matchedState;
+};
+
 const setCommentMentionActiveIndex = (state, index) => {
   if (!state || !Array.isArray(state.items) || !state.items.length) {
     state.activeIndex = -1;
@@ -1373,7 +1485,14 @@ const renderCommentMentionCandidates = ({ textarea, state, users }) => {
   state.list.textContent = "";
 
   if (!list.length) {
-    hideCommentMentionPanel(state);
+    state.panel.hidden = false;
+    state.activeIndex = -1;
+    state.activeRange = state.activeRange || null;
+
+    const empty = document.createElement("p");
+    empty.className = "comment-mention-empty";
+    empty.textContent = "Không tìm thấy thành viên phù hợp.";
+    state.list.appendChild(empty);
     return;
   }
 
@@ -1413,13 +1532,9 @@ const renderCommentMentionCandidates = ({ textarea, state, users }) => {
 
     const sub = document.createElement("span");
     sub.className = "comment-mention-item__sub";
-    sub.innerHTML = `<span>@${user.username}</span>`;
-    if (user.roleLabel) {
-      const role = document.createElement("span");
-      role.className = "comment-mention-item__role";
-      role.textContent = user.roleLabel;
-      sub.appendChild(role);
-    }
+    const username = document.createElement("span");
+    username.textContent = `@${user.username}`;
+    sub.appendChild(username);
 
     meta.appendChild(main);
     meta.appendChild(sub);
@@ -1440,16 +1555,6 @@ const renderCommentMentionCandidates = ({ textarea, state, users }) => {
 const fetchCommentMentionCandidates = async ({ apiPath, query }) => {
   const endpoint = toSafeText(apiPath);
   if (!endpoint) return [];
-
-  let accessToken = "";
-  try {
-    if (window.BfangAuth && typeof window.BfangAuth.getAccessToken === "function") {
-      accessToken = await window.BfangAuth.getAccessToken();
-    }
-  } catch (_err) {
-    accessToken = "";
-  }
-  if (!accessToken) return [];
 
   const normalizedQuery = (query || "").toString().trim().toLowerCase();
   const cacheKey = `${endpoint}|${normalizedQuery}`;
@@ -1472,24 +1577,51 @@ const fetchCommentMentionCandidates = async ({ apiPath, query }) => {
     }
     requestUrl.searchParams.set("limit", String(COMMENT_MENTION_FETCH_LIMIT));
     requestUrl.searchParams.set("q", normalizedQuery);
+    requestUrl.searchParams.set("format", "json");
 
-    const response = await fetch(requestUrl.toString(), {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`
-      },
-      credentials: "same-origin"
-    });
+    const requestUsers = async (accessToken) => {
+      const headers = {
+        Accept: "application/json"
+      };
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
 
-    const data = await response.json().catch(() => null);
-    if (!response.ok || !data || data.ok !== true || !Array.isArray(data.users)) {
-      return [];
+      const response = await fetch(requestUrl.toString(), {
+        headers,
+        credentials: "same-origin"
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || data.ok !== true || !Array.isArray(data.users)) {
+        return null;
+      }
+
+      return data.users
+        .map((user) => normalizeCommentMentionCandidate(user))
+        .filter(Boolean)
+        .slice(0, COMMENT_MENTION_FETCH_LIMIT);
+    };
+
+    let items = await requestUsers("");
+    if (!Array.isArray(items) || items.length === 0) {
+      let accessToken = "";
+      try {
+        if (window.BfangAuth && typeof window.BfangAuth.getAccessToken === "function") {
+          accessToken = await window.BfangAuth.getAccessToken();
+        }
+      } catch (_err) {
+        accessToken = "";
+      }
+
+      if (accessToken) {
+        items = await requestUsers(accessToken);
+      }
     }
 
-    const items = data.users
-      .map((user) => normalizeCommentMentionCandidate(user))
-      .filter(Boolean)
-      .slice(0, COMMENT_MENTION_FETCH_LIMIT);
+    if (!Array.isArray(items)) {
+      return [];
+    }
 
     commentMentionCache.set(cacheKey, {
       items,
@@ -1504,8 +1636,11 @@ const fetchCommentMentionCandidates = async ({ apiPath, query }) => {
   return request;
 };
 
-const triggerCommentMentionSearch = (textarea, state) => {
+const triggerCommentMentionSearch = (textarea, state, options) => {
   if (!textarea || !state) return;
+
+  const settings = options && typeof options === "object" ? options : {};
+  const useDebounce = settings.debounce !== false;
 
   const context = getCommentMentionContext(textarea);
   const apiPath = getCommentMentionApiPath(textarea);
@@ -1519,6 +1654,19 @@ const triggerCommentMentionSearch = (textarea, state) => {
     end: context.replaceEnd
   };
 
+  state.items = [];
+  state.activeIndex = -1;
+  if (state.panel) {
+    state.panel.hidden = false;
+  }
+  if (state.list) {
+    state.list.textContent = "";
+    const loading = document.createElement("p");
+    loading.className = "comment-mention-empty comment-mention-loading";
+    loading.textContent = "Đang tìm thành viên...";
+    state.list.appendChild(loading);
+  }
+
   const requestId = state.requestId + 1;
   state.requestId = requestId;
 
@@ -1526,7 +1674,7 @@ const triggerCommentMentionSearch = (textarea, state) => {
     clearTimeout(state.debounceTimer);
   }
 
-  state.debounceTimer = setTimeout(() => {
+  const runSearch = () => {
     fetchCommentMentionCandidates({ apiPath, query: context.query })
       .then((users) => {
         if (!state || requestId !== state.requestId) return;
@@ -1536,7 +1684,14 @@ const triggerCommentMentionSearch = (textarea, state) => {
         if (!state || requestId !== state.requestId) return;
         hideCommentMentionPanel(state);
       });
-  }, COMMENT_MENTION_DEBOUNCE_MS);
+  };
+
+  if (!useDebounce) {
+    runSearch();
+    return;
+  }
+
+  state.debounceTimer = setTimeout(runSearch, COMMENT_MENTION_DEBOUNCE_MS);
 };
 
 const handleCommentMentionKeyDown = (event, textarea, state) => {
@@ -1579,6 +1734,8 @@ const handleCommentMentionKeyDown = (event, textarea, state) => {
 const ensureCommentMentionAutocomplete = (textarea) => {
   if (!textarea || textarea.dataset.commentMentionReady === "1") return;
 
+  ensureCommentComposeShell(textarea);
+
   const panel = document.createElement("div");
   panel.className = "comment-mention-panel";
   panel.hidden = true;
@@ -1588,7 +1745,7 @@ const ensureCommentMentionAutocomplete = (textarea) => {
 
   const note = document.createElement("p");
   note.className = "comment-mention-note";
-  note.textContent = "Chỉ tag được Admin, Mod và người từng bình luận ở truyện này.";
+  note.textContent = "Tag được Admin, Mod và người từng bình luận ở truyện này.";
   panel.appendChild(note);
 
   const list = document.createElement("div");
@@ -1862,8 +2019,34 @@ const buildCommentStickerPicker = (textarea) => {
 const ensureCommentComposerTools = (textarea) => {
   if (!textarea || textarea.dataset.commentToolsReady === "1") return;
 
+  ensureCommentComposeShell(textarea);
+  ensureCommentMentionAutocomplete(textarea);
+
   const tools = document.createElement("div");
   tools.className = "comment-tools";
+
+  const mentionButton = document.createElement("button");
+  mentionButton.type = "button";
+  mentionButton.className = "comment-picker__toggle comment-picker__toggle--mention";
+  mentionButton.title = "Tag thành viên";
+  mentionButton.setAttribute("aria-label", "Tag thành viên");
+  mentionButton.innerHTML = "<span aria-hidden='true'>@</span><span class='comment-picker__sr'>Tag thành viên</span>";
+  mentionButton.addEventListener("click", () => {
+    const inserted = insertCommentMentionTrigger(textarea);
+    if (!inserted) return;
+
+    const triggerMentionNow = () => {
+      const mentionState = findCommentMentionStateByTextarea(textarea);
+      if (!mentionState) return;
+      hideAllCommentMentionPanels(textarea);
+      triggerCommentMentionSearch(textarea, mentionState, { debounce: false });
+    };
+
+    triggerMentionNow();
+    window.requestAnimationFrame(triggerMentionNow);
+  });
+
+  tools.appendChild(mentionButton);
   tools.appendChild(buildCommentEmojiPicker(textarea));
   tools.appendChild(buildCommentStickerPicker(textarea));
 
@@ -1903,7 +2086,6 @@ const ensureCommentComposerTools = (textarea) => {
     tools.appendChild(counterEl);
   }
 
-  ensureCommentMentionAutocomplete(textarea);
   textarea.dataset.commentToolsReady = "1";
 };
 
@@ -2575,6 +2757,8 @@ const initCommentRichText = (root) => {
 
 const ensureCommentCharCounter = (textarea) => {
   if (!textarea || textarea.dataset.commentCounterReady === "1") return;
+
+  ensureCommentComposeShell(textarea);
 
   const counter = document.createElement("p");
   counter.className = "comment-char-counter";
@@ -3967,7 +4151,10 @@ document.addEventListener("click", (event) => {
   const isInsideCommentTextarea = Boolean(
     target && target.closest && target.closest("#comments textarea[name='content']")
   );
-  if (!isInsideMentionPanel && !isInsideCommentTextarea) {
+  const isInsideCommentComposer = Boolean(
+    target && target.closest && target.closest("#comments .comment-compose-shell")
+  );
+  if (!isInsideMentionPanel && !isInsideCommentTextarea && !isInsideCommentComposer) {
     hideAllCommentMentionPanels();
   }
 });

@@ -54,7 +54,7 @@ const resolveRootCommentTable = async (rootCommentId) => {
 const buildMentionCommentSourceSql = (rootTable) => {
   if (rootTable === COMMENT_TABLE_FORUM) {
     return `
-      SELECT id, parent_id, author_user_id, created_at, manga_id, status
+      SELECT id, parent_id, author_user_id, created_at, CAST(NULL AS INTEGER) AS manga_id, status
       FROM forum_posts
     `;
   }
@@ -68,7 +68,7 @@ const buildMentionCommentSourceSql = (rootTable) => {
     SELECT id, parent_id, author_user_id, created_at, manga_id, status
     FROM comments
     UNION ALL
-    SELECT id, parent_id, author_user_id, created_at, manga_id, status
+    SELECT id, parent_id, author_user_id, created_at, CAST(NULL AS INTEGER) AS manga_id, status
     FROM forum_posts
   `;
 };
