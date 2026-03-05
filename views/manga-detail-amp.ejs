@@ -45,6 +45,12 @@
   };
 
   const loginHref = buildLoginHref(pageCanonical);
+  const runtimeSiteConfig = siteConfig && typeof siteConfig === "object" ? siteConfig : {};
+  const brandingConfig =
+    runtimeSiteConfig.branding && typeof runtimeSiteConfig.branding === "object"
+      ? runtimeSiteConfig.branding
+      : {};
+  const siteName = (brandingConfig.siteName || "BFANG Team").toString().trim() || "BFANG Team";
 %>
 <!doctype html>
 <html amp lang="vi">
@@ -333,7 +339,7 @@
   <body>
     <main class="site">
       <div class="topbar">
-        <a class="brand" href="/">BFANG Team</a>
+        <a class="brand" href="/"><%= siteName %></a>
         <div class="topbar-actions">
           <a class="link" href="/manga">Toàn bộ truyện</a>
           <a class="link" href="<%= loginHref %>">Đăng nhập</a>

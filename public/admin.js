@@ -30,6 +30,8 @@
     ? adminNavRoot.querySelector("[data-admin-nav-backdrop]")
     : null;
   const adminNavToggleIcon = adminNavToggle ? adminNavToggle.querySelector("i") : null;
+  const adminNavDesktopQuery =
+    typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 961px)") : null;
 
   let loadingOverlay = null;
   let loadingTitleEl = null;
@@ -98,8 +100,22 @@
     adminNavToggleIcon.classList.add(expanded ? "fa-xmark" : "fa-bars");
   };
 
+  const isAdminNavDesktop = () => Boolean(adminNavDesktopQuery && adminNavDesktopQuery.matches);
+
   const setAdminNavExpanded = (expanded) => {
     if (!adminNavRoot || !adminNavToggle || !adminNavDrawer) return;
+    if (isAdminNavDesktop()) {
+      adminNavRoot.classList.remove("is-open");
+      document.body.classList.remove("admin-nav-open");
+      adminNavToggle.setAttribute("aria-expanded", "true");
+      adminNavDrawer.hidden = false;
+      if (adminNavBackdrop) {
+        adminNavBackdrop.hidden = true;
+      }
+      setAdminNavIcon(false);
+      return;
+    }
+
     const next = Boolean(expanded);
     adminNavRoot.classList.toggle("is-open", next);
     document.body.classList.toggle("admin-nav-open", next);
@@ -112,6 +128,19 @@
   };
 
   if (adminNavRoot && adminNavToggle && adminNavDrawer) {
+    const syncAdminNavMode = () => {
+      if (isAdminNavDesktop()) {
+        adminNavToggle.setAttribute("aria-hidden", "true");
+        adminNavToggle.setAttribute("tabindex", "-1");
+        setAdminNavExpanded(true);
+        return;
+      }
+
+      adminNavToggle.removeAttribute("aria-hidden");
+      adminNavToggle.removeAttribute("tabindex");
+      setAdminNavExpanded(false);
+    };
+
     adminNavToggle.addEventListener("click", () => {
       setAdminNavExpanded(!adminNavRoot.classList.contains("is-open"));
     });
@@ -145,7 +174,15 @@
       adminNavToggle.focus();
     });
 
-    setAdminNavExpanded(false);
+    if (adminNavDesktopQuery) {
+      if (typeof adminNavDesktopQuery.addEventListener === "function") {
+        adminNavDesktopQuery.addEventListener("change", syncAdminNavMode);
+      } else if (typeof adminNavDesktopQuery.addListener === "function") {
+        adminNavDesktopQuery.addListener(syncAdminNavMode);
+      }
+    }
+
+    syncAdminNavMode();
   }
 
   const setButtonBusy = (button, label) => {

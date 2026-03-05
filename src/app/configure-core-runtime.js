@@ -28,6 +28,7 @@ const configureCoreRuntime = (app, deps) => {
     path,
     publicDir,
     requireSameOriginForAdminWrites,
+    siteConfig,
     serverAssetVersion,
     session,
     sessionStore,
@@ -289,6 +290,7 @@ app.use((req, res, next) => {
 
   res.locals.authPublicConfig = getAuthPublicConfigForRequest(req);
   res.locals.assetVersion = app.locals.assetVersion;
+  res.locals.siteConfig = siteConfig;
 
   res.locals.seo = buildSeoPayload(req, {
     canonicalPath: pathValue,
@@ -773,6 +775,7 @@ app.locals.formatDateTime = formatDateTime;
 app.locals.formatTimeAgo = formatTimeAgo;
 app.locals.cacheBust = cacheBust;
 app.locals.assetVersion = serverAssetVersion;
+app.locals.siteConfig = siteConfig;
 
   return {
     prebuildMinifiedScriptsAtStartup,

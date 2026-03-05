@@ -96,6 +96,7 @@ const registerSiteRoutes = (app, deps) => {
     sharp,
     sitemapCacheByOrigin,
     sitemapCacheTtlMs,
+    siteConfig,
     team,
     toAbsolutePublicUrl,
     toBooleanFlag,
@@ -130,6 +131,13 @@ const registerSiteRoutes = (app, deps) => {
   const MANGA_DETAIL_CHAPTERS_PER_PAGE = 30;
   const BOOKMARKS_PER_PAGE = 10;
   const FAST_NAV_PAGE_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300";
+  const siteSeoConfig = siteConfig && siteConfig.seo && typeof siteConfig.seo === "object" ? siteConfig.seo : {};
+  const homepageSeoTitle =
+    (siteSeoConfig.homepageTitle || "").toString().trim() || `${SEO_SITE_NAME} - nhóm dịch truyện tranh`;
+  const homepageSeoDescription =
+    (siteSeoConfig.homepageDescription || "").toString().trim() ||
+    `Đọc truyện tranh online và manga tiếng Việt mới nhất tại ${SEO_SITE_NAME}, cập nhật chương liên tục mỗi ngày.`;
+  const siteNotFoundDescription = `Trang bạn yêu cầu không tồn tại trên ${SEO_SITE_NAME}.`;
 
   const isForumCommentRequest = (req, commentRequestId) => {
     const requestIdText = (commentRequestId || "").toString().trim().toLowerCase();
@@ -2259,7 +2267,7 @@ const registerSiteRoutes = (app, deps) => {
       team,
       seo: buildSeoPayload(req, {
         title: "Không tìm thấy",
-        description: "Trang bạn yêu cầu không tồn tại trên BFANG Team.",
+        description: siteNotFoundDescription,
         robots: SEO_ROBOTS_NOINDEX,
         canonicalPath: ensureLeadingSlash(req.path || "/")
       })
@@ -2672,7 +2680,7 @@ app.get("/account", (req, res) => {
     team,
     seo: buildSeoPayload(req, {
       title: "Tài khoản",
-      description: "Quản lý thông tin hồ sơ và cài đặt tài khoản BFANG Team.",
+      description: `Quản lý thông tin hồ sơ và cài đặt tài khoản ${SEO_SITE_NAME}.`,
       robots: SEO_ROBOTS_NOINDEX,
       canonicalPath: "/account",
       ogType: "profile"
@@ -2968,7 +2976,7 @@ app.get(
       },
       seo: buildSeoPayload(req, {
         title: "Tin nhắn",
-        description: "Nhắn tin với các thành viên trong cộng đồng BFANG Team.",
+        description: `Nhắn tin với các thành viên trong cộng đồng ${SEO_SITE_NAME}.`,
         robots: SEO_ROBOTS_NOINDEX,
         canonicalPath: "/messages"
       })
@@ -5213,7 +5221,7 @@ app.get("/privacy-policy", (req, res) => {
     team,
     seo: buildSeoPayload(req, {
       title: "Privacy Policy",
-      description: "Privacy Policy for BFANG Team web services and OAuth login.",
+      description: `Privacy Policy for ${SEO_SITE_NAME} web services and OAuth login.`,
       robots: SEO_ROBOTS_NOINDEX,
       canonicalPath: "/privacy-policy"
     })
@@ -5224,12 +5232,12 @@ app.get("/terms-of-service", (req, res) => {
   res.render("terms-of-service", {
     title: "Terms of Service",
     team,
-    seo: buildSeoPayload(req, {
-      title: "Terms of Service",
-      description: "Terms of Service for using BFANG Team website and related features.",
-      robots: SEO_ROBOTS_NOINDEX,
-      canonicalPath: "/terms-of-service"
-    })
+      seo: buildSeoPayload(req, {
+        title: "Terms of Service",
+        description: `Terms of Service for using ${SEO_SITE_NAME} website and related features.`,
+        robots: SEO_ROBOTS_NOINDEX,
+        canonicalPath: "/terms-of-service"
+      })
   });
 });
 
@@ -6058,7 +6066,7 @@ app.get(
       buildCollectionPageSchema(req, {
         path: "/",
         name: `${SEO_SITE_NAME} - Trang chủ đọc truyện tranh`,
-        description: "Trang chủ BFANG Team với danh sách manga nổi bật, truyện mới cập nhật mỗi ngày.",
+        description: `Trang chủ ${SEO_SITE_NAME} với danh sách manga nổi bật, truyện mới cập nhật mỗi ngày.`,
         image: seoImage,
         keywords: homepageKeywords
       }),
@@ -6074,8 +6082,8 @@ app.get(
       homepage: homepagePayload.homepage,
       stats: homepagePayload.stats,
       seo: buildSeoPayload(req, {
-        title: "BFANG Team - nhóm dịch truyện tranh",
-        description: "Đọc truyện tranh online và manga tiếng Việt mới nhất tại BFANG Team, cập nhật chương liên tục mỗi ngày.",
+        title: homepageSeoTitle,
+        description: homepageSeoDescription,
         keywords: homepageKeywords,
         canonicalPath: "/",
         ampHtml: "/amp",
@@ -6244,11 +6252,11 @@ app.get(
     const seoTitle = seoTitleQuery
       ? `Tìm manga: ${seoTitleQuery}`
       : hasFilters
-        ? "Lọc manga BFANG Team"
+        ? `Lọc manga ${SEO_SITE_NAME}`
         : "Toàn bộ manga";
     const seoDescription = hasFilters
-      ? "Kết quả tìm kiếm và lọc manga trên BFANG Team. Mở bộ lọc để xem toàn bộ thư viện truyện."
-      : "Thư viện manga đầy đủ của BFANG Team, cập nhật liên tục theo nhóm dịch và thể loại.";
+      ? `Kết quả tìm kiếm và lọc manga trên ${SEO_SITE_NAME}. Mở bộ lọc để xem toàn bộ thư viện truyện.`
+      : `Thư viện manga đầy đủ của ${SEO_SITE_NAME}, cập nhật liên tục theo nhóm dịch và thể loại.`;
     const shouldNoIndex = hasFilters || pagination.page > 1;
     const genreNameById = new Map(genreStats.map((genre) => [Number(genre.id), (genre.name || "").toString().trim()]));
     const includeGenreNames = include.map((id) => genreNameById.get(Number(id)) || "").filter(Boolean);
@@ -6330,7 +6338,7 @@ app.get(
         team,
         seo: buildSeoPayload(req, {
           title: "Không tìm thấy",
-          description: "Trang bạn yêu cầu không tồn tại trên BFANG Team.",
+          description: siteNotFoundDescription,
           robots: SEO_ROBOTS_NOINDEX,
           canonicalPath: ensureLeadingSlash(req.path || "/")
         })
@@ -6422,7 +6430,7 @@ app.get(
       mangaBookmarked = Boolean(bookmarkRow && bookmarkRow.ok);
     }
     const mangaDescription = normalizeSeoText(
-      mangaRow.description || `Đọc manga ${mangaRow.title} tại BFANG Team.`,
+      mangaRow.description || `Đọc manga ${mangaRow.title} tại ${SEO_SITE_NAME}.`,
       180
     );
     const canonicalPath = `/manga/${encodeURIComponent(mangaRow.slug)}`;
@@ -6513,7 +6521,7 @@ app.get(
         team,
         seo: buildSeoPayload(req, {
           title: "Không tìm thấy",
-          description: "Trang bạn yêu cầu không tồn tại trên BFANG Team.",
+          description: siteNotFoundDescription,
           robots: SEO_ROBOTS_NOINDEX,
           canonicalPath: ensureLeadingSlash(req.path || "/")
         })
@@ -6557,7 +6565,7 @@ app.get(
         team,
         seo: buildSeoPayload(req, {
           title: "Không tìm thấy",
-          description: "Trang bạn yêu cầu không tồn tại trên BFANG Team.",
+          description: siteNotFoundDescription,
           robots: SEO_ROBOTS_NOINDEX,
           canonicalPath: ensureLeadingSlash(req.path || "/")
         })
@@ -6582,7 +6590,7 @@ app.get(
         team,
         seo: buildSeoPayload(req, {
           title: "Không tìm thấy",
-          description: "Trang bạn yêu cầu không tồn tại trên BFANG Team.",
+          description: siteNotFoundDescription,
           robots: SEO_ROBOTS_NOINDEX,
           canonicalPath: ensureLeadingSlash(req.path || "/")
         })
@@ -6600,7 +6608,7 @@ app.get(
         team,
         seo: buildSeoPayload(req, {
           title: "Không tìm thấy",
-          description: "Trang bạn yêu cầu không tồn tại trên BFANG Team.",
+          description: siteNotFoundDescription,
           robots: SEO_ROBOTS_NOINDEX,
           canonicalPath: ensureLeadingSlash(req.path || "/")
         })
@@ -6701,7 +6709,7 @@ app.get(
     const chapterBaseLabel = isOneshotChapter ? "Oneshot" : `Chương ${chapterRow.number}`;
     const chapterLabel = chapterTitle ? `${chapterBaseLabel} - ${chapterTitle}` : chapterBaseLabel;
     const chapterDescription = normalizeSeoText(
-      `Đọc ${chapterLabel} của ${mangaRow.title} trên BFANG Team. Trang đọc tối ưu cho di động và máy tính.`,
+      `Đọc ${chapterLabel} của ${mangaRow.title} trên ${SEO_SITE_NAME}. Trang đọc tối ưu cho di động và máy tính.`,
       180
     );
     const mangaCanonicalPath = `/manga/${encodeURIComponent(mangaRow.slug)}`;

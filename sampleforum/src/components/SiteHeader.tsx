@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import type { AuthSessionUser } from "@/types/forum";
 import { fetchAuthSession } from "@/lib/forum-api";
+import { getSiteBranding } from "@/lib/site-branding";
 
 type SiteHeaderProps = {
   onSessionChange?: (user: AuthSessionUser | null) => void;
@@ -14,18 +15,21 @@ type NavItem = {
   external?: boolean;
 };
 
-const navItems: NavItem[] = [
-  { label: "Diễn đàn", href: "/" },
-  { label: "Toàn bộ truyện", href: "/manga", external: true },
-  { label: "Đăng truyện", href: "/publish", external: true },
-  { label: "Về BFANG", href: "/#about", external: true },
-];
-
 export function SiteHeader({ onSessionChange }: SiteHeaderProps) {
   const location = useLocation();
   const [sessionUser, setSessionUser] = useState<AuthSessionUser | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const siteBranding = useMemo(() => getSiteBranding(), []);
+  const navItems = useMemo<NavItem[]>(
+    () => [
+      { label: "Diễn đàn", href: "/" },
+      { label: "Toàn bộ truyện", href: "/manga", external: true },
+      { label: "Đăng truyện", href: "/publish", external: true },
+      { label: siteBranding.aboutNavLabel, href: "/#about", external: true },
+    ],
+    [siteBranding.aboutNavLabel]
+  );
 
   const loadSession = async () => {
     try {
@@ -129,9 +133,9 @@ export function SiteHeader({ onSessionChange }: SiteHeaderProps) {
     <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4">
         <a className="flex shrink-0 items-center gap-2" href="/">
-          <img alt="BFANG" className="h-6 w-6" src="/logobfang.svg" />
-          <span className="text-base font-bold tracking-wide text-primary">BFANG</span>
-          <span className="text-sm font-semibold text-foreground">Team</span>
+          <img alt={siteBranding.brandMark} className="h-6 w-6" src="/logobfang.svg" />
+          <span className="text-base font-bold tracking-wide text-primary">{siteBranding.brandMark}</span>
+          <span className="text-sm font-semibold text-foreground">{siteBranding.brandSubmark}</span>
         </a>
 
         <nav className="hidden items-center gap-1 md:flex">

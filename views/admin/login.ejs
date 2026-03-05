@@ -1,5 +1,8 @@
 <!DOCTYPE html>
 <html lang="vi">
+  <% const adminUiConfig = siteConfig && siteConfig.admin && typeof siteConfig.admin === "object" ? siteConfig.admin : {}; %>
+  <% const siteName = (((siteConfig || {}).branding || {}).siteName || "BFANG Team").toString().trim() || "BFANG Team"; %>
+  <% const adminLoginNote = (adminUiConfig.loginNote || `Truy cập dành riêng cho ${siteName}.`).toString().trim() || `Truy cập dành riêng cho ${siteName}.`; %>
   <%- include("../partials/head", { title }) %>
   <body>
     <div class="site admin">
@@ -8,7 +11,7 @@
           <% if (passwordEnabled) { %>
             <form class="panel admin-card" method="post" action="/admin/login">
               <h1>Đăng nhập quản trị</h1>
-              <p class="note">Truy cập dành riêng cho BFANG Team.</p>
+              <p class="note"><%= adminLoginNote %></p>
               <input type="hidden" name="next" value="<%= nextTarget || '' %>" />
               <input type="hidden" name="fallback" value="<%= fallbackTarget || '' %>" />
               <% if (error) { %>

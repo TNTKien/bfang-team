@@ -62,6 +62,18 @@ Trên Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
+### 2.1) Tuỳ biến thương hiệu bằng `config.json`
+
+Toàn bộ thông tin nhận diện site được gom vào `config.json` ở thư mục gốc:
+
+- Tên web và brand text (`siteName`, `brandMark`, `brandSubmark`)
+- Nội dung trang chủ (câu chào mừng, giới thiệu, năm thành lập, tiêu chuẩn nội dung)
+- Link liên hệ Facebook/Discord
+- Một số SEO text mặc định
+- Nhãn hiển thị khu admin
+
+Bạn chỉ cần sửa `config.json`, khởi động lại server là giao diện sẽ đọc dữ liệu mới.
+
 ### 3) Cấu hình tối thiểu trong `.env`
 
 ```env

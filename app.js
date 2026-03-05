@@ -34,6 +34,7 @@ const createMentionNotificationDomain = require("./src/domains/mention-notificat
 const createInitDbDomain = require("./src/domains/init-db-domain");
 const configureCoreRuntime = require("./src/app/configure-core-runtime");
 const { parseEnvBoolean } = require("./src/utils/env");
+const { loadSiteConfig } = require("./src/config/site-config");
 require("dotenv").config();
 
 const app = express();
@@ -43,6 +44,9 @@ const appEnv = (process.env.APP_ENV || process.env.NODE_ENV || "development")
   .trim()
   .toLowerCase();
 const isProductionApp = appEnv === "production" || appEnv === "prod";
+const siteConfig = loadSiteConfig(path.join(__dirname, "config.json"));
+const siteBrandingConfig = siteConfig.branding || {};
+const siteSeoConfig = siteConfig.seo || {};
 const serverAssetVersion = Date.now();
 const serverSessionVersion = String(serverAssetVersion);
 const cssMinifier = new CleanCSS({ level: 1, inline: false });
@@ -63,8 +67,9 @@ const safeCompareText = (leftValue, rightValue) => {
   return crypto.timingSafeEqual(left, right);
 };
 
-const SEO_SITE_NAME = "BFANG Team";
-const SEO_DEFAULT_DESCRIPTION = "BFANG Team - nhóm dịch truyện tranh";
+const SEO_SITE_NAME = siteBrandingConfig.siteName || "BFANG Team";
+const SEO_DEFAULT_DESCRIPTION =
+  siteSeoConfig.defaultDescription || `${SEO_SITE_NAME} - nhóm dịch truyện tranh`;
 const SEO_DEFAULT_KEYWORDS = [
   "đọc truyện tranh online",
   "manga tiếng Việt",
@@ -76,7 +81,7 @@ const SEO_DEFAULT_KEYWORDS = [
   "truyện tranh romance",
   "truyện tranh drama",
   "nhóm dịch truyện tranh",
-  "BFANG Team"
+  SEO_SITE_NAME
 ];
 const SEO_ROBOTS_INDEX = "index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1";
 const SEO_ROBOTS_NOINDEX =
@@ -2529,8 +2534,10 @@ const getPaginatedCommentTree = async ({ mangaId, chapterNumber, page, perPage, 
 };
 
 const team = {
-  name: "BFANG Team",
-  tagline: "Nền tảng chỉ dành cho manga. Không tạp. Không lẫn thể loại khác."
+  name: SEO_SITE_NAME,
+  tagline:
+    (siteConfig.homepage && siteConfig.homepage.introduction) ||
+    "Nền tảng chỉ dành cho manga. Không tạp. Không lẫn thể loại khác."
 };
 
 const homepageDefaults = {
@@ -3341,6 +3348,7 @@ const coreRuntime = configureCoreRuntime(app, {
   path,
   publicDir,
   requireSameOriginForAdminWrites,
+  siteConfig,
   serverAssetVersion,
   session,
   sessionStore,
@@ -3458,6 +3466,7 @@ const appContainer = {
   sharp,
   sitemapCacheByOrigin,
   sitemapCacheTtlMs,
+  siteConfig,
   team,
   toAbsolutePublicUrl,
   toBooleanFlag,
@@ -3555,8 +3564,97 @@ if (isForumPageEnabled) {
   const forumDistDir = path.join(__dirname, "sampleforum", "dist");
   const forumIndexPath = path.join(forumDistDir, "index.html");
   if (fs.existsSync(forumIndexPath)) {
-    app.get("/forum", (_req, res) => {
-      res.sendFile(forumIndexPath);
+    const forumSiteName =
+      (siteBrandingConfig && siteBrandingConfig.siteName ? String(siteBrandingConfig.siteName).trim() : "") ||
+      SEO_SITE_NAME;
+    const forumTitle = `${forumSiteName} Forum`;
+    const forumDescription = `Forum thảo luận cộng đồng ${forumSiteName}`;
+    const forumBrandMark =
+      (siteBrandingConfig && siteBrandingConfig.brandMark ? String(siteBrandingConfig.brandMark).trim() : "") ||
+      forumSiteName;
+    const derivedTwitterSiteToken = forumBrandMark.replace(/[^a-z0-9_]/gi, "");
+    const forumTwitterSite =
+      (siteSeoConfig && siteSeoConfig.twitterSite ? String(siteSeoConfig.twitterSite).trim() : "") ||
+      (derivedTwitterSiteToken ? `@${derivedTwitterSiteToken}` : "");
+
+    const forumRuntimePayloadJson = JSON.stringify({
+      siteConfig,
+      forumMeta: {
+        siteName: forumSiteName,
+        title: forumTitle,
+        description: forumDescription,
+        twitterSite: forumTwitterSite
+      }
+    }).replace(/</g, "\\u003c");
+    const forumRuntimeScript = [
+      "(() => {",
+      `  const payload = ${forumRuntimePayloadJson};`,
+      "  window.__SITE_CONFIG = payload && payload.siteConfig ? payload.siteConfig : {};",
+      "  const forumMeta = payload && payload.forumMeta ? payload.forumMeta : {};",
+      "  const siteName = (forumMeta && forumMeta.siteName ? String(forumMeta.siteName) : \"\").trim();",
+      "  const title = (forumMeta && forumMeta.title ? String(forumMeta.title) : \"\").trim() || (siteName ? `${siteName} Forum` : \"Forum\");",
+      "  const description = (forumMeta && forumMeta.description ? String(forumMeta.description) : \"\").trim() || (siteName ? `Forum thảo luận cộng đồng ${siteName}` : \"Forum thảo luận cộng đồng\");",
+      "  const setMeta = (selector, value) => {",
+      "    if (!value || typeof document === \"undefined\") return;",
+      "    const node = document.querySelector(selector);",
+      "    if (node && typeof node.setAttribute === \"function\") {",
+      "      node.setAttribute(\"content\", value);",
+      "    }",
+      "  };",
+      "  if (typeof document !== \"undefined\") {",
+      "    document.title = title;",
+      "    setMeta('meta[name=\"description\"]', description);",
+      "    setMeta('meta[name=\"author\"]', siteName || title);",
+      "    setMeta('meta[property=\"og:title\"]', title);",
+      "    setMeta('meta[property=\"og:description\"]', description);",
+      "    if (forumMeta && forumMeta.twitterSite) {",
+      "      setMeta('meta[name=\"twitter:site\"]', String(forumMeta.twitterSite).trim());",
+      "    }",
+      "  }",
+      "})();"
+    ].join("\n");
+    const forumConfigScriptTag = '<script src="/forum/site-config.js"></script>';
+    const getForumIndexHtml = (() => {
+      let cachedMtimeMs = -1;
+      let cachedHtml = "";
+
+      return () => {
+        const stat = fs.statSync(forumIndexPath);
+        const mtimeMs = Number(stat.mtimeMs || 0);
+        if (cachedHtml && cachedMtimeMs === mtimeMs) {
+          return cachedHtml;
+        }
+
+        const sourceHtml = fs.readFileSync(forumIndexPath, "utf8");
+        cachedHtml = sourceHtml.includes("/forum/site-config.js")
+          ? sourceHtml
+          : sourceHtml.includes('<script type="module"')
+            ? sourceHtml.replace('<script type="module"', `${forumConfigScriptTag}<script type="module"`)
+            : sourceHtml.includes("</head>")
+              ? sourceHtml.replace("</head>", `${forumConfigScriptTag}</head>`)
+              : `${forumConfigScriptTag}${sourceHtml}`;
+        cachedMtimeMs = mtimeMs;
+        return cachedHtml;
+      };
+    })();
+
+    const sendForumIndex = (_req, res) => {
+      try {
+        const html = getForumIndexHtml();
+        res.type("text/html; charset=utf-8");
+        res.set("Cache-Control", "no-store");
+        return res.send(html);
+      } catch (error) {
+        console.warn("Cannot inject site config into forum index.", error);
+        return res.sendFile(forumIndexPath);
+      }
+    };
+
+    app.get("/forum", sendForumIndex);
+    app.get("/forum/site-config.js", (_req, res) => {
+      res.type("application/javascript; charset=utf-8");
+      res.set("Cache-Control", "no-store");
+      return res.send(forumRuntimeScript);
     });
     app.use(
       "/forum",
@@ -3564,12 +3662,8 @@ if (isForumPageEnabled) {
         index: false
       })
     );
-    app.get("/forum/admin", requireAdmin, (_req, res) => {
-      res.sendFile(forumIndexPath);
-    });
-    app.get("/forum/admin/*", requireAdmin, (_req, res) => {
-      res.sendFile(forumIndexPath);
-    });
+    app.get("/forum/admin", requireAdmin, sendForumIndex);
+    app.get("/forum/admin/*", requireAdmin, sendForumIndex);
     app.get("/forum/*", (req, res, next) => {
       const requestPath = (req.path || "").toString();
       if (requestPath.startsWith("/forum/api/")) {
@@ -3578,7 +3672,7 @@ if (isForumPageEnabled) {
       if (requestPath.startsWith("/forum/tmp/") || requestPath.startsWith("/forum/posts/")) {
         return res.status(404).send("Không tìm thấy tài nguyên forum.");
       }
-      return res.sendFile(forumIndexPath);
+      return sendForumIndex(req, res);
     });
   } else {
     console.warn("Forum page enabled nhưng chưa có build frontend tại sampleforum/dist.");
@@ -3592,7 +3686,7 @@ app.use((req, res) => {
     team,
     seo: buildSeoPayload(req, {
       title: "Không tìm thấy",
-      description: "Trang bạn yêu cầu không tồn tại trên BFANG Team.",
+      description: `Trang bạn yêu cầu không tồn tại trên ${SEO_SITE_NAME}.`,
       robots: SEO_ROBOTS_NOINDEX,
       canonicalPath: ensureLeadingSlash(req.path || "/")
     })
@@ -3644,7 +3738,7 @@ const startServer = async (context = null) => {
 
   return new Promise((resolve, reject) => {
     const server = runtimeApp.listen(PORT, () => {
-      console.log(`BFANG manga server running on port ${PORT}`);
+      console.log(`${SEO_SITE_NAME} manga server running on port ${PORT}`);
       console.log(`Asset version token: ${serverAssetVersion}`);
       console.log(
         jsMinifySummary.enabled

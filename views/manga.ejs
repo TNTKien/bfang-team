@@ -84,6 +84,12 @@
       ]
     }
     : null;
+  const runtimeSiteConfig = siteConfig && typeof siteConfig === "object" ? siteConfig : {};
+  const brandingConfig =
+    runtimeSiteConfig.branding && typeof runtimeSiteConfig.branding === "object"
+      ? runtimeSiteConfig.branding
+      : {};
+  const siteName = (brandingConfig.siteName || "BFANG Team").toString().trim() || "BFANG Team";
 %>
 <!DOCTYPE html>
 <html lang="vi">
@@ -103,7 +109,7 @@
             <h1>Toàn bộ truyện</h1>
             <span class="section-line"></span>
           </div>
-          <p class="lede">Toàn bộ series do BFANG Team lưu trữ và quản lý.</p>
+          <p class="lede">Toàn bộ series do <%= siteName %> lưu trữ và quản lý.</p>
           <div class="filter-panel panel">
             <div class="filter-head">
               <p class="filter-title">Tìm kiếm nâng cao</p>

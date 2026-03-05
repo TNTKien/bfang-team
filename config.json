@@ -1,0 +1,39 @@
+{
+  "branding": {
+    "siteName": "Mòe Truyện",
+    "brandMark": "Mòe",
+    "brandSubmark": "Truyện",
+    "aboutNavLabel": "Về MoeTruyen",
+    "heroKicker": "Mòe Truyện Manga",
+    "updateTag": "MoeTruyen",
+    "footerYear": "2026"
+  },
+  "homepage": {
+    "welcomeMessage": "Chào mừng bạn đến với Mòe Truyện.",
+    "introduction": "Mòe Truyện là một trang truyện tranh với hàng chục đầu truyện và hàng trăm chương truyện.",
+    "aboutTitle": "Về Mòe Truyện",
+    "foundedYear": "2019",
+    "contentStandardsTitle": "Tiêu chuẩn nội dung",
+    "contentStandards": [
+      "Chúng tôi chỉ đăng tải truyện tranh.",
+      "Các dự án được dịch thuật từ tiếng Anh hoặc tiếng Nhật và sử dụng Adobe Photoshop để biên tập."
+    ],
+    "contactTitle": "Kênh liên hệ"
+  },
+  "contact": {
+    "facebookUrl": "https://facebook.com/Bfangteam/",
+    "facebookLabel": "facebook.com/Bfangteam",
+    "discordUrl": "https://discord.moetruyen.net/",
+    "discordLabel": "discord.moetruyen.net"
+  },
+  "seo": {
+    "defaultDescription": "Mòe Truyện - Truyện tranh",
+    "homepageTitle": "Mòe Truyện - Truyện tranh",
+    "homepageDescription": "Đọc truyện tranh online và manga tiếng Việt mới nhất tại Mòe Truyện, cập nhật chương liên tục mỗi ngày."
+  },
+  "admin": {
+    "teamManageLabel": "Mòe Truyện Manage",
+    "adminLabel": "MoeTruyen Admin",
+    "loginNote": "Truy cập dành riêng cho Mòe Truyện."
+  }
+}

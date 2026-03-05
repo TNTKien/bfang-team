@@ -565,33 +565,37 @@ const createInitDbDomain = (deps) => {
     );
   };
 
+  const normalizedSiteName = (team && team.name ? String(team.name) : "").replace(/\s+/g, " ").trim() || "BFANG Team";
+  const normalizedSiteToken = normalizedSiteName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "bfang";
+  const normalizedSiteMark = normalizedSiteName.split(" ").filter(Boolean)[0] || "BFANG";
+
   const forumSeedAuthors = [
     {
       id: "forum_seed_admin",
-      username: "bfang_forum_admin",
-      displayName: "Admin BFANG",
-      email: "forum-admin@bfang.local",
+      username: `${normalizedSiteToken}_forum_admin`,
+      displayName: `Admin ${normalizedSiteMark}`,
+      email: `forum-admin@${normalizedSiteToken}.local`,
       avatarUrl: "/logobfang.svg"
     },
     {
       id: "forum_seed_mod",
-      username: "bfang_forum_mod",
+      username: `${normalizedSiteToken}_forum_mod`,
       displayName: "Mod Cộng Đồng",
-      email: "forum-mod@bfang.local",
+      email: `forum-mod@${normalizedSiteToken}.local`,
       avatarUrl: "/logobfang.svg"
     },
     {
       id: "forum_seed_reviewer",
-      username: "bfang_reviewer",
+      username: `${normalizedSiteToken}_reviewer`,
       displayName: "Reviewer Truyện",
-      email: "forum-review@bfang.local",
+      email: `forum-review@${normalizedSiteToken}.local`,
       avatarUrl: "/logobfang.svg"
     },
     {
       id: "forum_seed_reader",
-      username: "bfang_reader",
+      username: `${normalizedSiteToken}_reader`,
       displayName: "Bạn Đọc Nhiệt Huyết",
-      email: "forum-reader@bfang.local",
+      email: `forum-reader@${normalizedSiteToken}.local`,
       avatarUrl: "/logobfang.svg"
     }
   ];

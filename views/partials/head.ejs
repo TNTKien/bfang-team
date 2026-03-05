@@ -1,9 +1,14 @@
 <head>
   <% const seoData = seo && typeof seo === "object" ? seo : {}; %>
-  <% const siteName = (seoData.siteName || "BFANG Team").toString().trim() || "BFANG Team"; %>
+  <% const runtimeSiteConfig = siteConfig && typeof siteConfig === "object" ? siteConfig : {}; %>
+  <% const brandingConfig = runtimeSiteConfig.branding && typeof runtimeSiteConfig.branding === "object" ? runtimeSiteConfig.branding : {}; %>
+  <% const seoConfig = runtimeSiteConfig.seo && typeof runtimeSiteConfig.seo === "object" ? runtimeSiteConfig.seo : {}; %>
+  <% const siteNameFallback = (brandingConfig.siteName || "BFANG Team").toString().trim() || "BFANG Team"; %>
+  <% const siteName = (seoData.siteName || siteNameFallback).toString().trim() || siteNameFallback; %>
   <% const pageTitle = (seoData.title || title || "").toString().trim(); %>
   <% const fullTitle = pageTitle ? `${pageTitle} — ${siteName}` : siteName; %>
-  <% const seoDescription = (seoData.description || "BFANG Team - nhóm dịch truyện tranh").toString().trim(); %>
+  <% const defaultSeoDescription = (seoConfig.defaultDescription || `${siteNameFallback} - nhóm dịch truyện tranh`).toString().trim(); %>
+  <% const seoDescription = (seoData.description || defaultSeoDescription).toString().trim(); %>
   <% const seoKeywordListRaw = Array.isArray(seoData.keywordList)
     ? seoData.keywordList
     : (seoData.keywords || "").toString().split(","); %>
@@ -34,7 +39,7 @@
   <% const ogType = (seoData.ogType || "website").toString().trim() || "website"; %>
   <% const ogImage = (seoData.image || "").toString().trim(); %>
   <% const twitterCard = (seoData.twitterCard || (ogImage ? "summary_large_image" : "summary")).toString().trim(); %>
-  <% const googleFontsStylesheetUrl = "https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap"; %>
+  <% const googleFontsStylesheetUrl = "https://fonts.googleapis.com/css2?family=Anton&family=Noto+Sans+JP:wght@400;500;700&display=swap"; %>
   <% const fontAwesomeStylesheetUrl = "https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.7.2/css/all.min.css"; %>
   <% const flowbiteScriptUrl = "https://cdn.jsdelivr.net/npm/flowbite@2.5.2/dist/flowbite.min.js"; %>
   <% const jsonLdList = Array.isArray(seoData.jsonLd) ? seoData.jsonLd : []; %>
@@ -183,10 +188,7 @@
     <link rel="preconnect" href="<%= origin %>" />
   <% }) %>
   <% if (isHeadStyleEnabled("googleFonts")) { %>
-    <link rel="stylesheet" href="<%= googleFontsStylesheetUrl %>" media="print" data-head-async-style="1" />
-    <noscript>
-      <link rel="stylesheet" href="<%= googleFontsStylesheetUrl %>" />
-    </noscript>
+    <link rel="stylesheet" href="<%= googleFontsStylesheetUrl %>" />
   <% } %>
   <% if (isHeadStyleEnabled("fontAwesome")) { %>
     <link rel="stylesheet" href="<%= fontAwesomeStylesheetUrl %>" media="print" data-head-async-style="1" />
@@ -241,6 +243,7 @@
   <% } %>
 
   <script nonce="<%= cspNonce || "" %>">
+    window.__SITE_CONFIG = <%- JSON.stringify(runtimeSiteConfig || {}).replace(/</g, "\\u003c") %>;
     window.__AUTH = <%- JSON.stringify(authPublicConfig || {}) %>;
     if (window.__AUTH && typeof window.__AUTH === "object") {
       window.__AUTH.notificationsScriptUrl = "<%= assetUrl("/notifications.js") %>";

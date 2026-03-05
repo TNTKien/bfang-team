@@ -17,6 +17,7 @@
           <% const initialPendingRequests = Array.isArray(initialState.pendingRequests) ? initialState.pendingRequests : []; %>
           <% const initialManageMangaUrl = (initialState.manageMangaUrl || "").toString().trim(); %>
           <% const initialRequiresLogin = Boolean(initialState.requiresLogin); %>
+          <% const siteBrandMark = (((siteConfig || {}).branding || {}).brandMark || "BFANG").toString().trim() || "BFANG"; %>
           <% const initialTeamLink = initialTeam
             ? `/team/${encodeURIComponent(String(initialTeam.id || ""))}/${encodeURIComponent(initialTeam.slug || "")}`
             : "#"; %>
@@ -103,7 +104,7 @@
         </div>
         <label class="account-field">
           <span>Tìm theo tên nhóm</span>
-          <input type="text" maxlength="60" data-join-team-search placeholder="VD: BFANG team" />
+          <input type="text" maxlength="60" data-join-team-search placeholder="VD: <%= siteBrandMark %> team" />
         </label>
         <div class="publish-search-results" data-join-team-results></div>
       </div>

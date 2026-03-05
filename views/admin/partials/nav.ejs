@@ -19,6 +19,13 @@
   const teamModeTeamHref = isTeamMode && teamModeTeamId > 0 && teamModeTeamSlug
     ? `/team/${encodeURIComponent(String(teamModeTeamId))}/${encodeURIComponent(teamModeTeamSlug)}`
     : "/publish";
+  const adminUiConfig = siteConfig && siteConfig.admin && typeof siteConfig.admin === "object" ? siteConfig.admin : {};
+  const brandingConfig = siteConfig && siteConfig.branding && typeof siteConfig.branding === "object" ? siteConfig.branding : {};
+  const siteName = (brandingConfig.siteName || "BFANG Team").toString().trim() || "BFANG Team";
+  const defaultTeamManageLabel = `${siteName} Manage`;
+  const defaultAdminLabel = `${(brandingConfig.brandMark || "BFANG").toString().trim() || "BFANG"} Admin`;
+  const teamManageLabel = (adminUiConfig.teamManageLabel || defaultTeamManageLabel).toString().trim() || defaultTeamManageLabel;
+  const adminLabel = (adminUiConfig.adminLabel || defaultAdminLabel).toString().trim() || defaultAdminLabel;
 %>
 <header class="admin-header">
   <div class="container admin-bar" data-admin-nav-root>
@@ -33,7 +40,7 @@
       <span class="sr-only">Mở menu điều hướng quản trị</span>
     </button>
     <a class="admin-brand" href="<%= isTeamMode ? teamModeMangaHref : '/admin' %>">
-      <%= isTeamMode ? "BFANG Team Manage" : "BFANG Admin" %>
+      <%= isTeamMode ? teamManageLabel : adminLabel %>
     </a>
 
     <div class="admin-nav-backdrop" data-admin-nav-backdrop hidden></div>

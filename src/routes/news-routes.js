@@ -13,6 +13,7 @@ const NEWS_NO_STORE_CACHE_CONTROL = "no-store, no-cache, must-revalidate, proxy-
 
 const createNewsRoutes = (app, deps) => {
   const {
+    SEO_SITE_NAME,
     SEO_ROBOTS_INDEX,
     SEO_ROBOTS_NOINDEX,
     asyncHandler,
@@ -280,7 +281,7 @@ const createNewsRoutes = (app, deps) => {
       team,
       seo: buildSeoPayload(req, {
         title: "Không tìm thấy",
-        description: "Trang bạn yêu cầu không tồn tại trên BFANG Team.",
+        description: `Trang bạn yêu cầu không tồn tại trên ${SEO_SITE_NAME}.`,
         robots: SEO_ROBOTS_NOINDEX,
         canonicalPath: `${NEWS_BASE_PATH}${req.path || ""}`
       })
@@ -330,7 +331,7 @@ const createNewsRoutes = (app, deps) => {
         title: `${categoryInfo.name} - Tin tức Anime & Manga mới nhất`,
         seo: buildSeoPayload(req, {
           title: `${categoryInfo.name} - Tin tức Anime & Manga`,
-          description: "Cập nhật tin tức Anime, Manga, Light Novel mới nhất mỗi ngày trên BFANG Team.",
+          description: `Cập nhật tin tức Anime, Manga, Light Novel mới nhất mỗi ngày trên ${SEO_SITE_NAME}.`,
           canonicalPath: NEWS_BASE_PATH,
           image: seoImage,
           ogType: "website",
@@ -341,7 +342,7 @@ const createNewsRoutes = (app, deps) => {
             "anime mới",
             "manga mới",
             "anime manga việt nam",
-            "BFANG Team"
+            SEO_SITE_NAME
           ]
         }),
         news: paginatedNews,

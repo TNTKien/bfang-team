@@ -36,6 +36,19 @@
   };
 
   const loginHref = buildLoginHref(pageCanonical);
+  const runtimeSiteConfig = siteConfig && typeof siteConfig === "object" ? siteConfig : {};
+  const brandingConfig =
+    runtimeSiteConfig.branding && typeof runtimeSiteConfig.branding === "object"
+      ? runtimeSiteConfig.branding
+      : {};
+  const homepageConfig =
+    runtimeSiteConfig.homepage && typeof runtimeSiteConfig.homepage === "object"
+      ? runtimeSiteConfig.homepage
+      : {};
+  const siteName = (brandingConfig.siteName || "BFANG Team").toString().trim() || "BFANG Team";
+  const welcomeMessage =
+    (homepageConfig.welcomeMessage || `Chào mừng bạn đến với website của ${siteName}.`).toString().trim() ||
+    `Chào mừng bạn đến với website của ${siteName}.`;
 %>
 <!doctype html>
 <html amp lang="vi">
@@ -324,13 +337,13 @@
     <main class="site">
       <header class="hero">
         <div class="hero-top">
-          <a class="brand" href="/">BFANG Team</a>
+          <a class="brand" href="/"><%= siteName %></a>
           <div class="hero-actions">
             <a class="hero-link" href="/manga">Toàn bộ truyện</a>
             <a class="hero-link" href="<%= loginHref %>">Đăng nhập</a>
           </div>
         </div>
-        <h1>Chào mừng bạn đến với website của BFANG Team.</h1>
+        <h1><%= welcomeMessage %></h1>
         <div class="stats">
           <div class="stat">
             <b><%= stats && stats.totalSeries ? stats.totalSeries : 0 %></b>

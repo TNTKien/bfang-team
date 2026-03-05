@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { fetchAuthSession } from "@/lib/forum-api";
 import { AUTH_PROVIDER_DIALOG_EVENT, openAuthProviderDialog } from "@/lib/auth-login";
+import { getSiteBranding } from "@/lib/site-branding";
 import type { AuthSessionUser } from "@/types/forum";
 
 type NavLinkItem = {
@@ -80,6 +81,7 @@ export function Navbar() {
 
   const location = useLocation();
   const navigate = useNavigate();
+  const siteBranding = useMemo(() => getSiteBranding(), []);
   const notificationMenuOpenRef = useRef(false);
   const notificationMenuOpen = mobileNotificationMenuOpen || desktopNotificationMenuOpen;
 
@@ -594,8 +596,8 @@ export function Navbar() {
     <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
         <a href="/" className="flex items-center gap-1.5 shrink-0">
-          <span className="text-base font-bold tracking-wide text-primary">BFANG</span>
-          <span className="text-sm font-semibold text-foreground">Team</span>
+          <span className="text-base font-bold tracking-wide text-primary">{siteBranding.brandMark}</span>
+          <span className="text-sm font-semibold text-foreground">{siteBranding.brandSubmark}</span>
         </a>
 
         <nav className="hidden md:flex items-center gap-1">

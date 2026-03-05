@@ -6,6 +6,15 @@
   const DETAIL_BUTTON_BOUND_ATTR = "data-bookmark-bound";
   const PAGE_BOUND_ATTR = "data-bookmark-page-bound";
 
+  const resolveSiteName = () => {
+    const config = window.__SITE_CONFIG && typeof window.__SITE_CONFIG === "object" ? window.__SITE_CONFIG : null;
+    const branding = config && config.branding && typeof config.branding === "object" ? config.branding : null;
+    const name = branding && branding.siteName ? String(branding.siteName).trim() : "";
+    return name || "BFANG Team";
+  };
+
+  const FALLBACK_AUTHOR_NAME = resolveSiteName();
+
   let detailBookmarkButton = null;
   let detailBookmarkLabel = null;
   let detailBookmarked = false;
@@ -381,7 +390,7 @@
             ? String(item.mangaGroupName).trim()
             : item && item.mangaAuthor
               ? String(item.mangaAuthor).trim()
-              : "BFANG Team";
+              : FALLBACK_AUTHOR_NAME;
         const coverUrl = cacheBust(
           item && item.mangaCover ? item.mangaCover : "",
           item && item.mangaCoverUpdatedAt != null ? item.mangaCoverUpdatedAt : 0

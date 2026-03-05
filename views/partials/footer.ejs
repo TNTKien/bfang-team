@@ -1,7 +1,17 @@
+<%
+  const runtimeSiteConfig = siteConfig && typeof siteConfig === "object" ? siteConfig : {};
+  const brandingConfig =
+    runtimeSiteConfig.branding && typeof runtimeSiteConfig.branding === "object"
+      ? runtimeSiteConfig.branding
+      : {};
+  const siteName = (brandingConfig.siteName || "BFANG Team").toString().trim() || "BFANG Team";
+  const footerYear =
+    (brandingConfig.footerYear || String(new Date().getFullYear())).toString().trim() || String(new Date().getFullYear());
+%>
 <footer class="site-footer">
   <div class="container footer-inner">
     <div class="footer-meta">
-      <span>© 2026 BFANG Team</span>
+      <span>© <%= footerYear %> <%= siteName %></span>
       <div class="footer-links">
         <a class="inline-link" href="/privacy-policy">Privacy Policy</a>
         <span aria-hidden="true">·</span>

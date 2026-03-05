@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+  <% const siteName = (((siteConfig || {}).branding || {}).siteName || "BFANG Team").toString().trim() || "BFANG Team"; %>
   <%- include("partials/head", { title }) %>
   <body>
     <div class="site">
@@ -16,7 +17,7 @@
 
             <h2>1. Introduction</h2>
             <p>
-              This Privacy Policy explains how BFANG Team ("we", "our", "us") collects, uses, and
+              This Privacy Policy explains how <%= siteName %> ("we", "our", "us") collects, uses, and
               protects information when you use our website and related services.
             </p>
 
@@ -82,7 +83,7 @@
 
             <h2>10. Contact</h2>
             <p>
-              For privacy-related questions, contact BFANG Team through our official website channels.
+              For privacy-related questions, contact <%= siteName %> through our official website channels.
             </p>
           </article>
         </section>

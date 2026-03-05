@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+  <% const siteName = (((siteConfig || {}).branding || {}).siteName || "BFANG Team").toString().trim() || "BFANG Team"; %>
   <%- include("partials/head", { title }) %>
   <body>
     <div class="site">
@@ -16,7 +17,7 @@
 
             <h2>1. Acceptance of Terms</h2>
             <p>
-              By accessing or using BFANG Team services, you agree to these Terms of Service. If you do not agree,
+              By accessing or using <%= siteName %> services, you agree to these Terms of Service. If you do not agree,
               please do not use the service.
             </p>
 
@@ -64,7 +65,7 @@
 
             <h2>9. Limitation of Liability</h2>
             <p>
-              To the maximum extent permitted by law, BFANG Team is not liable for indirect, incidental, special,
+              To the maximum extent permitted by law, <%= siteName %> is not liable for indirect, incidental, special,
               consequential, or punitive damages arising from use of the service.
             </p>
 
@@ -82,7 +83,7 @@
 
             <h2>12. Contact</h2>
             <p>
-              For questions about these Terms of Service, contact BFANG Team through our official website channels.
+              For questions about these Terms of Service, contact <%= siteName %> through our official website channels.
             </p>
           </article>
         </section>

@@ -1,6 +1,15 @@
 (() => {
   const HISTORY_ENDPOINT = "/account/reading-history";
 
+  const resolveSiteName = () => {
+    const config = window.__SITE_CONFIG && typeof window.__SITE_CONFIG === "object" ? window.__SITE_CONFIG : null;
+    const branding = config && config.branding && typeof config.branding === "object" ? config.branding : null;
+    const name = branding && branding.siteName ? String(branding.siteName).trim() : "";
+    return name || "BFANG Team";
+  };
+
+  const FALLBACK_AUTHOR_NAME = resolveSiteName();
+
   let detailContinueEl = null;
   let readingProgressEl = null;
   let historyPage = null;
@@ -234,7 +243,7 @@
         const mangaUrl = toSafePath(item && item.mangaUrl ? item.mangaUrl : "");
         const mangaAuthor = item && item.mangaAuthor ? String(item.mangaAuthor).trim() : "";
         const mangaGroupName = item && item.mangaGroupName ? String(item.mangaGroupName).trim() : "";
-        const authorText = mangaGroupName || mangaAuthor || "BFANG Team";
+        const authorText = mangaGroupName || mangaAuthor || FALLBACK_AUTHOR_NAME;
         const chapterUrl = toSafePath(item && item.chapterUrl ? item.chapterUrl : "");
         const chapterNumberText = item && item.chapterNumberText ? String(item.chapterNumberText).trim() : "";
         const chapterTitle = item && item.chapterTitle ? String(item.chapterTitle).trim() : "";

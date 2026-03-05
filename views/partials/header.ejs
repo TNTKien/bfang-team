@@ -1,8 +1,19 @@
+<%
+  const runtimeSiteConfig = siteConfig && typeof siteConfig === "object" ? siteConfig : {};
+  const brandingConfig =
+    runtimeSiteConfig.branding && typeof runtimeSiteConfig.branding === "object"
+      ? runtimeSiteConfig.branding
+      : {};
+  const brandMark = (brandingConfig.brandMark || "BFANG").toString().trim() || "BFANG";
+  const brandSubmark = (brandingConfig.brandSubmark || "Team").toString().trim() || "Team";
+  const aboutNavLabel =
+    (brandingConfig.aboutNavLabel || `Về ${brandMark}`).toString().trim() || `Về ${brandMark}`;
+%>
 <header class="site-header">
   <div class="container header-inner">
-    <a class="brand" href="/">
-      <span class="brand__mark">BFANG</span>
-      <span class="brand__sub">Team</span>
+    <a class="brand" href="/" aria-label="<%= `${brandMark} ${brandSubmark}`.trim() %>">
+      <span class="brand__mark"><%= brandMark %></span>
+      <span class="brand__sub"><%= brandSubmark %></span>
     </a>
     <div class="header-actions" id="site-main-nav">
       <div class="header-nav">
@@ -30,7 +41,7 @@
             <a href="/forum">Diễn đàn</a>
           <% } %>
           <a href="/publish" data-publish-nav-link>Đăng truyện</a>
-          <a href="/#about">Về BFANG</a>
+          <a href="/#about"><%= aboutNavLabel %></a>
         </nav>
       </div>
       <a
