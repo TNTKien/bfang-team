@@ -55,9 +55,19 @@ describe("forum backend regression checks", () => {
     const source = fs.readFileSync(forumApiRouteFilePath, "utf8");
 
     expect(source).toContain("const buildMentionMapForRows = async ({ rows, rootCommentId }) => {");
-    expect(source).toContain("mentions: Array.isArray(mentions) ? mentions : []");
-    expect(source).toContain("const mentionByCommentId = await buildMentionMapForRows({ rows: postRows });");
-    expect(source).toContain("const mentionByCommentId = await buildMentionMapForRows({\n        rows: [postRow, ...replyRows],");
+    const hasInlineMentionsMapping = source.includes("mentions: Array.isArray(mentions) ? mentions : []");
+    const hasExtractedMentionsMapping =
+      source.includes("createForumApiPresenterUtils") &&
+      source.includes("mapPostSummary,") &&
+      source.includes("mapReply,");
+    expect(hasInlineMentionsMapping || hasExtractedMentionsMapping).toBe(true);
+
+    const listMentionMapPattern = /const\s+mentionByCommentId\s*=\s*await\s+buildMentionMapForRows\s*\(\s*\{\s*rows:\s*postRows\s*\}\s*\)/m;
+    const detailMentionMapPattern =
+      /const\s+mentionByCommentId\s*=\s*await\s+buildMentionMapForRows\s*\(\s*\{\s*rows:\s*\[\s*postRow\s*,\s*\.\.\.replyRows\s*\]\s*,\s*rootCommentId:\s*postId\s*,?\s*\}\s*\)/m;
+
+    expect(listMentionMapPattern.test(source)).toBe(true);
+    expect(detailMentionMapPattern.test(source)).toBe(true);
   });
 
   it("accepts host aliases when resolving forum link labels", () => {
@@ -126,7 +136,10 @@ describe("forum backend regression checks", () => {
   it("keeps forum image finalize from dropping existing post title blocks", () => {
     const source = fs.readFileSync(forumApiRouteFilePath, "utf8");
 
-    expect(source).toContain("const extractForumPostTitleBlock = (content) => {");
+    const hasInlineTitleExtractor = source.includes("const extractForumPostTitleBlock = (content) => {");
+    const hasExtractedTitleExtractor =
+      source.includes("createForumApiContentUtils") && source.includes("extractForumPostTitleBlock,");
+    expect(hasInlineTitleExtractor || hasExtractedTitleExtractor).toBe(true);
     expect(source).toContain("if (!extractForumPostTitleBlock(outputContent)) {");
     expect(source).toContain("const existingTitleBlock = extractForumPostTitleBlock(postRow && postRow.content);");
     expect(source).toContain("outputContent = `${existingTitleBlock}${outputContent}`;");
@@ -145,7 +158,10 @@ describe("forum backend regression checks", () => {
     expect(source).toContain("const MAX_PER_PAGE = 20;");
     expect(source).toContain("const HOT_RECENT_LIMIT = 5;");
     expect(source).toContain("const HOT_COMMENT_ACTIVITY_LIMIT = 10;");
-    expect(source).toContain("const normalizeForumSort = (value) => {");
+    const hasInlineSortNormalizer = source.includes("const normalizeForumSort = (value) => {");
+    const hasExtractedSortNormalizer =
+      source.includes("createForumApiParamUtils") && source.includes("normalizeForumSort,");
+    expect(hasInlineSortNormalizer || hasExtractedSortNormalizer).toBe(true);
     expect(source).toContain("WITH base_posts AS (");
     expect(source).toContain("recent_picks");
     expect(source).toContain("comment_picks");

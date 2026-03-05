@@ -128,6 +128,7 @@ const registerSiteRoutes = (app, deps) => {
   const NOTIFICATION_TYPE_TEAM_MEMBER_KICKED = "team_member_kicked";
   const NOTIFICATION_TYPE_FORUM_POST_COMMENT = "forum_post_comment";
   const MANGA_DETAIL_CHAPTERS_PER_PAGE = 30;
+  const BOOKMARKS_PER_PAGE = 10;
   const FAST_NAV_PAGE_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300";
 
   const isForumCommentRequest = (req, commentRequestId) => {
@@ -2688,6 +2689,20 @@ app.get("/account/history", (req, res) => {
       description: "Theo dõi truyện đang đọc dở và mở nhanh chương đang đọc.",
       robots: SEO_ROBOTS_NOINDEX,
       canonicalPath: "/account/history",
+      ogType: "profile"
+    })
+  });
+});
+
+app.get("/account/saved", (req, res) => {
+  res.render("bookmarks", {
+    title: "Đã lưu",
+    team,
+    seo: buildSeoPayload(req, {
+      title: "Đã lưu",
+      description: "Theo dõi danh sách truyện bạn đã bookmark để đọc nhanh chương mới.",
+      robots: SEO_ROBOTS_NOINDEX,
+      canonicalPath: "/account/saved",
       ogType: "profile"
     })
   });
@@ -5551,6 +5566,254 @@ app.post(
   })
 );
 
+app.get(
+  "/account/bookmarks",
+  asyncHandler(async (req, res) => {
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+
+    const user = await requireAuthUserForComments(req, res);
+    if (!user) return;
+    const userId = String(user.id || "").trim();
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: "Phiên đăng nhập không hợp lệ." });
+    }
+
+    try {
+      await ensureUserRowFromAuthUser(user);
+    } catch (err) {
+      console.warn("Failed to ensure user row for bookmarks", err);
+    }
+
+    const totalRow = await dbGet(
+      `
+        SELECT COUNT(*) as count
+        FROM manga_bookmarks mb
+        JOIN manga m ON m.id = mb.manga_id
+        WHERE mb.user_id = ?
+          AND COALESCE(m.is_hidden, 0) = 0
+      `,
+      [userId]
+    );
+    const totalCount = totalRow ? Number(totalRow.count) || 0 : 0;
+
+    const pagination = resolvePaginationParams({
+      pageInput: req.query.page,
+      perPageInput: req.query.limit,
+      defaultPerPage: BOOKMARKS_PER_PAGE,
+      maxPerPage: BOOKMARKS_PER_PAGE,
+      totalCount
+    });
+
+    const rows = await dbAll(
+      `
+        SELECT
+          mb.user_id,
+          mb.manga_id,
+          mb.created_at,
+          mb.updated_at,
+          m.title as manga_title,
+          m.slug as manga_slug,
+          m.author as manga_author,
+          m.group_name as manga_group_name,
+          m.genres as manga_genres,
+          m.status as manga_status,
+          m.cover as manga_cover,
+          COALESCE(m.cover_updated_at, 0) as manga_cover_updated_at,
+          COALESCE(m.is_oneshot, false) as manga_is_oneshot,
+          latest.number as latest_chapter_number,
+          COALESCE(latest.is_oneshot, false) as latest_chapter_is_oneshot
+        FROM manga_bookmarks mb
+        JOIN manga m ON m.id = mb.manga_id
+        LEFT JOIN LATERAL (
+          SELECT number, COALESCE(is_oneshot, false) as is_oneshot
+          FROM chapters c
+          WHERE c.manga_id = m.id
+          ORDER BY number DESC
+          LIMIT 1
+        ) latest ON true
+        WHERE mb.user_id = ?
+          AND COALESCE(m.is_hidden, 0) = 0
+        ORDER BY mb.updated_at DESC, mb.manga_id DESC
+        LIMIT ? OFFSET ?
+      `,
+      [userId, pagination.perPage, pagination.offset]
+    );
+
+    const items = rows.map((row) => {
+      const mangaSlug = row && row.manga_slug ? String(row.manga_slug).trim() : "";
+      const latestChapterNumber = row && row.latest_chapter_number != null ? Number(row.latest_chapter_number) : NaN;
+      const latestChapterNumberText = Number.isFinite(latestChapterNumber)
+        ? formatChapterNumberValue(latestChapterNumber)
+        : "";
+      const latestChapterIsOneshot = toBooleanFlag(row && row.latest_chapter_is_oneshot);
+      const mangaGenres = (row && row.manga_genres ? String(row.manga_genres) : "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      return {
+        mangaId: row && row.manga_id != null ? Number(row.manga_id) : 0,
+        mangaTitle: row && row.manga_title ? String(row.manga_title).trim() : "",
+        mangaSlug,
+        mangaUrl: mangaSlug ? `/manga/${encodeURIComponent(mangaSlug)}` : "",
+        mangaAuthor: row && row.manga_author ? String(row.manga_author).trim() : "",
+        mangaGroupName: row && row.manga_group_name ? String(row.manga_group_name).trim() : "",
+        mangaStatus: row && row.manga_status ? String(row.manga_status).trim() : "",
+        mangaGenres,
+        mangaCover: row && row.manga_cover ? String(row.manga_cover) : "",
+        mangaCoverUpdatedAt: Number(row && row.manga_cover_updated_at) || 0,
+        latestChapterNumber: Number.isFinite(latestChapterNumber) ? latestChapterNumber : null,
+        latestChapterNumberText,
+        latestChapterIsOneshot,
+        latestChapterLabel: latestChapterIsOneshot
+          ? "Oneshot"
+          : latestChapterNumberText
+            ? `Ch. ${latestChapterNumberText}`
+            : "",
+        latestChapterUrl:
+          mangaSlug && latestChapterNumberText
+            ? `/manga/${encodeURIComponent(mangaSlug)}/chapters/${encodeURIComponent(latestChapterNumberText)}`
+            : "",
+        bookmarkedAt: Number(row && row.updated_at) || Number(row && row.created_at) || 0,
+        bookmarkedAtText:
+          Number(row && row.updated_at) > 0
+            ? formatTimeAgo(Number(row.updated_at))
+            : Number(row && row.created_at) > 0
+              ? formatTimeAgo(Number(row.created_at))
+              : ""
+      };
+    });
+
+    return res.json({
+      ok: true,
+      items,
+      pagination
+    });
+  })
+);
+
+app.post(
+  "/account/bookmarks/toggle",
+  asyncHandler(async (req, res) => {
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+
+    const user = await requireAuthUserForComments(req, res);
+    if (!user) return;
+    const userId = String(user.id || "").trim();
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: "Phiên đăng nhập không hợp lệ." });
+    }
+
+    try {
+      await ensureUserRowFromAuthUser(user);
+    } catch (err) {
+      console.warn("Failed to ensure user row for bookmark toggle", err);
+    }
+
+    const mangaSlug = (req.body && req.body.mangaSlug ? String(req.body.mangaSlug) : "").trim();
+    if (!mangaSlug) {
+      return res.status(400).json({ ok: false, error: "Thiếu slug truyện." });
+    }
+
+    const mangaRow = await dbGet(
+      "SELECT id, slug, title FROM manga WHERE slug = ? AND COALESCE(is_hidden, 0) = 0 LIMIT 1",
+      [mangaSlug]
+    );
+    if (!mangaRow) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy truyện." });
+    }
+
+    const timestamp = Date.now();
+    const result = await withTransaction(async ({ dbGet: txGet, dbRun: txRun }) => {
+      const existing = await txGet(
+        "SELECT 1 as ok FROM manga_bookmarks WHERE user_id = ? AND manga_id = ? LIMIT 1",
+        [userId, mangaRow.id]
+      );
+
+      if (existing && existing.ok) {
+        await txRun("DELETE FROM manga_bookmarks WHERE user_id = ? AND manga_id = ?", [userId, mangaRow.id]);
+        return {
+          bookmarked: false
+        };
+      }
+
+      await txRun(
+        `
+          INSERT INTO manga_bookmarks (user_id, manga_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT (user_id, manga_id)
+          DO UPDATE SET updated_at = EXCLUDED.updated_at
+        `,
+        [userId, mangaRow.id, timestamp, timestamp]
+      );
+
+      return {
+        bookmarked: true
+      };
+    });
+
+    return res.json({
+      ok: true,
+      bookmarked: Boolean(result && result.bookmarked),
+      mangaId: Number(mangaRow.id) || 0,
+      mangaSlug: String(mangaRow.slug || "").trim(),
+      mangaTitle: String(mangaRow.title || "").trim()
+    });
+  })
+);
+
+app.post(
+  "/account/bookmarks/remove",
+  asyncHandler(async (req, res) => {
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+
+    const user = await requireAuthUserForComments(req, res);
+    if (!user) return;
+    const userId = String(user.id || "").trim();
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: "Phiên đăng nhập không hợp lệ." });
+    }
+
+    try {
+      await ensureUserRowFromAuthUser(user);
+    } catch (err) {
+      console.warn("Failed to ensure user row for bookmark removal", err);
+    }
+
+    const mangaIdRaw = Number(req.body && req.body.mangaId);
+    const mangaSlugRaw = (req.body && req.body.mangaSlug ? String(req.body.mangaSlug) : "").trim();
+
+    let mangaId = Number.isFinite(mangaIdRaw) && mangaIdRaw > 0 ? Math.floor(mangaIdRaw) : 0;
+    if (!mangaId && mangaSlugRaw) {
+      const mangaRow = await dbGet("SELECT id FROM manga WHERE slug = ? LIMIT 1", [mangaSlugRaw]);
+      mangaId = mangaRow && mangaRow.id ? Number(mangaRow.id) || 0 : 0;
+    }
+    if (!mangaId) {
+      return res.status(400).json({ ok: false, error: "Thiếu truyện cần gỡ bookmark." });
+    }
+
+    const removed = await dbRun("DELETE FROM manga_bookmarks WHERE user_id = ? AND manga_id = ?", [userId, mangaId]);
+
+    return res.json({
+      ok: true,
+      removed: Boolean(removed && removed.changes),
+      mangaId
+    });
+  })
+);
+
 app.post(
   "/account/avatar/upload",
   uploadAvatar,
@@ -6145,6 +6408,19 @@ app.get(
     const mappedManga = mapMangaRow(mangaRow);
     const groupTeamLinks = await listGroupTeamLinks(mangaRow.group_name || "");
     const commentsLoadUrl = `/manga/${encodeURIComponent(mangaRow.slug)}?comments=1`;
+    const authUserId =
+      req && req.session && req.session.authUserId
+        ? String(req.session.authUserId).trim()
+        : "";
+    const commentComposerEnabled = Boolean(authUserId);
+    let mangaBookmarked = false;
+    if (authUserId) {
+      const bookmarkRow = await dbGet(
+        "SELECT 1 as ok FROM manga_bookmarks WHERE user_id = ? AND manga_id = ? LIMIT 1",
+        [authUserId, mangaRow.id]
+      );
+      mangaBookmarked = Boolean(bookmarkRow && bookmarkRow.ok);
+    }
     const mangaDescription = normalizeSeoText(
       mangaRow.description || `Đọc manga ${mangaRow.title} tại BFANG Team.`,
       180
@@ -6199,6 +6475,8 @@ app.get(
       commentPagination: commentData.pagination,
       commentsHydrated,
       commentsLoadUrl,
+      commentComposerEnabled,
+      mangaBookmarked,
       seo: buildSeoPayload(req, {
         title: `${mangaRow.title} | Đọc manga`,
         description: mangaDescription,
@@ -6411,6 +6689,12 @@ app.get(
       perPage: 20,
       session: req.session
     });
+    const commentComposerEnabled = Boolean(
+      req &&
+        req.session &&
+        req.session.authUserId &&
+        String(req.session.authUserId).trim()
+    );
 
     const mappedManga = mapMangaRow(mangaRow);
     const chapterTitle = (chapterRow.title || "").toString().trim();
@@ -6480,6 +6764,7 @@ app.get(
       comments: commentData.comments,
       commentCount: commentData.count,
       commentPagination: commentData.pagination,
+      commentComposerEnabled,
       seo: buildSeoPayload(req, {
         title: `${chapterLabel} | ${mangaRow.title}`,
         description: chapterDescription,

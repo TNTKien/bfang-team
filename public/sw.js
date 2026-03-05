@@ -228,7 +228,7 @@ const buildFetchFailureResponse = (request) => {
     : acceptHeader.toLowerCase().includes("text/html");
 
   if (acceptsHtml) {
-    return new Response("Khong the ket noi mang. Vui long thu lai.", {
+    return new Response("Không thể kết nối mạng. Vui lòng thử lại.", {
       status: 503,
       statusText: "Service Unavailable",
       headers: {

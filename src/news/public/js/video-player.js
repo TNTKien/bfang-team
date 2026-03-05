@@ -628,7 +628,7 @@ class CustomVideoPlayer {
             this.poster.classList.remove('hidden');
         }
 
-        this.showError('Khong tai duoc video. Thu tai lai trang hoac mo link goc.');
+        this.showError('Không tải được video. Thử tải lại trang hoặc mở link gốc.');
     }
 
     showError(message) {

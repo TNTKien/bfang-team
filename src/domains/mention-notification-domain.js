@@ -4,6 +4,7 @@ const createMentionNotificationDomain = (deps) => {
     NOTIFICATION_CLEANUP_INTERVAL_MS,
     NOTIFICATION_RETENTION_MS,
     NOTIFICATION_TYPE_MENTION,
+    NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER,
     crypto,
     dbAll,
     dbGet,
@@ -29,6 +30,19 @@ const normalizeRootCommentId = (value) => {
 
 const COMMENT_TABLE_COMMENTS = "comments";
 const COMMENT_TABLE_FORUM = "forum_posts";
+const NOTIFICATION_TYPE_BOOKMARK_NEW_CHAPTER =
+  (NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER || "manga_bookmark_new_chapter").toString().trim().toLowerCase() ||
+  "manga_bookmark_new_chapter";
+
+const formatNotificationChapterNumber = (value) => {
+  const chapterNumber = Number(value);
+  if (!Number.isFinite(chapterNumber)) return "";
+  const normalized = Math.abs(chapterNumber) < 1e-9 ? 0 : chapterNumber;
+  if (Math.abs(normalized - Math.round(normalized)) < 1e-9) {
+    return String(Math.round(normalized));
+  }
+  return normalized.toFixed(3).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+};
 
 const normalizeCommentTableName = (value) => {
   const text = (value || "").toString().trim().toLowerCase();
@@ -978,6 +992,32 @@ const mapNotificationRow = (row, options = {}) => {
       message: `${actorName} đã bình luận vào bài viết của bạn.`,
       createdAtText: Number.isFinite(createdAt) ? formatTimeAgo(createdAt) : "",
       url: resolvedUrl || "/forum"
+    };
+  }
+
+  if (type === NOTIFICATION_TYPE_BOOKMARK_NEW_CHAPTER) {
+    const chapterText = hasChapter ? formatNotificationChapterNumber(chapterValue) : "";
+    const chapterLabelText = chapterText ? `Ch. ${chapterText}` : "Chương mới";
+    const message = mangaTitleRaw ? `${mangaTitleRaw} - ${chapterLabelText}` : chapterLabelText;
+    const mangaSlug = row && row.manga_slug ? String(row.manga_slug).trim() : "";
+    const fallbackUrl = mangaSlug && chapterText
+      ? `/manga/${encodeURIComponent(mangaSlug)}/chapters/${encodeURIComponent(chapterText)}`
+      : mangaSlug
+        ? `/manga/${encodeURIComponent(mangaSlug)}`
+        : "/manga";
+
+    return {
+      id: row.id,
+      type: row.type,
+      isRead: Boolean(row.is_read),
+      actorName,
+      actorAvatarUrl: normalizeAvatarUrl(row && row.actor_avatar_url ? row.actor_avatar_url : ""),
+      mangaTitle: "",
+      chapterLabel: "",
+      preview: "",
+      message,
+      createdAtText: Number.isFinite(createdAt) ? formatTimeAgo(createdAt) : "",
+      url: resolvedUrl || fallbackUrl
     };
   }
 

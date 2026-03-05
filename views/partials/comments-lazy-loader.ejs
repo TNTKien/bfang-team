@@ -1,0 +1,77 @@
+<script nonce="<%= cspNonce || '' %>">
+  (() => {
+    const commentsRoot = document.querySelector("#comments");
+    if (!commentsRoot) return;
+
+    const scriptSrc = (commentsRoot.getAttribute("data-comment-script-src") || "").toString().trim();
+    if (!scriptSrc) return;
+
+    const isLazyCommentsSection = commentsRoot.hasAttribute("data-comment-lazy");
+    let loaded = false;
+    let observer = null;
+
+    const cleanup = () => {
+      document.removeEventListener("focusin", onIntent, true);
+      document.removeEventListener("pointerdown", onIntent, true);
+      document.removeEventListener("keydown", onIntent, true);
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+    };
+
+    const loadCommentsScript = () => {
+      if (loaded) return;
+      loaded = true;
+      cleanup();
+      commentsRoot.setAttribute("data-comment-auto-hydrate", "1");
+
+      if (document.querySelector(`script[src="${scriptSrc}"]`)) {
+        if (window.BfangComments && typeof window.BfangComments.refresh === "function") {
+          window.BfangComments.refresh();
+        }
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = scriptSrc;
+      script.defer = true;
+      script.nonce = "<%= cspNonce || '' %>";
+      document.head.appendChild(script);
+    };
+
+    const onIntent = (event) => {
+      const target = event && event.target;
+      if (!target || !target.closest) return;
+      if (target.closest("#comments")) {
+        loadCommentsScript();
+      }
+    };
+
+    document.addEventListener("focusin", onIntent, true);
+    document.addEventListener("pointerdown", onIntent, true);
+    document.addEventListener("keydown", onIntent, true);
+
+    if (typeof IntersectionObserver === "function") {
+      observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            loadCommentsScript();
+          });
+        },
+        {
+          root: null,
+          rootMargin: isLazyCommentsSection ? "320px 0px" : "1100px 0px",
+          threshold: 0.01
+        }
+      );
+      observer.observe(commentsRoot);
+      return;
+    }
+
+    window.setTimeout(() => {
+      loadCommentsScript();
+    }, 1200);
+  })();
+</script>

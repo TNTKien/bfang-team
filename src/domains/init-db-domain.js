@@ -1,3 +1,5 @@
+const { parseEnvBoolean } = require("../utils/env");
+
 const createInitDbDomain = (deps) => {
   const {
     ONESHOT_GENRE_NAME,
@@ -164,15 +166,6 @@ const createInitDbDomain = (deps) => {
     await dbRun("UPDATE users SET badge = ? WHERE id = ?", [roleLabel, safeUserId]);
   };
 
-  const parseEnvBoolean = (value, defaultValue = false) => {
-    if (value == null) return Boolean(defaultValue);
-    const raw = String(value).trim().toLowerCase();
-    if (!raw) return Boolean(defaultValue);
-    if (["1", "true", "yes", "on"].includes(raw)) return true;
-    if (["0", "false", "no", "off"].includes(raw)) return false;
-    return Boolean(defaultValue);
-  };
-
   const forumSampleSeedEnabled = parseEnvBoolean(
     process.env.FORUM_SAMPLE_SEED_ENABLED,
     false
@@ -196,6 +189,58 @@ const createInitDbDomain = (deps) => {
     ["tin-tuc", "thong-bao"],
   ]);
   const FORUM_META_COMMENT_PATTERN = /<!--\s*forum-meta:([^>]*?)\s*-->/gi;
+
+  const INIT_MIGRATIONS_TABLE = "init_migrations";
+
+  const ensureInitMigrationsTable = async () => {
+    await dbRun(
+      `
+        CREATE TABLE IF NOT EXISTS ${INIT_MIGRATIONS_TABLE} (
+          key TEXT PRIMARY KEY,
+          applied_at BIGINT NOT NULL
+        )
+      `
+    );
+  };
+
+  const hasInitMigration = async (key) => {
+    const safeKey = (key || "").toString().trim();
+    if (!safeKey) return false;
+    await ensureInitMigrationsTable();
+
+    const row = await dbGet(
+      `SELECT key FROM ${INIT_MIGRATIONS_TABLE} WHERE key = ? LIMIT 1`,
+      [safeKey]
+    );
+    return Boolean(row && row.key);
+  };
+
+  const markInitMigration = async (key) => {
+    const safeKey = (key || "").toString().trim();
+    if (!safeKey) return;
+    await ensureInitMigrationsTable();
+
+    await dbRun(
+      `
+        INSERT INTO ${INIT_MIGRATIONS_TABLE} (key, applied_at)
+        VALUES (?, ?)
+        ON CONFLICT (key) DO NOTHING
+      `,
+      [safeKey, Date.now()]
+    );
+  };
+
+  const runInitMigrationOnce = async (key, handler) => {
+    const safeKey = (key || "").toString().trim();
+    if (!safeKey || typeof handler !== "function") return false;
+
+    const alreadyApplied = await hasInitMigration(safeKey);
+    if (alreadyApplied) return false;
+
+    await handler();
+    await markInitMigration(safeKey);
+    return true;
+  };
 
   const normalizeForumSectionSlug = (value) => {
     const slug = (value == null ? "" : String(value))
@@ -486,6 +531,9 @@ const createInitDbDomain = (deps) => {
     await dbRun("CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read, created_at DESC)");
     await dbRun("CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)");
     await dbRun("CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_user_comment_type ON notifications(user_id, comment_id, type)");
+    await dbRun(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_user_bookmark_chapter ON notifications(user_id, manga_id, chapter_number) WHERE type = 'manga_bookmark_new_chapter'"
+    );
 
     await dbRun(
       `
@@ -1432,6 +1480,34 @@ const initDb = async () => {
 
   await dbRun(
     `
+    CREATE TABLE IF NOT EXISTS manga_bookmarks (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      manga_id INTEGER NOT NULL REFERENCES manga(id) ON DELETE CASCADE,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY (user_id, manga_id)
+    )
+  `
+  );
+  await dbRun("ALTER TABLE manga_bookmarks ADD COLUMN IF NOT EXISTS user_id TEXT");
+  await dbRun("ALTER TABLE manga_bookmarks ADD COLUMN IF NOT EXISTS manga_id INTEGER");
+  await dbRun("ALTER TABLE manga_bookmarks ADD COLUMN IF NOT EXISTS created_at BIGINT");
+  await dbRun("ALTER TABLE manga_bookmarks ADD COLUMN IF NOT EXISTS updated_at BIGINT");
+  await dbRun("DELETE FROM manga_bookmarks WHERE user_id IS NULL OR TRIM(user_id) = ''");
+  await dbRun("DELETE FROM manga_bookmarks WHERE manga_id IS NULL");
+  await dbRun("UPDATE manga_bookmarks SET created_at = ? WHERE created_at IS NULL", [Date.now()]);
+  await dbRun("UPDATE manga_bookmarks SET updated_at = COALESCE(updated_at, created_at, ?) WHERE updated_at IS NULL", [Date.now()]);
+  await dbRun("ALTER TABLE manga_bookmarks ALTER COLUMN user_id SET NOT NULL");
+  await dbRun("ALTER TABLE manga_bookmarks ALTER COLUMN manga_id SET NOT NULL");
+  await dbRun("ALTER TABLE manga_bookmarks ALTER COLUMN created_at SET NOT NULL");
+  await dbRun("ALTER TABLE manga_bookmarks ALTER COLUMN updated_at SET NOT NULL");
+  await dbRun(
+    "CREATE INDEX IF NOT EXISTS idx_manga_bookmarks_user_updated ON manga_bookmarks(user_id, updated_at DESC, manga_id DESC)"
+  );
+  await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_bookmarks_manga_id ON manga_bookmarks(manga_id)");
+
+  await dbRun(
+    `
     CREATE TABLE IF NOT EXISTS comment_likes (
       comment_id INTEGER NOT NULL,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1519,6 +1595,9 @@ const initDb = async () => {
   await dbRun("CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)");
   await dbRun(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_user_comment_type ON notifications(user_id, comment_id, type)"
+  );
+  await dbRun(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_user_bookmark_chapter ON notifications(user_id, manga_id, chapter_number) WHERE type = 'manga_bookmark_new_chapter'"
   );
 
   await dbRun(
@@ -1775,9 +1854,9 @@ const initDb = async () => {
   await ensureHomepageDefaults();
   await migrateMangaStatuses();
   await migrateMangaSlugs();
-  await rebuildCommentReferenceTables();
-  await migrateForumRowsToForumPosts();
-  await removeForumTagsFromStoredComments();
+  await runInitMigrationOnce("rebuild_comment_reference_tables_v1", rebuildCommentReferenceTables);
+  await runInitMigrationOnce("migrate_forum_rows_to_forum_posts_v1", migrateForumRowsToForumPosts);
+  await runInitMigrationOnce("remove_forum_tags_from_stored_comments_v1", removeForumTagsFromStoredComments);
 
   await dbRun(
     `
@@ -1848,8 +1927,10 @@ const initDb = async () => {
     });
   }
 
-  await cleanupForumSampleSeedData();
-  await seedForumSampleTopics();
+  if (forumSampleSeedEnabled) {
+    await cleanupForumSampleSeedData();
+    await seedForumSampleTopics();
+  }
 };
 
   return {

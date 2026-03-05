@@ -7,6 +7,7 @@
   data-comment-scope="manga"
   data-comment-script-src="<%= cacheBust('/comments.js', assetVersion) %>"
 >
+  <% const commentComposerEnabledFlag = typeof commentComposerEnabled === "boolean" ? commentComposerEnabled : true; %>
   <% const commentPage = commentPagination && commentPagination.page ? Number(commentPagination.page) : 1; %>
   <% const commentTotalPages = commentPagination && commentPagination.totalPages ? Number(commentPagination.totalPages) : 1; %>
   <% const commentPageHref = (targetPage) => {
@@ -37,42 +38,49 @@
     <h2>Bình luận (<%= commentCount %>)</h2>
     <span class="section-line"></span>
   </div>
-  <div class="comment-box">
-    <div class="comment-avatar" aria-hidden="true" data-auth-widget>
-      <img
-        class="comment-avatar__img"
-        alt=""
-        hidden
-        loading="lazy"
-        referrerpolicy="no-referrer"
-        data-auth-avatar
-      />
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-        <circle cx="12" cy="8" r="4" />
-        <path d="M4 20c1.6-3.5 5-5 8-5s6.4 1.5 8 5" />
-      </svg>
-    </div>
-    <form class="comment-form" method="post" action="/manga/<%= manga.slug %>/comments">
-      <div class="comment-authbar" data-auth-widget>
-        <button class="button button--ghost comment-authbar__login" type="button" data-auth-login>
-          Đăng nhập
-        </button>
-        <div class="comment-authbar__profile" hidden data-auth-profile>
-          <strong class="comment-authbar__name" data-auth-name></strong>
+  <div class="comment-box <%= commentComposerEnabledFlag ? "" : "comment-box--locked" %>">
+    <% if (commentComposerEnabledFlag) { %>
+      <div class="comment-avatar" aria-hidden="true" data-auth-widget>
+        <img
+          class="comment-avatar__img"
+          alt=""
+          hidden
+          loading="lazy"
+          referrerpolicy="no-referrer"
+          data-auth-avatar
+        />
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 20c1.6-3.5 5-5 8-5s6.4 1.5 8 5" />
+        </svg>
+      </div>
+      <form class="comment-form" method="post" action="/manga/<%= manga.slug %>/comments">
+        <div class="comment-authbar" data-auth-widget>
+          <button class="button button--ghost comment-authbar__login" type="button" data-auth-login>
+            Đăng nhập
+          </button>
+          <div class="comment-authbar__profile" hidden data-auth-profile>
+            <strong class="comment-authbar__name" data-auth-name></strong>
+          </div>
         </div>
+        <textarea
+          class="comment-textarea"
+          name="content"
+          rows="3"
+          maxlength="500"
+          placeholder="Viết bình luận..."
+          required
+        ></textarea>
+        <div class="comment-submit">
+          <button class="button" type="submit">Gửi bình luận</button>
+        </div>
+      </form>
+    <% } else { %>
+      <div class="comment-lock-notice" role="note" aria-live="polite">
+        <span class="comment-lock-notice__text">Bạn cần đăng nhập để bình luận.</span>
+        <button class="button comment-lock-notice__login" type="button" data-auth-login>Đăng nhập</button>
       </div>
-      <textarea
-        class="comment-textarea"
-        name="content"
-        rows="3"
-        maxlength="500"
-        placeholder="Viết bình luận..."
-        required
-      ></textarea>
-      <div class="comment-submit">
-        <button class="button" type="submit">Gửi bình luận</button>
-      </div>
-    </form>
+    <% } %>
   </div>
 
   <% if (comments.length === 0) { %>
@@ -164,7 +172,7 @@
                     <% } %>
                   </button>
                 </form>
-                <% if (!comment.parentId) { %>
+                <% if (!comment.parentId && commentComposerEnabledFlag) { %>
                 <button class="comment-action comment-action--reply" type="button" data-comment-reply>
                     <i class="fa-solid fa-reply" aria-hidden="true"></i>
                     Trả lời
@@ -196,22 +204,24 @@
                 </button>
               </div>
             </div>
-            <div class="comment-reply">
-              <form class="comment-form comment-form--reply" method="post" action="/manga/<%= manga.slug %>/comments">
-                <input type="hidden" name="parent_id" value="<%= comment.id %>" />
-                <textarea
-                  class="comment-textarea"
-                  name="content"
-                  rows="2"
-                  maxlength="500"
-                  placeholder="Viết trả lời..."
-                  required
-                ></textarea>
-                <div class="comment-submit">
-                  <button class="button" type="submit">Gửi trả lời</button>
-                </div>
-              </form>
-            </div>
+            <% if (commentComposerEnabledFlag) { %>
+              <div class="comment-reply">
+                <form class="comment-form comment-form--reply" method="post" action="/manga/<%= manga.slug %>/comments">
+                  <input type="hidden" name="parent_id" value="<%= comment.id %>" />
+                  <textarea
+                    class="comment-textarea"
+                    name="content"
+                    rows="2"
+                    maxlength="500"
+                    placeholder="Viết trả lời..."
+                    required
+                  ></textarea>
+                  <div class="comment-submit">
+                    <button class="button" type="submit">Gửi trả lời</button>
+                  </div>
+                </form>
+              </div>
+            <% } %>
             <% if (comment.replies && comment.replies.length) { %>
               <ul class="comment-replies">
                 <% comment.replies.forEach((reply) => { %>

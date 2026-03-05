@@ -5,7 +5,7 @@
   if (!window.history || typeof window.history.pushState !== "function") return;
 
   const FAST_NAV_PATH_PATTERN =
-    /^\/(?:$|manga\/?$|manga\/[^/?#]+\/?$|privacy-policy\/?$|terms-of-service\/?$|user\/[^/?#]+\/?$|account\/history\/?$)/i;
+    /^\/(?:$|manga\/?$|manga\/[^/?#]+\/?$|privacy-policy\/?$|terms-of-service\/?$|user\/[^/?#]+\/?$|account\/history\/?$|account\/saved\/?$)/i;
   const PREFETCH_TTL_MS = 3 * 60 * 1000;
   const PREFETCH_CACHE_LIMIT = 28;
   const FRESH_BYPASS_QUERY_PARAM = "__bfv";
@@ -319,10 +319,13 @@
       return ["/filters.js"];
     }
     if (/^\/manga\/[^/?#]+\/?$/i.test(pathname || "")) {
-      return ["/manga-detail.js", "/reading-history.js"];
+      return ["/manga-detail.js", "/reading-history.js", "/bookmarks.js"];
     }
     if (/^\/account\/history\/?$/i.test(pathname || "")) {
       return ["/reading-history.js"];
+    }
+    if (/^\/account\/saved\/?$/i.test(pathname || "")) {
+      return ["/bookmarks.js"];
     }
     return [];
   };

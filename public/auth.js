@@ -1201,6 +1201,14 @@
 
     const headerNavLink = event.target.closest("#site-nav-links a");
     if (headerNavLink) {
+      closeAuthMenus();
+      closeHeaderNav();
+      return;
+    }
+
+    const authMenuNavLink = event.target.closest("[data-auth-menu] a[href]");
+    if (authMenuNavLink) {
+      closeAuthMenus();
       closeHeaderNav();
       return;
     }

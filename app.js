@@ -33,6 +33,7 @@ const createAuthUserDomain = require("./src/domains/auth-user-domain");
 const createMentionNotificationDomain = require("./src/domains/mention-notification-domain");
 const createInitDbDomain = require("./src/domains/init-db-domain");
 const configureCoreRuntime = require("./src/app/configure-core-runtime");
+const { parseEnvBoolean } = require("./src/utils/env");
 require("dotenv").config();
 
 const app = express();
@@ -45,15 +46,6 @@ const isProductionApp = appEnv === "production" || appEnv === "prod";
 const serverAssetVersion = Date.now();
 const serverSessionVersion = String(serverAssetVersion);
 const cssMinifier = new CleanCSS({ level: 1, inline: false });
-
-const parseEnvBoolean = (value, defaultValue = false) => {
-  if (value == null) return Boolean(defaultValue);
-  const raw = String(value).trim().toLowerCase();
-  if (!raw) return Boolean(defaultValue);
-  if (["1", "true", "yes", "on"].includes(raw)) return true;
-  if (["0", "false", "no", "off"].includes(raw)) return false;
-  return Boolean(defaultValue);
-};
 
 const isJsMinifyEnabled = parseEnvBoolean(process.env.JS_MINIFY_ENABLED, true);
 const isNewsPageEnabled = parseEnvBoolean(process.env.NEWS_PAGE_ENABLED, true);
@@ -801,6 +793,7 @@ const COMMENT_BOT_SIGNAL_WINDOW_MS = 2 * 60 * 1000;
 const COMMENT_BOT_SIGNAL_THRESHOLD = 3;
 const COMMENT_BOT_CHALLENGE_TTL_MS = 15 * 60 * 1000;
 const NOTIFICATION_TYPE_MENTION = "mention";
+const NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER = "manga_bookmark_new_chapter";
 const FORUM_COMMENT_REQUEST_PREFIX = "forum-";
 const NOTIFICATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const NOTIFICATION_CLEANUP_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
@@ -3035,6 +3028,7 @@ const mentionNotificationDomain = createMentionNotificationDomain({
   NOTIFICATION_CLEANUP_INTERVAL_MS,
   NOTIFICATION_RETENTION_MS,
   NOTIFICATION_TYPE_MENTION,
+  NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER,
   crypto,
   dbAll,
   dbGet,

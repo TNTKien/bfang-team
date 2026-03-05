@@ -52,9 +52,10 @@
     fastNav: !isAdminRequest && !isChapterPath,
     flowbite: isAdminRequest,
     readingHistory: false,
+    bookmarks: false,
     notifications: false,
     messagesIndicator: !isAdminRequest,
-    comments: isChapterPath,
+    comments: false,
     mangaDetail: isMangaDetailPath,
     filters: isMangaListPath || (isAdminRequest && requestPathValue.startsWith("/admin/manga")),
     lazysizes: isChapterPath,
@@ -281,6 +282,9 @@
   <% } %>
   <% if (isHeadScriptEnabled("readingHistory")) { %>
     <script src="<%= assetUrl("/reading-history.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("bookmarks")) { %>
+    <script src="<%= assetUrl("/bookmarks.js") %>" defer></script>
   <% } %>
   <% if (isHeadScriptEnabled("notifications")) { %>
     <script src="<%= assetUrl("/notifications.js") %>" defer></script>

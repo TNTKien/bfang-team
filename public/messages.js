@@ -2293,7 +2293,7 @@
 
       const loading = document.createElement("div");
       loading.className = "chat-picker__loading";
-      loading.setAttribute("aria-label", "Dang tai emoji");
+      loading.setAttribute("aria-label", "Đang tải emoji");
 
       const spinner = document.createElement("span");
       spinner.className = "chat-picker__spinner";

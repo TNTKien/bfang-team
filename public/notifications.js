@@ -334,9 +334,48 @@
     badge.textContent = safeCount > 99 ? "99+" : String(safeCount);
   };
 
-  const buildAvatar = (avatarUrl) => {
+  const createAvatarIcon = (notificationType) => {
+    const type = notificationType == null ? "" : String(notificationType).trim().toLowerCase();
+    const icon = document.createElement("span");
+    icon.className = "notify-item__avatar-icon";
+    icon.style.width = "16px";
+    icon.style.height = "16px";
+    icon.style.display = "inline-flex";
+    icon.style.alignItems = "center";
+    icon.style.justifyContent = "center";
+    icon.style.flexShrink = "0";
+
+    if (type === "manga_bookmark_new_chapter") {
+      icon.innerHTML =
+        "<svg viewBox='0 0 24 24' width='16' height='16' aria-hidden='true'><path d='M6.5 3.8h11a1.7 1.7 0 0 1 1.7 1.7v14.7l-2.7-1.8-2.7 1.8-2.7-1.8-2.7 1.8-2.7-1.8V5.5a1.7 1.7 0 0 1 1.7-1.7z' stroke='currentColor' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>";
+      return icon;
+    }
+
+    if (type === "forum_post_comment" || type === "mention") {
+      icon.innerHTML =
+        "<svg viewBox='0 0 24 24' width='16' height='16' aria-hidden='true'><path d='M21 14.2a3.8 3.8 0 0 1-3.8 3.8H9l-4.5 3v-3.4A3.8 3.8 0 0 1 1 13.8V6.8A3.8 3.8 0 0 1 4.8 3h12.4A3.8 3.8 0 0 1 21 6.8z' stroke='currentColor' stroke-width='1.9' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>";
+      return icon;
+    }
+
+    icon.innerHTML =
+      "<svg viewBox='0 0 24 24' width='16' height='16' aria-hidden='true'><path d='M6.8 9a5.2 5.2 0 1 1 10.4 0v3.1c0 .8.3 1.5.8 2.1l1.1 1.3H5l1.1-1.3c.5-.6.8-1.3.8-2.1z' stroke='currentColor' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M9.8 18.1a2.2 2.2 0 0 0 4.4 0' stroke='currentColor' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>";
+    return icon;
+  };
+
+  const buildAvatar = (item) => {
     const wrap = document.createElement("span");
     wrap.className = "notify-item__avatar";
+
+    const notification = item && typeof item === "object" ? item : {};
+    const notificationType =
+      notification.type == null ? "" : String(notification.type).trim().toLowerCase();
+    const avatarUrl = notification.actorAvatarUrl;
+    const fallbackIcon = createAvatarIcon(notificationType);
+
+    const applyFallback = () => {
+      wrap.textContent = "";
+      wrap.appendChild(fallbackIcon.cloneNode(true));
+    };
 
     const raw = avatarUrl == null ? "" : String(avatarUrl).trim();
     const safe =
@@ -350,11 +389,14 @@
       image.loading = "lazy";
       image.decoding = "async";
       image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => {
+        applyFallback();
+      });
       wrap.appendChild(image);
       return wrap;
     }
 
-    wrap.innerHTML = "<i class='fa-regular fa-bell' aria-hidden='true'></i>";
+    applyFallback();
     return wrap;
   };
 
@@ -404,7 +446,7 @@
       link.dataset.notifyId = String(item.id);
       link.dataset.notifyRead = item.isRead ? "1" : "0";
 
-      const avatar = buildAvatar(item.actorAvatarUrl);
+      const avatar = buildAvatar(item);
 
       const body = document.createElement("span");
       body.className = "notify-item__body";

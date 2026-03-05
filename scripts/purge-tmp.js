@@ -4,6 +4,7 @@
 const path = require("path");
 const fs = require("fs");
 const { Pool } = require("pg");
+const { parseEnvBoolean } = require("../src/utils/env");
 const {
   S3Client,
   ListObjectsV2Command,
@@ -32,15 +33,6 @@ const doesTableExist = async (pool, regclassName) => {
 
 const normalizePathPrefix = (value) =>
   (value || "").toString().trim().replace(/^\/+/, "").replace(/\/+$/, "");
-
-const parseEnvBoolean = (value, defaultValue = false) => {
-  if (value == null) return Boolean(defaultValue);
-  const raw = String(value).trim().toLowerCase();
-  if (!raw) return Boolean(defaultValue);
-  if (["1", "true", "yes", "on"].includes(raw)) return true;
-  if (["0", "false", "no", "off"].includes(raw)) return false;
-  return Boolean(defaultValue);
-};
 
 const getB2Config = () => ({
   bucketId: (

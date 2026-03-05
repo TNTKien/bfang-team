@@ -1798,7 +1798,7 @@ const buildCommentEmojiFallbackGrid = (textarea, details) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "comment-picker__item comment-picker__item--emoji";
-    button.setAttribute("aria-label", `Chen emoji ${emoji}`);
+    button.setAttribute("aria-label", `Chèn emoji ${emoji}`);
     button.textContent = emoji;
     button.addEventListener("click", () => {
       insertCommentTextAtCursor(textarea, emoji);
@@ -1816,8 +1816,8 @@ const buildCommentEmojiPicker = (textarea) => {
 
   const summary = document.createElement("summary");
   summary.className = "comment-picker__toggle";
-  summary.setAttribute("aria-label", "Chon emoji");
-  summary.title = "Chen emoji";
+  summary.setAttribute("aria-label", "Chọn emoji");
+  summary.title = "Chèn emoji";
   summary.innerHTML = `${commentToolIcons.emoji}<span class="comment-picker__sr">Emoji</span>`;
   details.appendChild(summary);
 
@@ -1918,7 +1918,7 @@ const buildCommentStickerGrid = (textarea, details, stickers) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "comment-picker__item comment-picker__item--sticker";
-    button.setAttribute("aria-label", `Chen sticker ${sticker.label}`);
+    button.setAttribute("aria-label", `Chèn sticker ${sticker.label}`);
 
     const image = document.createElement("img");
     image.className = "comment-picker__sticker";
@@ -1952,8 +1952,8 @@ const buildCommentStickerPicker = (textarea) => {
 
   const summary = document.createElement("summary");
   summary.className = "comment-picker__toggle";
-  summary.setAttribute("aria-label", "Chon sticker");
-  summary.title = "Chen sticker";
+  summary.setAttribute("aria-label", "Chọn sticker");
+  summary.title = "Chèn sticker";
   summary.innerHTML = `${commentToolIcons.sticker}<span class="comment-picker__sr">Sticker</span>`;
   details.appendChild(summary);
 

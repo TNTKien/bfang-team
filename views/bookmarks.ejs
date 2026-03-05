@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <%- include("partials/head", { title, headScripts: { bookmarks: true } }) %>
+  <body>
+    <div class="site">
+      <%- include("partials/header") %>
+      <main>
+        <section class="section container">
+          <div class="panel account-panel" data-bookmark-page>
+            <div class="account-head">
+              <div>
+                <h1>Đã lưu</h1>
+                <p class="note">Những truyện bạn đã bookmark để theo dõi chương mới.</p>
+              </div>
+              <div class="account-head__actions" data-auth-widget>
+                <button class="button button--ghost" type="button" data-auth-login>
+                  Đăng nhập
+                </button>
+              </div>
+            </div>
+
+            <div class="account-locked" hidden data-bookmark-locked>
+              <p class="note">Bạn cần đăng nhập để xem danh sách đã lưu.</p>
+              <button class="button" type="button" data-auth-login>Đăng nhập</button>
+            </div>
+
+            <div hidden data-bookmark-content>
+              <p class="note" hidden data-bookmark-status></p>
+              <p class="note" hidden data-bookmark-empty>
+                Bạn chưa bookmark truyện nào. Hãy mở trang truyện và bấm Bookmark.
+              </p>
+              <div class="manga-grid manga-grid--catalog" data-bookmark-list></div>
+              <div class="saved-pagination" hidden data-bookmark-pagination></div>
+            </div>
+          </div>
+        </section>
+      </main>
+      <%- include("partials/footer") %>
+    </div>
+  </body>
+</html>

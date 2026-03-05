@@ -109,6 +109,68 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     writeNotificationStreamEvent,
   } = deps;
 
+const NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER = "manga_bookmark_new_chapter";
+
+const notifyBookmarkedUsersForNewChapter = async ({ mangaId, chapterNumber }) => {
+  const mangaIdValue = Number(mangaId);
+  const chapterValue = Number(chapterNumber);
+  if (!Number.isFinite(mangaIdValue) || mangaIdValue <= 0) return 0;
+  if (!Number.isFinite(chapterValue) || chapterValue < 0) return 0;
+
+  const safeMangaId = Math.floor(mangaIdValue);
+  const safeChapterNumber = Math.abs(chapterValue) < 1e-9 ? 0 : chapterValue;
+  const createdAt = Date.now();
+
+  const insertedRows = await dbAll(
+    `
+      WITH inserted AS (
+        INSERT INTO notifications (
+          user_id,
+          type,
+          actor_user_id,
+          manga_id,
+          chapter_number,
+          comment_id,
+          content_preview,
+          is_read,
+          created_at,
+          read_at
+        )
+        SELECT
+          mb.user_id,
+          ?,
+          NULL,
+          mb.manga_id,
+          ?,
+          NULL,
+          '',
+          false,
+          ?,
+          NULL
+        FROM manga_bookmarks mb
+        WHERE mb.manga_id = ?
+        ON CONFLICT DO NOTHING
+        RETURNING user_id
+      )
+      SELECT DISTINCT user_id
+      FROM inserted
+      WHERE user_id IS NOT NULL
+        AND TRIM(user_id) <> ''
+    `,
+    [NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER, safeChapterNumber, createdAt, safeMangaId]
+  );
+
+  let createdCount = 0;
+  insertedRows.forEach((row) => {
+    const userId = row && row.user_id ? String(row.user_id).trim() : "";
+    if (!userId) return;
+    createdCount += 1;
+    publishNotificationStreamUpdate({ userId, reason: "created" }).catch(() => null);
+  });
+
+  return createdCount;
+};
+
 const normalizeTeamGroupName = (value) =>
   (value || "")
     .toString()
@@ -2331,6 +2393,14 @@ app.post(
     );
 
     await markMangaUpdatedAtForNewChapter(mangaRow.id, date);
+    try {
+      await notifyBookmarkedUsersForNewChapter({
+        mangaId: mangaRow.id,
+        chapterNumber: number
+      });
+    } catch (err) {
+      console.warn("Failed to notify bookmarked readers for new chapter", err);
+    }
     enqueueChapterProcessing(result.lastID);
     return res.redirect(`/admin/manga/${mangaRow.id}/chapters?status=processing`);
   })
@@ -2406,6 +2476,14 @@ app.post(
     );
 
     await markMangaUpdatedAtForNewChapter(mangaRow.id, date);
+    try {
+      await notifyBookmarkedUsersForNewChapter({
+        mangaId: mangaRow.id,
+        chapterNumber: number
+      });
+    } catch (err) {
+      console.warn("Failed to notify bookmarked readers for new chapter", err);
+    }
     return res.redirect(`/admin/manga/${mangaRow.id}/chapters`);
   })
 );
