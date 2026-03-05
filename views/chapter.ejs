@@ -20,16 +20,12 @@
     lazysizes: false,
     readingHistory: true
   };
-  const chapterHeadStyles = {
-    googleFonts: false
-  };
 %>
 <!DOCTYPE html>
 <html lang="vi">
   <%- include("partials/head", {
     title,
     headScripts: chapterHeadScripts,
-    headStyles: chapterHeadStyles,
     headPreconnectOrigins: chapterPageOrigin ? [chapterPageOrigin] : []
   }) %>
   <body>
