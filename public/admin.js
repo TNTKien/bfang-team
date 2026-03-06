@@ -663,7 +663,7 @@
 
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 4;
+    td.colSpan = 3;
     td.textContent = hasQuery ? "Không có thể loại phù hợp." : "Chưa có thể loại.";
     tr.appendChild(td);
 
@@ -692,6 +692,18 @@
         return;
       }
       ensureGenreTableEmptyState();
+      try {
+        window.dispatchEvent(
+          new CustomEvent("admin:genres:toast", {
+            detail: {
+              message: "Đã xóa thể loại.",
+              variant: "success"
+            }
+          })
+        );
+      } catch (_err) {
+        // ignore
+      }
     } catch (err) {
       if (row) {
         row.classList.remove("is-deleting");
@@ -4694,6 +4706,172 @@
     clearBtn.hidden = !input.value.trim();
   };
 
+  const setButtonBusy = (button, label) => {
+    if (!button || !(button instanceof HTMLButtonElement)) return;
+    if (button.dataset.originalHtml == null) {
+      button.dataset.originalHtml = button.innerHTML;
+    }
+    if (button.dataset.originalText == null) {
+      button.dataset.originalText = (button.textContent || "").toString();
+    }
+    button.disabled = true;
+    button.classList.add("is-loading");
+    if (label) {
+      button.textContent = String(label);
+    }
+  };
+
+  const restoreButton = (button) => {
+    if (!button || !(button instanceof HTMLButtonElement)) return;
+    const originalHtml = button.dataset.originalHtml;
+    const originalText = button.dataset.originalText;
+    if (originalHtml != null) {
+      button.innerHTML = originalHtml;
+    } else if (originalText != null) {
+      button.textContent = originalText;
+    }
+    delete button.dataset.originalHtml;
+    delete button.dataset.originalText;
+    button.classList.remove("is-loading");
+    button.disabled = false;
+  };
+
+  const postFormJson = async (targetForm, fallbackMessage) => {
+    if (!targetForm || !(targetForm instanceof HTMLFormElement)) {
+      throw new Error("Biểu mẫu không hợp lệ.");
+    }
+
+    const params = new URLSearchParams();
+    const formData = new FormData(targetForm);
+    formData.forEach((value, key) => {
+      params.append(key, value == null ? "" : String(value));
+    });
+
+    const response = await fetch(targetForm.action, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        Accept: "application/json"
+      },
+      credentials: "same-origin",
+      body: params.toString()
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data || data.ok !== true) {
+      const message =
+        data && data.error
+          ? String(data.error)
+          : (fallbackMessage || "Thao tác thất bại. Vui lòng thử lại.").toString();
+      throw new Error(message);
+    }
+
+    return data;
+  };
+
+  let genreToastHost = null;
+
+  const applyGenreToastHostFallbackStyle = (host) => {
+    if (!host || !(host instanceof HTMLElement)) return;
+
+    host.style.position = "fixed";
+    host.style.zIndex = "10000";
+    host.style.display = "grid";
+    host.style.gap = "0.48rem";
+    host.style.pointerEvents = "none";
+
+    if (window.innerWidth <= 640) {
+      host.style.top = "0.72rem";
+      host.style.left = "0.72rem";
+      host.style.right = "0.72rem";
+      return;
+    }
+
+    host.style.top = "0.85rem";
+    host.style.right = "0.85rem";
+    host.style.left = "";
+  };
+
+  const applyGenreToastFallbackStyle = (toast, variant) => {
+    if (!toast || !(toast instanceof HTMLElement)) return;
+
+    toast.style.minWidth = "220px";
+    toast.style.maxWidth = window.innerWidth <= 640 ? "calc(100vw - 1.44rem)" : "360px";
+    toast.style.padding = "0.56rem 0.74rem";
+    toast.style.borderRadius = "0.72rem";
+    toast.style.border = "none";
+    toast.style.fontSize = "0.86rem";
+    toast.style.lineHeight = "1.35";
+    toast.style.boxShadow = "0 14px 32px rgba(0, 0, 0, 0.45)";
+    toast.style.opacity = "1";
+    toast.style.transform = "translateY(0)";
+    toast.style.transition = "opacity 0.18s ease, transform 0.18s ease";
+
+    if (variant === "error") {
+      toast.style.background = "rgba(48, 24, 24, 0.94)";
+      toast.style.color = "#ffc3c3";
+      return;
+    }
+
+    toast.style.background = "rgba(18, 36, 24, 0.94)";
+    toast.style.color = "#b5efbf";
+  };
+
+  const ensureGenreToastHost = () => {
+    if (genreToastHost && genreToastHost.isConnected) {
+      applyGenreToastHostFallbackStyle(genreToastHost);
+      return genreToastHost;
+    }
+
+    const host = document.createElement("div");
+    host.className = "admin-toast-stack";
+    host.setAttribute("aria-live", "polite");
+    host.setAttribute("aria-atomic", "false");
+    applyGenreToastHostFallbackStyle(host);
+    document.body.appendChild(host);
+    genreToastHost = host;
+    return host;
+  };
+
+  const showGenreToast = (message, variant) => {
+    const text = (message || "").toString().trim();
+    if (!text) return;
+
+    const host = ensureGenreToastHost();
+    if (!host) return;
+
+    host.querySelectorAll(".admin-toast").forEach((item) => {
+      item.remove();
+    });
+
+    const toast = document.createElement("div");
+    toast.className = "admin-toast";
+    toast.classList.add(variant === "error" ? "admin-toast--error" : "admin-toast--success");
+    toast.setAttribute("role", variant === "error" ? "alert" : "status");
+    toast.textContent = text;
+    applyGenreToastFallbackStyle(toast, variant);
+    host.appendChild(toast);
+
+    window.setTimeout(() => {
+      toast.classList.add("is-leaving");
+      toast.style.opacity = "0";
+      toast.style.transform = "translateY(-4px)";
+      window.setTimeout(() => {
+        if (toast.isConnected) {
+          toast.remove();
+        }
+      }, 180);
+    }, 2800);
+  };
+
+  window.addEventListener("admin:genres:toast", (event) => {
+    const detail = event && event.detail ? event.detail : null;
+    const message = detail && detail.message ? String(detail.message) : "";
+    if (!message) return;
+    const variant = detail && detail.variant === "error" ? "error" : "success";
+    showGenreToast(message, variant);
+  });
+
   let inlineStatusTimer = null;
   const showGenreInlineStatus = (message, variant) => {
     if (!inlineStatusEl) return;
@@ -4701,6 +4879,8 @@
     const text = (message || "").toString().trim();
     if (!text) {
       inlineStatusEl.hidden = true;
+      inlineStatusEl.textContent = "";
+      inlineStatusEl.classList.remove("admin-success", "admin-error");
       return;
     }
 
@@ -4725,7 +4905,7 @@
   const createTextRow = (text) => {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 4;
+    td.colSpan = 3;
     td.textContent = text;
     tr.appendChild(td);
     return tr;
@@ -4743,13 +4923,6 @@
     if (getFocusGenreId() === id) {
       tr.className = "admin-row--focus";
     }
-
-    const tdId = document.createElement("td");
-    tdId.dataset.label = "ID";
-    const idChip = document.createElement("span");
-    idChip.className = "chip";
-    idChip.textContent = `#${id}`;
-    tdId.appendChild(idChip);
 
     const tdName = document.createElement("td");
     tdName.dataset.label = "Tên";
@@ -4811,7 +4984,6 @@
     actions.appendChild(deleteForm);
     tdActions.appendChild(actions);
 
-    tr.appendChild(tdId);
     tr.appendChild(tdName);
     tr.appendChild(tdCount);
     tr.appendChild(tdActions);
@@ -4915,7 +5087,8 @@
         nameInput.value = "";
         nameInput.focus();
       }
-      showGenreInlineStatus("Đã thêm thể loại.", "success");
+      showGenreInlineStatus("", "success");
+      showGenreToast("Đã thêm thể loại.", "success");
       await runFetch(false);
     } catch (err) {
       const message = (err && err.message) || "Không thể thêm thể loại. Vui lòng thử lại.";
@@ -4941,7 +5114,8 @@
       if (data && data.genre && data.genre.name && inputEl && "value" in inputEl) {
         inputEl.value = String(data.genre.name);
       }
-      showGenreInlineStatus("Đã cập nhật thể loại.", "success");
+      showGenreInlineStatus("", "success");
+      showGenreToast("Đã cập nhật thể loại.", "success");
       await runFetch(false);
     } catch (err) {
       const message = (err && err.message) || "Không thể cập nhật thể loại. Vui lòng thử lại.";

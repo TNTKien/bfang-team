@@ -67,7 +67,7 @@
                     type="search"
                     name="q"
                     value="<%= q %>"
-                    placeholder="Tìm kiếm (tên hoặc ID)"
+                    placeholder="Tìm kiếm"
                     autocomplete="off"
                     aria-label="Tìm kiếm"
                     data-genre-filter-input
@@ -87,14 +87,12 @@
             <div class="admin-table-wrap">
               <table class="admin-table admin-table--stack admin-table--genres">
                 <colgroup>
-                  <col style="width: 90px;" />
                   <col />
                   <col style="width: 120px;" />
                   <col style="width: 170px;" />
                 </colgroup>
                 <thead>
                   <tr>
-                    <th>ID</th>
                     <th>Tên</th>
                     <th>Số truyện</th>
                     <th>Hành động</th>
@@ -103,7 +101,7 @@
                 <tbody data-genre-table-body>
                   <% if (genres.length === 0) { %>
                     <tr>
-                      <td colspan="4"><%= q ? "Không có thể loại phù hợp." : "Chưa có thể loại." %></td>
+                      <td colspan="3"><%= q ? "Không có thể loại phù hợp." : "Chưa có thể loại." %></td>
                     </tr>
                   <% } else { %>
                     <% genres.forEach((genre) => { %>
@@ -112,9 +110,6 @@
                         id="genre-<%= genre.id %>"
                         class="<%= focusGenreId === genre.id ? "admin-row--focus" : "" %>"
                       >
-                        <td data-label="ID">
-                          <span class="chip">#<%= genre.id %></span>
-                        </td>
                         <td data-label="Tên">
                           <form
                             id="<%= updateFormId %>"
