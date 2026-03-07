@@ -5426,6 +5426,7 @@
     const valueInput = picker.querySelector("[data-team-group-value]");
     const idsInput = picker.querySelector("[data-team-group-ids]");
     const initialInput = picker.querySelector("[data-team-initial-teams]");
+    const lockedInput = picker.querySelector("[data-team-locked-ids]");
     const selectedWrap = picker.querySelector("[data-team-selected-list]");
     const searchInput = picker.querySelector("[data-team-search-input]");
     const resultsWrap = picker.querySelector("[data-team-search-results]");
@@ -5438,6 +5439,23 @@
 
     const selectedTeams = [];
     const selectedMap = new Map();
+
+    const lockedRaw = lockedInput && "value" in lockedInput ? String(lockedInput.value || "") : "";
+    const lockedList = parseJson(lockedRaw);
+    const lockedTeamIds = new Set();
+    if (Array.isArray(lockedList)) {
+      lockedList.forEach((value) => {
+        const id = Number(value);
+        if (!Number.isFinite(id) || id <= 0) return;
+        lockedTeamIds.add(Math.floor(id));
+      });
+    }
+
+    const isLockedTeamId = (value) => {
+      const id = Number(value);
+      if (!Number.isFinite(id) || id <= 0) return false;
+      return lockedTeamIds.has(Math.floor(id));
+    };
 
     const appendSelectedTeam = (teamItem) => {
       const normalized = normalizeTeamItem(teamItem);
@@ -5475,30 +5493,37 @@
       }
 
       selectedWrap.innerHTML = selectedTeams
-        .map(
-          (item) =>
-            `<span class="admin-team-selector__chip">` +
+        .map((item) => {
+          const canRemove = !isLockedTeamId(item.id);
+          let removeButtonHtml = "";
+          if (canRemove) {
+            removeButtonHtml =
+              `<button class="admin-team-selector__chip-remove" type="button" data-team-remove-id="${item.id}" aria-label="Bỏ ${escapeHtml(
+                item.name
+              )}">` +
+              `<i class="fa-solid fa-xmark" aria-hidden="true"></i>` +
+              `</button>`;
+          }
+
+          return (
+            `<span class="admin-team-selector__chip${canRemove ? "" : " is-locked"}">` +
             `<span class="admin-team-selector__chip-name">${escapeHtml(item.name)}</span>` +
-            `<button class="admin-team-selector__chip-remove" type="button" data-team-remove-id="${item.id}" aria-label="Bỏ ${escapeHtml(
-              item.name
-            )}">` +
-            `<i class="fa-solid fa-xmark" aria-hidden="true"></i>` +
-            `</button>` +
+            removeButtonHtml +
             `</span>`
-        )
+          );
+        })
         .join("");
     };
 
     const removeTeam = (id) => {
       const targetId = Number(id);
       if (!Number.isFinite(targetId) || targetId <= 0) return;
-      const next = selectedTeams.filter((item) => item.id !== Math.floor(targetId));
-      if (next.length === selectedTeams.length) return;
-      selectedTeams.length = 0;
-      selectedMap.clear();
-      next.forEach((item) => {
-        appendSelectedTeam(item);
-      });
+      const safeTargetId = Math.floor(targetId);
+      if (isLockedTeamId(safeTargetId)) return;
+      const targetIndex = selectedTeams.findIndex((item) => item.id === safeTargetId);
+      if (targetIndex < 0) return;
+      selectedTeams.splice(targetIndex, 1);
+      selectedMap.delete(safeTargetId);
       syncHiddenFields();
       renderSelected();
       setPickerError("");
@@ -5652,8 +5677,29 @@
     });
 
     selectedWrap.addEventListener("click", (event) => {
-      const target = event.target instanceof Element ? event.target.closest("[data-team-remove-id]") : null;
+      const target = event.target instanceof Element ? event.target : null;
       if (!target) return;
+
+      const removeIcon = target.closest(".admin-team-selector__chip-remove i");
+      if (!removeIcon || !selectedWrap.contains(removeIcon)) return;
+
+      const button = removeIcon.closest("button.admin-team-selector__chip-remove");
+      if (!button || !selectedWrap.contains(button)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      removeTeam(button.getAttribute("data-team-remove-id") || "");
+      scheduleFetch(0);
+      searchInput.focus();
+    });
+
+    selectedWrap.addEventListener("keydown", (event) => {
+      const target = event.target instanceof Element ? event.target.closest("button.admin-team-selector__chip-remove") : null;
+      if (!target || !selectedWrap.contains(target)) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+
+      event.preventDefault();
+      event.stopPropagation();
       removeTeam(target.getAttribute("data-team-remove-id") || "");
       scheduleFetch(0);
       searchInput.focus();

@@ -8,6 +8,7 @@
         <section class="section container">
           <% const initialState = publishState && typeof publishState === "object" ? publishState : {}; %>
           <% const initialTeam = initialState.team && typeof initialState.team === "object" ? initialState.team : null; %>
+          <% const initialPendingTeam = initialState.pendingTeam && typeof initialState.pendingTeam === "object" ? initialState.pendingTeam : null; %>
           <% const normalizeInternalPath = (value) => {
             const raw = (value || "").toString().trim();
             if (!raw) return "";
@@ -22,6 +23,9 @@
             }
           }; %>
           <% const initialInTeam = Boolean(initialState.inTeam && initialTeam); %>
+          <% const initialPendingTeamId = initialPendingTeam ? Number(initialPendingTeam.id) : 0; %>
+          <% const initialHasPendingTeam = !initialInTeam && Number.isFinite(initialPendingTeamId) && initialPendingTeamId > 0; %>
+          <% const initialPendingTeamName = initialHasPendingTeam ? (initialPendingTeam.name || "nhóm dịch").toString().trim() || "nhóm dịch" : ""; %>
           <% const initialRoleLabel = (initialState.roleLabel || "").toString().trim(); %>
           <% const initialTeamName = initialTeam ? (initialTeam.name || "").toString().trim() : ""; %>
           <% const initialTeamRole = initialTeam ? (initialTeam.role || "member").toString().trim().toLowerCase() : "member"; %>
@@ -46,12 +50,25 @@
             <p class="note publish-note" data-publish-note <% if (initialInTeam) { %>hidden<% } %>>
               <%= initialRequiresLogin
                 ? "Đăng nhập để tham gia nhóm dịch hoặc tạo nhóm dịch."
-                : "Để có quyền đăng truyện, bạn phải là thành viên của một nhóm dịch." %>
+                : (initialHasPendingTeam
+                  ? `Bạn đang chờ duyệt vào nhóm ${initialPendingTeamName}.`
+                  : "Để có quyền đăng truyện, bạn phải là thành viên của một nhóm dịch.") %>
             </p>
 
-            <div class="publish-actions" data-publish-actions <% if (initialInTeam) { %>hidden<% } %>>
+            <div class="publish-actions" data-publish-actions <% if (initialInTeam || initialHasPendingTeam) { %>hidden<% } %>>
               <button class="button" type="button" data-open-join-team>Tham gia nhóm dịch</button>
               <button class="button button--ghost" type="button" data-open-create-team>Tạo nhóm dịch</button>
+            </div>
+
+            <div class="publish-actions" data-publish-pending-actions <% if (!initialHasPendingTeam) { %>hidden<% } %>>
+              <button
+                class="button button--ghost"
+                type="button"
+                data-cancel-pending-team
+                data-pending-team-id="<%= initialHasPendingTeam ? String(initialPendingTeamId) : '' %>"
+              >
+                Hủy yêu cầu tham gia
+              </button>
             </div>
 
             <div class="publish-team-box" <% if (!initialInTeam) { %>hidden<% } %> data-publish-team-box>

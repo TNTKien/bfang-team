@@ -5,6 +5,8 @@
   const noteEl = page.querySelector("[data-publish-note]");
   const statusEl = page.querySelector("[data-publish-status]");
   const actionsEl = page.querySelector("[data-publish-actions]");
+  const pendingActionsEl = page.querySelector("[data-publish-pending-actions]");
+  const cancelPendingButton = page.querySelector("[data-cancel-pending-team]");
   const teamBoxEl = page.querySelector("[data-publish-team-box]");
   const teamNameEl = page.querySelector("[data-publish-team-name]");
   const teamRoleEl = page.querySelector("[data-publish-team-role]");
@@ -101,6 +103,54 @@
       return `${pathname}${parsed.search || ""}${parsed.hash || ""}`;
     } catch (_err) {
       return "";
+    }
+  };
+
+  const setPendingJoinState = ({ teamId, teamName, noteText } = {}) => {
+    const pendingTeamIdRaw = Number(teamId);
+    const pendingTeamId = Number.isFinite(pendingTeamIdRaw) && pendingTeamIdRaw > 0 ? Math.floor(pendingTeamIdRaw) : 0;
+    const safeTeamName = (teamName || "").toString().trim() || "nhóm dịch";
+    const message =
+      (noteText || "").toString().trim() || `Bạn đang chờ duyệt vào nhóm ${safeTeamName}.`;
+
+    if (noteEl) {
+      noteEl.hidden = false;
+      noteEl.textContent = message;
+    }
+    if (actionsEl) {
+      actionsEl.hidden = true;
+    }
+    if (pendingActionsEl) {
+      pendingActionsEl.hidden = false;
+    }
+    if (cancelPendingButton) {
+      if (pendingTeamId > 0) {
+        cancelPendingButton.setAttribute("data-pending-team-id", String(pendingTeamId));
+      } else {
+        cancelPendingButton.setAttribute("data-pending-team-id", "");
+      }
+    }
+    if (teamBoxEl) {
+      teamBoxEl.hidden = true;
+    }
+    if (teamRoleEl) {
+      teamRoleEl.hidden = true;
+      teamRoleEl.textContent = "";
+      teamRoleEl.classList.remove("is-leader", "is-member");
+    }
+    if (teamSubEl) {
+      teamSubEl.hidden = true;
+      teamSubEl.textContent = "";
+    }
+    if (manageLinkEl) {
+      manageLinkEl.hidden = true;
+      manageLinkEl.setAttribute("href", "#");
+    }
+    if (requestsWrap) {
+      requestsWrap.hidden = true;
+    }
+    if (joinDialog && joinDialog.open) {
+      joinDialog.close();
     }
   };
 
@@ -248,12 +298,24 @@
   };
 
   const renderByTeamStatus = async () => {
-    const resetGuestState = (noteText) => {
+    const resetGuestState = (noteText, options = {}) => {
+      const hideActions = Boolean(options && options.hideActions);
+      const showPendingActions = Boolean(options && options.showPendingActions);
+      const pendingTeamIdRaw = Number(options && options.pendingTeamId);
+      const pendingTeamId = Number.isFinite(pendingTeamIdRaw) && pendingTeamIdRaw > 0 ? Math.floor(pendingTeamIdRaw) : 0;
       if (noteEl) {
         noteEl.hidden = false;
         noteEl.textContent = noteText || "Để có quyền đăng truyện, bạn phải là thành viên của một nhóm dịch.";
       }
-      if (actionsEl) actionsEl.hidden = false;
+      if (actionsEl) actionsEl.hidden = hideActions || showPendingActions;
+      if (pendingActionsEl) pendingActionsEl.hidden = !showPendingActions;
+      if (cancelPendingButton) {
+        if (showPendingActions && pendingTeamId > 0) {
+          cancelPendingButton.setAttribute("data-pending-team-id", String(pendingTeamId));
+        } else {
+          cancelPendingButton.setAttribute("data-pending-team-id", "");
+        }
+      }
       if (teamBoxEl) teamBoxEl.hidden = true;
       if (teamRoleEl) {
         teamRoleEl.hidden = true;
@@ -269,6 +331,9 @@
         manageLinkEl.setAttribute("href", "#");
       }
       if (requestsWrap) requestsWrap.hidden = true;
+      if (hideActions && joinDialog && joinDialog.open) {
+        joinDialog.close();
+      }
     };
 
     try {
@@ -283,11 +348,28 @@
       const inTeam = Boolean(data.inTeam && data.team);
 
       if (!inTeam) {
+        const pendingTeam = data && data.pendingTeam && typeof data.pendingTeam === "object" ? data.pendingTeam : null;
+        const pendingTeamId = pendingTeam ? Number(pendingTeam.id) : 0;
+        const hasPendingTeam = Number.isFinite(pendingTeamId) && pendingTeamId > 0;
+        if (hasPendingTeam) {
+          const pendingTeamName = (pendingTeam.name || "nhóm dịch").toString().trim() || "nhóm dịch";
+          setPendingJoinState({
+            teamId: pendingTeamId,
+            teamName: pendingTeamName,
+            noteText: `Bạn đang chờ duyệt vào nhóm ${pendingTeamName}.`
+          });
+          return;
+        }
+
         resetGuestState("Để có quyền đăng truyện, bạn phải là thành viên của một nhóm dịch.");
         return;
       }
 
       if (actionsEl) actionsEl.hidden = true;
+      if (pendingActionsEl) pendingActionsEl.hidden = true;
+      if (cancelPendingButton) {
+        cancelPendingButton.setAttribute("data-pending-team-id", "");
+      }
       if (noteEl) {
         noteEl.hidden = true;
         noteEl.textContent = "";
@@ -341,6 +423,36 @@
     }
   };
 
+  const setupPendingJoinCancel = () => {
+    if (!cancelPendingButton) return;
+
+    cancelPendingButton.addEventListener("click", async () => {
+      const canContinue = await ensureSignedInOrPrompt();
+      if (!canContinue) return;
+
+      const pendingTeamIdRaw = Number(cancelPendingButton.getAttribute("data-pending-team-id") || "");
+      const payload = {};
+      if (Number.isFinite(pendingTeamIdRaw) && pendingTeamIdRaw > 0) {
+        payload.teamId = Math.floor(pendingTeamIdRaw);
+      }
+
+      cancelPendingButton.disabled = true;
+      try {
+        const data = await fetchJson("/teams/join-request/cancel?format=json", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        const message = (data && data.message ? String(data.message) : "").trim();
+        showStatus(message || "Đã hủy yêu cầu tham gia nhóm dịch.", "success");
+        await renderByTeamStatus();
+      } catch (error) {
+        showStatus(error && error.message ? error.message : "Không thể hủy yêu cầu tham gia.", "error");
+      } finally {
+        cancelPendingButton.disabled = false;
+      }
+    });
+  };
+
   const setupJoinDialog = () => {
     if (!joinDialog) return;
     const openBtn = page.querySelector("[data-open-join-team]");
@@ -377,10 +489,42 @@
                 method: "POST",
                 body: JSON.stringify({ teamId: item.id })
               });
+              setPendingJoinState({
+                teamId: item.id,
+                teamName: item && item.name ? item.name : "nhóm dịch"
+              });
               showStatus(`Đã gửi yêu cầu tham gia ${item.name || "nhóm dịch"}.`, "success");
               joinDialog.close();
             } catch (error) {
-              showStatus(error && error.message ? error.message : "Không thể gửi yêu cầu tham gia.", "error");
+              const message = error && error.message ? error.message : "Không thể gửi yêu cầu tham gia.";
+              if (/đang chờ duyệt/i.test(message)) {
+                setPendingJoinState({
+                  teamId: item.id,
+                  teamName: item && item.name ? item.name : "nhóm dịch",
+                  noteText: message
+                });
+              } else if (/đã có nhóm dịch/i.test(message)) {
+                if (noteEl) {
+                  noteEl.hidden = false;
+                  noteEl.textContent = message;
+                }
+                if (actionsEl) {
+                  actionsEl.hidden = true;
+                }
+                if (pendingActionsEl) {
+                  pendingActionsEl.hidden = true;
+                }
+                if (cancelPendingButton) {
+                  cancelPendingButton.setAttribute("data-pending-team-id", "");
+                }
+                if (teamBoxEl) {
+                  teamBoxEl.hidden = true;
+                }
+                if (joinDialog && joinDialog.open) {
+                  joinDialog.close();
+                }
+              }
+              showStatus(message, "error");
             } finally {
               button.disabled = false;
             }
@@ -531,6 +675,7 @@
 
   setupJoinDialog();
   setupCreateDialog();
+  setupPendingJoinCancel();
   hydrateInitialLeaderRows();
   renderByTeamStatus().catch(() => null);
 

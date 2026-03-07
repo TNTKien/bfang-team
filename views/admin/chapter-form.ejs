@@ -6,6 +6,9 @@
     <% const initialGroupTeams = Array.isArray(groupTeamSelections) ? groupTeamSelections : []; %>
     <% const initialGroupName = (chapter.groupName || chapterGroupName || initialGroupTeams.map((item) => item.name).join(' / ') || '').toString(); %>
     <% const initialGroupIds = initialGroupTeams.map((item) => Number(item.id)).filter((id) => Number.isFinite(id) && id > 0).join(','); %>
+    <% const lockedGroupTeamIds = isTeamMode
+      ? [Number(teamManageScope.teamId)].filter((id) => Number.isFinite(id) && id > 0).map((id) => Math.floor(id))
+      : []; %>
     <% const safeJsonForScript = (value) => JSON.stringify(value)
       .replace(/</g, "\\u003c")
       .replace(/>/g, "\\u003e")
@@ -131,24 +134,21 @@
                   value="<%= JSON.stringify(initialGroupTeams.map((item) => ({ id: item.id, name: item.name, slug: item.slug }))) %>"
                   data-team-initial-teams
                 />
+                <input type="hidden" value="<%= JSON.stringify(lockedGroupTeamIds) %>" data-team-locked-ids />
 
+                <div class="admin-team-selector__selected" data-team-selected-list></div>
+                <input
+                  type="search"
+                  placeholder="Tìm nhóm dịch theo tên hoặc slug"
+                  autocomplete="off"
+                  data-team-search-input
+                />
+                <div class="admin-team-selector__results" hidden data-team-search-results></div>
+                <p class="admin-error" hidden data-team-search-error></p>
                 <% if (isTeamMode) { %>
-                  <input type="text" value="<%= teamManageScope.teamName || initialGroupName %>" readonly />
+                  <span class="admin-sub">Bạn có thể thêm nhiều nhóm dịch hợp tác. Nhóm của bạn sẽ luôn được giữ trong danh sách.</span>
                 <% } else { %>
-                  <div class="admin-team-selector__selected" data-team-selected-list></div>
-                  <input
-                    type="search"
-                    placeholder="Tìm nhóm dịch theo tên hoặc slug"
-                    autocomplete="off"
-                    data-team-search-input
-                  />
-                  <div class="admin-team-selector__results" hidden data-team-search-results></div>
-                  <p class="admin-error" hidden data-team-search-error></p>
                   <span class="admin-sub">Chọn một hoặc nhiều nhóm dịch từ danh sách tìm kiếm.</span>
-                <% } %>
-
-                <% if (isTeamMode) { %>
-                  <span class="admin-sub">Ở chế độ nhóm, bạn chỉ được chỉnh sửa chapter của nhóm mình.</span>
                 <% } %>
               </label>
 
@@ -156,8 +156,6 @@
                 <span>Trang</span>
                 <p class="note">
                   Kéo thả để thêm trang. Có thể kéo để đổi thứ tự. Bấm vào ảnh để thay trang. Nút <i class="fa-solid fa-xmark" aria-hidden="true"></i> để xóa.
-                  Ảnh sẽ tự upload tạm lên khu vực <code>tmp</code> của hệ thống lưu trữ ảnh. Nếu không lưu, hệ thống sẽ tự xóa sau
-                  <strong><%= draftTtlLabel %></strong>.
                 </p>
 
                 <label class="upload-drop <%= b2Ready && draftToken ? "" : "is-disabled" %>" data-upload-drop>

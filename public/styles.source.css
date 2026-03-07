@@ -1336,6 +1336,10 @@ body.admin-page main .admin-badge-order__btn {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.admin-team-selector__chip.is-locked {
+  padding-right: 0.62rem;
+}
+
 .admin-team-selector__chip-name {
   min-width: 0;
   max-width: 30ch;
@@ -1347,15 +1351,20 @@ body.admin-page main .admin-badge-order__btn {
 }
 
 .admin-team-selector__chip-remove {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
   padding: 0;
   border-radius: 999px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted-foreground);
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .admin-team-selector__chip-remove:hover {
@@ -1365,8 +1374,11 @@ body.admin-page main .admin-badge-order__btn {
 }
 
 .admin-team-selector__chip-remove i {
-  font-size: 0.72rem;
+  display: block;
+  font-size: 0.62rem;
   line-height: 1;
+  transform: translateY(-0.5px);
+  pointer-events: auto;
 }
 
 .admin-team-selector input[data-team-search-input] {
@@ -1421,6 +1433,16 @@ body.admin-page main .admin-badge-order__btn {
   color: var(--muted-foreground);
   font-size: 0.76rem;
   line-height: 1.2;
+}
+
+.admin-team-selector .admin-team-selector__empty,
+.admin-team-selector .admin-team-selector__result-empty,
+.admin-team-selector .admin-team-selector__chip-name,
+.admin-team-selector .admin-team-selector__option-name,
+.admin-team-selector .admin-team-selector__option-sub {
+  font-family: inherit;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .genre-toggle {

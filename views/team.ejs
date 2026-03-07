@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
-  <%- include("partials/head", { title, headExtraStylesheets: ["/team-page.css?v=team-media-v2"] }) %>
+  <%- include("partials/head", { title, headExtraStylesheets: ["/team-page.css?v=team-media-v3"] }) %>
   <body>
     <div class="site">
       <%- include("partials/header") %>
@@ -360,7 +360,7 @@
                                 data-confirm-meta="Nhóm: <%= teamProfile.name %>|Thành viên: <%= requestDisplayName %>"
                               >
                                 <input type="hidden" name="action" value="approve" />
-                                <button class="button" type="submit">Duyệt</button>
+                                <button class="button button--compact" type="submit">Duyệt</button>
                               </form>
                               <form
                                 method="post"
@@ -373,7 +373,7 @@
                                 data-confirm-meta="Nhóm: <%= teamProfile.name %>|Thành viên: <%= requestDisplayName %>"
                               >
                                 <input type="hidden" name="action" value="reject" />
-                                <button class="button button--ghost" type="submit">Từ chối</button>
+                                <button class="button button--ghost button--compact" type="submit">Từ chối</button>
                               </form>
                             </div>
                           </div>

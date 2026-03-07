@@ -3242,6 +3242,7 @@ const TEAM_MODE_ADMIN_ALLOWED_PATHS = [
   /^\/admin\/chapters(?:\/|$)/,
   /^\/admin\/chapter-drafts(?:\/|$)/,
   /^\/admin\/covers\/temp(?:\/|$)/,
+  /^\/admin\/teams\/search(?:\/|$)/,
   /^\/admin\/jobs(?:\/|$)/,
   /^\/admin\/logout(?:\/|$)/,
 ];

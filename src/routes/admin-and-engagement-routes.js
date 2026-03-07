@@ -178,6 +178,12 @@ const normalizeTeamGroupName = (value) =>
     .trim()
     .toLowerCase();
 
+const normalizeTeamGroupLookupKey = (value) =>
+  normalizeTeamGroupName(value)
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 const splitTeamGroupNameTokens = (value) => {
   const normalized = normalizeTeamGroupName(value);
   if (!normalized) return [];
@@ -231,13 +237,21 @@ const extractTeamUploadFilename = (assetUrl, expectedPrefix) => {
 const teamGroupNameContainsTeam = (groupName, teamName) => {
   const normalizedTeam = normalizeTeamGroupName(teamName);
   if (!normalizedTeam) return false;
+  const lookupTeam = normalizeTeamGroupLookupKey(teamName);
 
   const normalizedGroup = normalizeTeamGroupName(groupName);
   if (!normalizedGroup) return false;
   if (normalizedGroup === normalizedTeam) return true;
+  if (lookupTeam && normalizeTeamGroupLookupKey(groupName) === lookupTeam) return true;
 
   const tokens = splitTeamGroupNameTokens(groupName);
   if (tokens.includes(normalizedTeam)) return true;
+  if (lookupTeam) {
+    const lookupTokens = splitTeamGroupDisplayTokens(groupName)
+      .map((token) => normalizeTeamGroupLookupKey(token))
+      .filter(Boolean);
+    if (lookupTokens.includes(lookupTeam)) return true;
+  }
   return false;
 };
 
@@ -245,11 +259,13 @@ const buildTeamGroupNameListExpr = (columnSql) =>
   `replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(lower(trim(COALESCE(${columnSql}, ''))), ' / ', ','), '/', ','), ' & ', ','), '&', ','), ' + ', ','), '+', ','), ';', ','), '|', ','), ' x ', ','), ', ', ','), ' ,', ',')`;
 
 const buildTeamGroupNameMatchSql = (columnSql) => {
-  const normalizedList = buildTeamGroupNameListExpr(columnSql);
+  const normalizedNameExpr = `replace(lower(trim(COALESCE(${columnSql}, ''))), '_', '-')`;
+  const normalizedList = `replace(${buildTeamGroupNameListExpr(columnSql)}, '_', '-')`;
+  const normalizedParamExpr = `replace(lower(trim(?)), '_', '-')`;
   return `
     (
-      lower(trim(COALESCE(${columnSql}, ''))) = lower(trim(?))
-      OR (',' || ${normalizedList} || ',') LIKE ('%,' || lower(trim(?)) || ',%')
+      ${normalizedNameExpr} = ${normalizedParamExpr}
+      OR (',' || ${normalizedList} || ',') LIKE ('%,' || ${normalizedParamExpr} || ',%')
     )
   `;
 };
@@ -390,34 +406,49 @@ const listApprovedTeamsByIds = async ({ teamIds, dbAllFn = dbAll }) => {
 };
 
 const listApprovedTeamsByGroupName = async ({ groupName, dbAllFn = dbAll }) => {
-  const tokens = splitTeamGroupNameTokens(groupName || "");
-  if (!tokens.length) return [];
+  const rawTokens = splitTeamGroupDisplayTokens(groupName || "");
+  if (!rawTokens.length) return [];
 
-  const placeholders = tokens.map(() => "?").join(", ");
   const rows = await dbAllFn(
     `
       SELECT id, name, slug
       FROM translation_teams
       WHERE status = 'approved'
-        AND lower(trim(name)) IN (${placeholders})
       ORDER BY lower(name) ASC, id ASC
     `,
-    tokens
+    []
   );
 
-  const byName = new Map();
+  const byKey = new Map();
   (Array.isArray(rows) ? rows : []).forEach((row) => {
     const mapped = mapAdminTeamPickerRow(row);
     if (!mapped.id || !mapped.name) return;
-    const key = normalizeTeamGroupName(mapped.name);
-    if (!key || byName.has(key)) return;
-    byName.set(key, mapped);
+
+    [
+      normalizeTeamGroupName(mapped.name),
+      normalizeTeamGroupLookupKey(mapped.name),
+      normalizeTeamGroupName(mapped.slug),
+      normalizeTeamGroupLookupKey(mapped.slug)
+    ]
+      .filter(Boolean)
+      .forEach((key) => {
+        if (!byKey.has(key)) {
+          byKey.set(key, mapped);
+        }
+      });
   });
 
   const ordered = [];
   const seenIds = new Set();
-  tokens.forEach((token) => {
-    const picked = byName.get(token);
+  rawTokens.forEach((token) => {
+    const candidateKeys = [normalizeTeamGroupName(token), normalizeTeamGroupLookupKey(token)].filter(Boolean);
+    let picked = null;
+    for (const key of candidateKeys) {
+      if (byKey.has(key)) {
+        picked = byKey.get(key);
+        break;
+      }
+    }
     if (!picked || seenIds.has(picked.id)) return;
     seenIds.add(picked.id);
     ordered.push(picked);
@@ -434,16 +465,70 @@ const buildGroupNameFromApprovedTeams = (teams) => {
   return names.join(" / ");
 };
 
-const resolveGroupNameFromRequestPayload = async ({ reqBody, teamManageScope, dbAllFn = dbAll }) => {
-  if (teamManageScope && teamManageScope.teamName) {
-    return {
-      ok: true,
-      groupName: (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim(),
-      teamIds: [Number(teamManageScope.teamId) || 0].filter((id) => Number.isFinite(id) && id > 0)
+const ensureTeamScopeIncludedInSelection = async ({ teams, teamManageScope, dbAllFn = dbAll }) => {
+  const list = (Array.isArray(teams) ? teams : []).filter(Boolean);
+  if (!teamManageScope || !teamManageScope.teamName) return list;
+
+  const scopeTeamIdRaw = Number(teamManageScope.teamId);
+  const scopeTeamId = Number.isFinite(scopeTeamIdRaw) && scopeTeamIdRaw > 0 ? Math.floor(scopeTeamIdRaw) : 0;
+  const scopeTeamName = (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim();
+  const normalizedScopeTeamName = normalizeTeamGroupLookupKey(scopeTeamName);
+
+  const scopeTeamIndex = list.findIndex((item) => {
+    const itemId = Number(item && item.id);
+    if (scopeTeamId > 0 && Number.isFinite(itemId) && Math.floor(itemId) === scopeTeamId) return true;
+    const normalizedName = normalizeTeamGroupLookupKey(item && item.name ? item.name : "");
+    return Boolean(normalizedScopeTeamName && normalizedName && normalizedName === normalizedScopeTeamName);
+  });
+  if (scopeTeamIndex >= 0) {
+    if (scopeTeamIndex === 0) return list;
+    const next = list.slice();
+    const scopedTeam = next.splice(scopeTeamIndex, 1)[0];
+    if (!scopedTeam) return list;
+    return [scopedTeam, ...next];
+  }
+
+  let scopeTeamSelection = null;
+  if (scopeTeamId > 0) {
+    const rows = await listApprovedTeamsByIds({ teamIds: [scopeTeamId], dbAllFn });
+    scopeTeamSelection = rows.length ? rows[0] : null;
+  }
+
+  if (!scopeTeamSelection && scopeTeamName) {
+    scopeTeamSelection = {
+      id: scopeTeamId,
+      name: scopeTeamName,
+      slug: (teamManageScope.teamSlug || "").toString().trim()
     };
   }
 
-  const teamIds = parseGroupTeamIdsInput(reqBody && reqBody.group_team_ids ? reqBody.group_team_ids : "");
+  if (!scopeTeamSelection || !scopeTeamSelection.name) {
+    return list;
+  }
+
+  const normalizedScopeName = normalizeTeamGroupLookupKey(scopeTeamSelection.name);
+  const filtered = list.filter((item) => {
+    const itemId = Number(item && item.id);
+    if (scopeTeamSelection.id > 0 && Number.isFinite(itemId) && Math.floor(itemId) === scopeTeamSelection.id) {
+      return false;
+    }
+    const normalizedName = normalizeTeamGroupLookupKey(item && item.name ? item.name : "");
+    if (normalizedScopeName && normalizedName === normalizedScopeName) {
+      return false;
+    }
+    return true;
+  });
+
+  return [scopeTeamSelection, ...filtered];
+};
+
+const resolveGroupNameFromRequestPayload = async ({ reqBody, teamManageScope, dbAllFn = dbAll }) => {
+  const inputTeamIds = parseGroupTeamIdsInput(reqBody && reqBody.group_team_ids ? reqBody.group_team_ids : "");
+  const scopeTeamIdRaw = Number(teamManageScope && teamManageScope.teamId);
+  const scopeTeamId = Number.isFinite(scopeTeamIdRaw) && scopeTeamIdRaw > 0 ? Math.floor(scopeTeamIdRaw) : 0;
+  const teamIds =
+    teamManageScope && scopeTeamId > 0 && !inputTeamIds.length ? [scopeTeamId] : inputTeamIds;
+
   if (!teamIds.length) {
     return {
       ok: false,
@@ -451,12 +536,20 @@ const resolveGroupNameFromRequestPayload = async ({ reqBody, teamManageScope, db
     };
   }
 
-  const selectedTeams = await listApprovedTeamsByIds({ teamIds, dbAllFn });
+  let selectedTeams = await listApprovedTeamsByIds({ teamIds, dbAllFn });
   if (selectedTeams.length !== teamIds.length) {
     return {
       ok: false,
       error: "Nhóm dịch đã chọn không hợp lệ hoặc không còn tồn tại."
     };
+  }
+
+  if (teamManageScope && teamManageScope.teamName) {
+    selectedTeams = await ensureTeamScopeIncludedInSelection({
+      teams: selectedTeams,
+      teamManageScope,
+      dbAllFn
+    });
   }
 
   const groupName = buildGroupNameFromApprovedTeams(selectedTeams);
@@ -470,24 +563,21 @@ const resolveGroupNameFromRequestPayload = async ({ reqBody, teamManageScope, db
   return {
     ok: true,
     groupName,
-    teamIds,
+    teamIds: selectedTeams
+      .map((item) => Number(item && item.id))
+      .filter((id) => Number.isFinite(id) && id > 0)
+      .map((id) => Math.floor(id)),
     teams: selectedTeams
   };
 };
 
 const buildGroupTeamSelectionsForForm = async ({ teamManageScope, groupName, dbAllFn = dbAll }) => {
-  if (teamManageScope && teamManageScope.teamName) {
-    const id = Number(teamManageScope.teamId);
-    return [
-      {
-        id: Number.isFinite(id) && id > 0 ? Math.floor(id) : 0,
-        name: (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim(),
-        slug: (teamManageScope.teamSlug || "").toString().trim()
-      }
-    ].filter((item) => item.id && item.name);
-  }
-
-  return listApprovedTeamsByGroupName({ groupName: groupName || "", dbAllFn });
+  const selectedTeams = await listApprovedTeamsByGroupName({ groupName: groupName || "", dbAllFn });
+  return ensureTeamScopeIncludedInSelection({
+    teams: selectedTeams,
+    teamManageScope,
+    dbAllFn
+  });
 };
 
 const teamScopeHasPermission = (scope, permissionKey) => {
@@ -1189,9 +1279,11 @@ app.get(
       teamManageScope,
       groupName: teamManageScope ? teamManageScope.teamName : team.name
     });
-    const initialGroupName = teamManageScope
-      ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
-      : buildGroupNameFromApprovedTeams(groupTeamSelections);
+    const initialGroupName =
+      buildGroupNameFromApprovedTeams(groupTeamSelections) ||
+      (teamManageScope && teamManageScope.teamName
+        ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
+        : "");
 
     res.render("admin/manga-form", {
       title: "Thêm truyện",
@@ -1412,9 +1504,11 @@ app.get(
       teamManageScope,
       groupName: mangaRow.group_name || ""
     });
-    const initialGroupName = teamManageScope
-      ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
-      : buildGroupNameFromApprovedTeams(groupTeamSelections);
+    const initialGroupName =
+      buildGroupNameFromApprovedTeams(groupTeamSelections) ||
+      (teamManageScope && teamManageScope.teamName
+        ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
+        : "");
 
     res.render("admin/manga-form", {
       title: "Chỉnh sửa truyện",
@@ -2053,16 +2147,16 @@ app.get(
         ? `${Math.round(draftTtlMinutes / 60)} giờ`
         : `${draftTtlMinutes} phút`;
 
-    const chapterInitialGroupName = teamManageScope
-      ? teamManageScope.teamName
-      : (mangaRow.group_name || team.name || "").toString();
+    const chapterInitialGroupName = (mangaRow.group_name || (teamManageScope ? teamManageScope.teamName : team.name) || "").toString();
     const groupTeamSelections = await buildGroupTeamSelectionsForForm({
       teamManageScope,
       groupName: chapterInitialGroupName
     });
-    const chapterGroupName = teamManageScope
-      ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
-      : buildGroupNameFromApprovedTeams(groupTeamSelections);
+    const chapterGroupName =
+      buildGroupNameFromApprovedTeams(groupTeamSelections) ||
+      (teamManageScope && teamManageScope.teamName
+        ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
+        : "");
 
     return res.render("admin/chapter-new", {
       title: isOneshotManga ? "Thêm Oneshot" : "Thêm chương mới",
@@ -2574,9 +2668,11 @@ app.get(
       teamManageScope,
       groupName: chapterRow.group_name || ""
     });
-    const chapterGroupName = teamManageScope
-      ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
-      : buildGroupNameFromApprovedTeams(groupTeamSelections);
+    const chapterGroupName =
+      buildGroupNameFromApprovedTeams(groupTeamSelections) ||
+      (teamManageScope && teamManageScope.teamName
+        ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
+        : "");
 
     const existingPageIds = [];
     const existingPages = [];

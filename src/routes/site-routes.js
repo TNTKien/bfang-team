@@ -1145,6 +1145,28 @@ const registerSiteRoutes = (app, deps) => {
     );
   };
 
+  const getPendingTeamMembership = async (userId) => {
+    const safeUserId = (userId || "").toString().trim();
+    if (!safeUserId) return null;
+    return dbGet(
+      `
+        SELECT
+          tm.team_id,
+          tm.requested_at,
+          t.name as team_name,
+          t.slug as team_slug,
+          t.status as team_status
+        FROM translation_team_members tm
+        JOIN translation_teams t ON t.id = tm.team_id
+        WHERE tm.user_id = ?
+          AND tm.status = 'pending'
+        ORDER BY tm.requested_at DESC, tm.team_id DESC
+        LIMIT 1
+      `,
+      [safeUserId]
+    );
+  };
+
   const getApprovedLeaderTeamMembership = async ({ userId, teamId = 0, dbGetFn = dbGet }) => {
     const safeUserId = (userId || "").toString().trim();
     const safeTeamId = Number(teamId);
@@ -2727,16 +2749,29 @@ app.get(
     const userId = user && user.id ? String(user.id).trim() : "";
     const canAccessAdminBadge = userId ? await hasAdminBadgeAccess(userId) : false;
     const membership = userId ? await getApprovedTeamMembership(userId) : null;
+    const pendingMembership = !membership && userId ? await getPendingTeamMembership(userId) : null;
 
     const publishState = {
       requiresLogin: !userId,
       inTeam: false,
       roleLabel: "",
       team: null,
+      pendingTeam: null,
       canReviewRequests: false,
       pendingRequests: [],
       manageMangaUrl: ""
     };
+
+    if (pendingMembership) {
+      const pendingTeamId = Number(pendingMembership.team_id);
+      publishState.pendingTeam = {
+        id: Number.isFinite(pendingTeamId) && pendingTeamId > 0 ? Math.floor(pendingTeamId) : 0,
+        name: (pendingMembership.team_name || "").toString().trim(),
+        slug: (pendingMembership.team_slug || "").toString().trim(),
+        requestedAt: Number(pendingMembership.requested_at) || 0,
+        teamStatus: (pendingMembership.team_status || "").toString().trim().toLowerCase() || "pending"
+      };
+    }
 
     if (membership) {
       const teamId = Number(membership.team_id) || 0;
@@ -3069,7 +3104,25 @@ app.get(
 
     const membership = await getApprovedTeamMembership(userId);
     if (!membership) {
-      return res.json({ ok: true, inTeam: false, team: null, roleLabel: "" });
+      const pendingMembership = await getPendingTeamMembership(userId);
+      if (!pendingMembership) {
+        return res.json({ ok: true, inTeam: false, team: null, roleLabel: "", pendingTeam: null });
+      }
+
+      const pendingTeamId = Number(pendingMembership.team_id);
+      return res.json({
+        ok: true,
+        inTeam: false,
+        team: null,
+        roleLabel: "",
+        pendingTeam: {
+          id: Number.isFinite(pendingTeamId) && pendingTeamId > 0 ? Math.floor(pendingTeamId) : 0,
+          name: (pendingMembership.team_name || "").toString().trim(),
+          slug: (pendingMembership.team_slug || "").toString().trim(),
+          requestedAt: Number(pendingMembership.requested_at) || 0,
+          teamStatus: (pendingMembership.team_status || "").toString().trim().toLowerCase() || "pending"
+        }
+      });
     }
 
     const teamId = Number(membership.team_id) || 0;
@@ -3308,15 +3361,57 @@ app.post(
       return res.status(404).json({ ok: false, error: "Không tìm thấy nhóm dịch." });
     }
 
+    const safeTeamId = Math.floor(teamId);
+
     const current = await dbGet(
-      "SELECT team_id, status FROM translation_team_members WHERE user_id = ? AND status IN ('pending', 'approved') LIMIT 1",
+      `
+        SELECT
+          tm.team_id,
+          tm.status,
+          t.name AS team_name,
+          t.slug AS team_slug
+        FROM translation_team_members tm
+        LEFT JOIN translation_teams t ON t.id = tm.team_id
+        WHERE tm.user_id = ?
+          AND tm.status IN ('pending', 'approved')
+        ORDER BY
+          CASE WHEN tm.status = 'approved' THEN 0 ELSE 1 END,
+          tm.requested_at DESC NULLS LAST,
+          tm.team_id DESC
+        LIMIT 1
+      `,
       [userId]
     );
     if (current) {
-      return res.status(409).json({ ok: false, error: "Bạn đã có nhóm dịch hoặc đang chờ duyệt." });
+      const currentTeamId = Number(current.team_id);
+      const currentStatus = (current.status || "").toString().trim().toLowerCase();
+      const currentTeamName = (current.team_name || "").toString().trim() || "nhóm dịch khác";
+      const currentTeamSlug = (current.team_slug || "").toString().trim();
+      const requestedSameTeam = Number.isFinite(currentTeamId) && currentTeamId > 0 && currentTeamId === safeTeamId;
+
+      let conflictMessage = "Bạn đã có nhóm dịch hoặc đang chờ duyệt.";
+      if (requestedSameTeam && currentStatus === "approved") {
+        conflictMessage = "Bạn đã là thành viên của nhóm này.";
+      } else if (requestedSameTeam && currentStatus === "pending") {
+        conflictMessage = "Bạn đã gửi yêu cầu tham gia nhóm này rồi.";
+      } else if (currentStatus === "approved") {
+        conflictMessage = `Bạn đang là thành viên của nhóm ${currentTeamName}.`;
+      } else if (currentStatus === "pending") {
+        conflictMessage = `Bạn đang chờ duyệt vào nhóm ${currentTeamName}.`;
+      }
+
+      return res.status(409).json({
+        ok: false,
+        error: conflictMessage,
+        currentTeam: {
+          id: Number.isFinite(currentTeamId) && currentTeamId > 0 ? Math.floor(currentTeamId) : 0,
+          name: currentTeamName,
+          slug: currentTeamSlug,
+          status: currentStatus || "pending"
+        }
+      });
     }
 
-    const safeTeamId = Math.floor(teamId);
     const joinResult = await withTransaction(async ({ dbAll: txAll, dbRun: txRun }) => {
       const now = Date.now();
       await txRun(
@@ -3389,6 +3484,118 @@ app.post(
     });
 
     return res.json({ ok: true, message: `Đã gửi yêu cầu tham gia ${teamRow.name || "nhóm dịch"}.` });
+  })
+);
+
+app.post(
+  "/teams/join-request/cancel",
+  asyncHandler(async (req, res) => {
+    const user = await requirePrivateFeatureAuthUser(req, res);
+    if (!user) return;
+
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const userId = String(user.id || "").trim();
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: "Phiên đăng nhập không hợp lệ." });
+    }
+
+    const requestedTeamIdRaw = Number(req.body && req.body.teamId);
+    const hasTeamFilter = Number.isFinite(requestedTeamIdRaw) && requestedTeamIdRaw > 0;
+    const requestedTeamId = hasTeamFilter ? Math.floor(requestedTeamIdRaw) : 0;
+
+    const pendingRow = await dbGet(
+      `
+        SELECT
+          tm.team_id,
+          t.name AS team_name,
+          t.slug AS team_slug
+        FROM translation_team_members tm
+        LEFT JOIN translation_teams t ON t.id = tm.team_id
+        WHERE tm.user_id = ?
+          AND tm.status = 'pending'
+          AND (? = 0 OR tm.team_id = ?)
+        ORDER BY tm.requested_at DESC NULLS LAST, tm.team_id DESC
+        LIMIT 1
+      `,
+      [userId, requestedTeamId, requestedTeamId]
+    );
+
+    if (!pendingRow) {
+      return res.status(404).json({ ok: false, error: "Bạn không có yêu cầu tham gia nào đang chờ duyệt." });
+    }
+
+    const pendingTeamId = Number(pendingRow.team_id);
+    if (!Number.isFinite(pendingTeamId) || pendingTeamId <= 0) {
+      return res.status(404).json({ ok: false, error: "Yêu cầu tham gia không hợp lệ." });
+    }
+
+    const safePendingTeamId = Math.floor(pendingTeamId);
+    const cancelResult = await withTransaction(async ({ dbRun: txRun, dbAll: txAll }) => {
+      const deleteRow = await txRun(
+        "DELETE FROM translation_team_members WHERE team_id = ? AND user_id = ? AND status = 'pending'",
+        [safePendingTeamId, userId]
+      );
+      if (!deleteRow || !deleteRow.changes) {
+        return {
+          ok: false,
+          notifiedLeaderIds: []
+        };
+      }
+
+      await txRun(
+        "DELETE FROM notifications WHERE team_id = ? AND actor_user_id = ? AND type = ? AND is_read = false",
+        [safePendingTeamId, userId, NOTIFICATION_TYPE_TEAM_JOIN_REQUEST]
+      );
+
+      const leaderRows = await txAll(
+        `
+          SELECT tm.user_id
+          FROM translation_team_members tm
+          JOIN translation_teams t ON t.id = tm.team_id
+          WHERE tm.team_id = ?
+            AND tm.role = 'leader'
+            AND tm.status = 'approved'
+            AND t.status = 'approved'
+        `,
+        [safePendingTeamId]
+      );
+
+      const notifiedLeaderIds = Array.from(
+        new Set(
+          (Array.isArray(leaderRows) ? leaderRows : [])
+            .map((row) => (row && row.user_id ? String(row.user_id).trim() : ""))
+            .filter((value) => value && value !== userId)
+        )
+      );
+
+      return {
+        ok: true,
+        notifiedLeaderIds
+      };
+    });
+
+    if (!cancelResult || cancelResult.ok !== true) {
+      return res.status(409).json({ ok: false, error: "Yêu cầu tham gia không còn khả dụng để hủy." });
+    }
+
+    const notifiedLeaderIds = Array.isArray(cancelResult.notifiedLeaderIds) ? cancelResult.notifiedLeaderIds : [];
+    notifiedLeaderIds.forEach((leaderUserId) => {
+      publishNotificationStreamUpdate({ userId: leaderUserId, reason: "deleted" }).catch(() => null);
+    });
+
+    const pendingTeamName = (pendingRow.team_name || "nhóm dịch").toString().trim() || "nhóm dịch";
+    return res.json({
+      ok: true,
+      message: `Đã hủy yêu cầu tham gia ${pendingTeamName}.`,
+      team: {
+        id: safePendingTeamId,
+        name: pendingTeamName,
+        slug: (pendingRow.team_slug || "").toString().trim()
+      }
+    });
   })
 );
 

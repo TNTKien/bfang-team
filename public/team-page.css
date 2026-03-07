@@ -161,6 +161,41 @@
   transform: none;
 }
 
+.team-layout .publish-request-item__actions {
+  align-items: center;
+}
+
+.team-layout .publish-request-item__actions .button {
+  min-height: 34px;
+  padding: 0.48rem 0.84rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+}
+
+.team-layout--split .publish-request-item {
+  align-items: flex-start;
+  gap: 0.58rem;
+}
+
+.team-layout--split .publish-request-item > div:first-child {
+  width: 100%;
+  min-width: 0;
+}
+
+.team-layout--split .publish-request-item__actions {
+  width: 100%;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.team-layout--split .publish-request-item__actions .button {
+  min-height: 32px;
+  padding: 0.4rem 0.72rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
 @media (max-width: 760px) {
   .team-edit-upload-grid {
     align-items: start;

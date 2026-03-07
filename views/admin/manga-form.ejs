@@ -6,6 +6,9 @@
     <% const initialGroupTeams = Array.isArray(groupTeamSelections) ? groupTeamSelections : []; %>
     <% const initialGroupName = (manga.groupName || initialGroupTeams.map((item) => item.name).join(' / ') || '').toString(); %>
     <% const initialGroupIds = initialGroupTeams.map((item) => Number(item.id)).filter((id) => Number.isFinite(id) && id > 0).join(','); %>
+    <% const lockedGroupTeamIds = isTeamMode
+      ? [Number(teamManageScope.teamId)].filter((id) => Number.isFinite(id) && id > 0).map((id) => Math.floor(id))
+      : []; %>
     <div class="site admin">
       <%- include("partials/nav") %>
       <main>
@@ -64,25 +67,18 @@
                   value="<%= JSON.stringify(initialGroupTeams.map((item) => ({ id: item.id, name: item.name, slug: item.slug }))) %>"
                   data-team-initial-teams
                 />
+                <input type="hidden" value="<%= JSON.stringify(lockedGroupTeamIds) %>" data-team-locked-ids />
 
-                <% if (isTeamMode) { %>
-                  <input type="text" value="<%= teamManageScope.teamName || initialGroupName %>" readonly />
-                <% } else { %>
-                  <div class="admin-team-selector__selected" data-team-selected-list></div>
-                  <input
-                    type="search"
-                    placeholder="Tìm nhóm dịch theo tên hoặc slug"
-                    autocomplete="off"
-                    data-team-search-input
-                  />
-                  <div class="admin-team-selector__results" hidden data-team-search-results></div>
-                  <p class="admin-error" hidden data-team-search-error></p>
-                  <span class="admin-sub">Chọn một hoặc nhiều nhóm dịch từ danh sách tìm kiếm.</span>
-                <% } %>
-
-                <% if (isTeamMode) { %>
-                  <span class="admin-sub">Bạn đang ở chế độ nhóm: truyện sẽ luôn gắn với nhóm của bạn.</span>
-                <% } %>
+                <div class="admin-team-selector__selected" data-team-selected-list></div>
+                <input
+                  type="search"
+                  placeholder="Tìm nhóm dịch theo tên hoặc slug"
+                  autocomplete="off"
+                  data-team-search-input
+                />
+                <div class="admin-team-selector__results" hidden data-team-search-results></div>
+                <p class="admin-error" hidden data-team-search-error></p>
+                <span class="admin-sub">Chọn một hoặc nhiều nhóm dịch từ danh sách tìm kiếm.</span>
               </label>
 
               <label class="admin-field">
