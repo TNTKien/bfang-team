@@ -153,7 +153,6 @@ if (quickComments) {
   quickComments.addEventListener("click", () => {
     if (commentsSection) {
       window.dispatchEvent(new CustomEvent(READER_JUMP_COMMENTS_EVENT));
-      commentsSection.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   });
 }
@@ -282,22 +281,19 @@ if (quickComments) {
   let jumpToCommentsActive = false;
   let jumpToCommentsTimer = null;
   let jumpToCommentsStartedAt = 0;
+  let jumpToCommentsIgnoreScrollUntil = 0;
+  let lastObservedScrollY = Math.round(window.scrollY || 0);
 
   const getLazyState = (img) =>
     (img && img.dataset && img.dataset.lazyState ? String(img.dataset.lazyState).trim() : "");
 
   const clearJumpToComments = () => {
     jumpToCommentsActive = false;
+    jumpToCommentsStartedAt = 0;
+    jumpToCommentsIgnoreScrollUntil = 0;
     if (!jumpToCommentsTimer) return;
     window.clearTimeout(jumpToCommentsTimer);
     jumpToCommentsTimer = null;
-  };
-
-  const isCommentsReached = () => {
-    if (!commentsSection) return true;
-    const rect = commentsSection.getBoundingClientRect();
-    const threshold = Math.max(24, window.innerHeight * 0.08);
-    return rect.top <= threshold && rect.bottom > threshold;
   };
 
   const scrollToCommentsTarget = (behavior) => {
@@ -314,12 +310,43 @@ if (quickComments) {
       return state === "loaded" || state === "error" ? count : count + 1;
     }, 0);
 
+  const getPendingLazyCountTowardComments = () => {
+    if (!orderedImages.length) return 0;
+    const startIndex = Math.max(0, Math.min(orderedImages.length - 1, activePageIndex));
+    let count = 0;
+    for (let index = startIndex; index < orderedImages.length; index += 1) {
+      const state = getLazyState(orderedImages[index]);
+      if (state !== "loaded" && state !== "error") {
+        count += 1;
+      }
+    }
+    return count;
+  };
+
   const enqueueImagesTowardComments = () => {
     if (!orderedImages.length) return;
     const startIndex = Math.max(0, Math.min(orderedImages.length - 1, activePageIndex));
     for (let index = startIndex; index < orderedImages.length; index += 1) {
       enqueueLookAheadImage(orderedImages[index]);
     }
+  };
+
+  const getCommentsTargetTop = () => {
+    if (!commentsSection) return 0;
+    const rect = commentsSection.getBoundingClientRect();
+    const threshold = Math.max(24, window.innerHeight * 0.08);
+    const pendingLazyCount = jumpToCommentsActive ? getPendingLazyCountTowardComments() : 0;
+    const pendingCompensation = Math.min(2400, pendingLazyCount * 36);
+    return Math.max(0, Math.round(rect.top + window.scrollY - threshold - pendingCompensation));
+  };
+
+  const performJumpToCommentsScroll = (behavior) => {
+    if (!commentsSection) return;
+    const targetTop = getCommentsTargetTop();
+    const currentTop = Math.round(window.scrollY || 0);
+    if (targetTop <= currentTop + 24) return;
+    jumpToCommentsIgnoreScrollUntil = Date.now() + 260;
+    window.scrollTo({ top: targetTop, behavior });
   };
 
   const scheduleJumpToCommentsSync = (delayMs, behavior) => {
@@ -336,20 +363,23 @@ if (quickComments) {
     jumpToCommentsTimer = window.setTimeout(() => {
       jumpToCommentsTimer = null;
       if (!jumpToCommentsActive) return;
-      const pendingLazyCount = getPendingLazyCount();
-      if (pendingLazyCount === 0 && isElementVisible(commentsSection)) {
+      const pendingLazyCount = getPendingLazyCountTowardComments();
+      const commentsVisible = isElementVisible(commentsSection);
+      if (pendingLazyCount === 0 && commentsVisible) {
         clearJumpToComments();
         return;
       }
       if (jumpToCommentsStartedAt && Date.now() - jumpToCommentsStartedAt >= jumpToCommentsMaxMs) {
-        if (isElementVisible(commentsSection)) {
+        if (commentsVisible) {
           clearJumpToComments();
           return;
         }
       }
       enqueueImagesTowardComments();
       drainLookAheadQueue();
-      scrollToCommentsTarget(behavior || "auto");
+      if (!commentsVisible) {
+        performJumpToCommentsScroll(behavior || "auto");
+      }
       scheduleJumpToCommentsSync(180, "auto");
     }, delay);
   };
@@ -361,8 +391,13 @@ if (quickComments) {
     activePageIndex = resolveActivePageIndex();
     enqueueImagesTowardComments();
     drainLookAheadQueue();
-    scrollToCommentsTarget("smooth");
+    performJumpToCommentsScroll("auto");
     scheduleJumpToCommentsSync(220, "auto");
+  };
+
+  const cancelJumpOnUpwardIntent = () => {
+    if (!jumpToCommentsActive) return;
+    clearJumpToComments();
   };
 
   const isChapterReady = () =>
@@ -674,7 +709,68 @@ if (quickComments) {
   });
 
   syncActiveWindow();
-  window.addEventListener("scroll", scheduleActiveWindowSync, { passive: true });
+  window.addEventListener(
+    "scroll",
+    () => {
+      const currentScrollY = Math.round(window.scrollY || 0);
+      const isUserScrollingUp = currentScrollY < lastObservedScrollY - 24;
+      const isStrongUpwardScroll = currentScrollY < lastObservedScrollY - 120;
+      const commentsVisible = isElementVisible(commentsSection);
+      if (jumpToCommentsActive && isStrongUpwardScroll && !commentsVisible) {
+        clearJumpToComments();
+      } else if (jumpToCommentsActive && isUserScrollingUp && Date.now() > jumpToCommentsIgnoreScrollUntil) {
+        clearJumpToComments();
+      }
+      lastObservedScrollY = currentScrollY;
+      scheduleActiveWindowSync();
+    },
+    { passive: true }
+  );
+  window.addEventListener(
+    "wheel",
+    (event) => {
+      if (!event) return;
+      if (Number(event.deltaY) < -6) {
+        cancelJumpOnUpwardIntent();
+      }
+    },
+    { passive: true }
+  );
+  document.addEventListener("keydown", (event) => {
+    if (!event) return;
+    const key = (event.key || "").toString();
+    if (key === "ArrowUp" || key === "PageUp" || key === "Home") {
+      cancelJumpOnUpwardIntent();
+    }
+  });
+  let touchStartY = null;
+  window.addEventListener(
+    "touchstart",
+    (event) => {
+      const touch = event && event.touches && event.touches[0];
+      touchStartY = touch ? Number(touch.clientY) : null;
+    },
+    { passive: true }
+  );
+  window.addEventListener(
+    "touchmove",
+    (event) => {
+      const touch = event && event.touches && event.touches[0];
+      const currentY = touch ? Number(touch.clientY) : null;
+      if (!Number.isFinite(currentY) || !Number.isFinite(touchStartY)) return;
+      if (currentY - touchStartY > 10) {
+        cancelJumpOnUpwardIntent();
+      }
+    },
+    { passive: true }
+  );
+  window.addEventListener(
+    "touchend",
+    () => {
+      touchStartY = null;
+    },
+    { passive: true }
+  );
   window.addEventListener("resize", scheduleActiveWindowSync, { passive: true });
   window.addEventListener(READER_JUMP_COMMENTS_EVENT, requestJumpToComments);
   window.addEventListener(READER_CANCEL_JUMP_COMMENTS_EVENT, clearJumpToComments);
