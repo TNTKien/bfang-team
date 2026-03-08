@@ -1,0 +1,62 @@
+  <% if (isHeadScriptEnabled("flowbite")) { %>
+    <script src="<%= flowbiteScriptUrl %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("confirm")) { %>
+    <script src="<%= assetUrl("/confirm.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("toast")) { %>
+    <script src="<%= assetUrl(`/toast.js?rev=${toastUiRevision}`) %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("auth")) { %>
+    <script src="<%= assetUrl("/auth-core.js") %>" defer></script>
+    <script src="<%= assetUrl("/auth-ui.js") %>" defer></script>
+    <script src="<%= assetUrl("/auth.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("buttonUi")) { %>
+    <script src="<%= assetUrl(`/button-ui.js?rev=${toastUiRevision}`) %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("serviceWorker")) { %>
+    <script src="<%= assetUrl("/sw-register.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("fastNav")) { %>
+    <script src="<%= assetUrl("/fast-nav-core.js") %>" defer></script>
+    <script src="<%= assetUrl("/fast-nav-comments.js") %>" defer></script>
+    <script src="<%= assetUrl("/fast-nav.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("readingHistory")) { %>
+    <script src="<%= assetUrl("/reading-history.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("bookmarks")) { %>
+    <script src="<%= assetUrl("/bookmarks.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("notifications")) { %>
+    <script src="<%= assetUrl("/notifications.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("messagesIndicator")) { %>
+    <script src="<%= assetUrl("/messages-indicator.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("comments")) { %>
+    <script src="<%= assetUrl("/comments.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("mangaDetail")) { %>
+    <script src="<%= assetUrl("/manga-detail.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("filters")) { %>
+    <script src="<%= assetUrl("/filters.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("lazysizes")) { %>
+    <script nonce="<%= cspNonce || '' %>">
+      window.lazySizesConfig = window.lazySizesConfig || {};
+      window.lazySizesConfig.expand = 1800;
+      window.lazySizesConfig.expFactor = 1.4;
+      window.lazySizesConfig.loadMode = 2;
+      window.lazySizesConfig.throttleDelay = 80;
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/lazysizes@5.3.2/lazysizes.min.js" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("reader")) { %>
+    <script src="<%= assetUrl("/reader.js") %>" defer></script>
+  <% } %>
+  <% if (isHeadScriptEnabled("admin")) { %>
+    <script src="<%= assetUrl("/admin.js") %>" defer></script>
+  <% } %>

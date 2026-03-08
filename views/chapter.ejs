@@ -71,76 +71,17 @@
         <section class="section container reader">
           <div class="reader-fixed reader-fixed--top" data-reader-fixed>
             <div class="reader-fixed-inner">
-              <% if (prevChapter) { %>
-                <a
-                  class="reader-float-btn reader-float-btn--nav"
-                  href="/manga/<%= manga.slug %>/chapters/<%= prevChapter.number %>"
-                  aria-label="Chương trước"
-                  title="Chương trước"
-                >
-                  <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M15 18l-6-6 6-6" />
-                  </svg>
-                </a>
-              <% } else { %>
-                <span class="reader-float-btn reader-float-btn--nav is-disabled" aria-hidden="true">
-                  <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M15 18l-6-6 6-6" />
-                  </svg>
-                </span>
-              <% } %>
-              <div class="reader-dropdown reader-dropdown--down" data-reader-dropdown>
-                <button class="reader-dropdown-trigger" type="button" data-reader-toggle>
-                  <span class="reader-dropdown-label">
-                    <%= chapterShortLabel %><% if (chapterTitle) { %> — <%= chapterTitle %><% } %>
-                  </span>
-                  <svg class="reader-icon reader-dropdown-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </button>
-                <div class="reader-dropdown-panel" data-reader-panel>
-                  <button class="reader-dropdown-nav" type="button" data-reader-scroll="up" aria-label="Cuộn lên">
-                    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M6 15l6-6 6 6" />
-                    </svg>
-                  </button>
-                  <div class="reader-dropdown-list" data-reader-list>
-                    <% chapterList.forEach((item) => { %>
-                  <button
-                    class="reader-dropdown-option <%= Number(item.number) === Number(chapter.number) ? "is-active" : "" %>"
-                    type="button"
-                    data-reader-option
-                    data-href="/manga/<%= manga.slug %>/chapters/<%= item.number %>"
-                  >
-                    <%= buildChapterOptionLabel(item) %>
-                  </button>
-                    <% }) %>
-                  </div>
-                  <button class="reader-dropdown-nav" type="button" data-reader-scroll="down" aria-label="Cuộn xuống">
-                    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              <% if (nextChapter) { %>
-                <a
-                  class="reader-float-btn reader-float-btn--nav"
-                  href="/manga/<%= manga.slug %>/chapters/<%= nextChapter.number %>"
-                  aria-label="Chương sau"
-                  title="Chương sau"
-                >
-                  <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                </a>
-              <% } else { %>
-                <span class="reader-float-btn reader-float-btn--nav is-disabled" aria-hidden="true">
-                  <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                </span>
-              <% } %>
+              <%- include("partials/chapter-reader-controls", {
+                manga,
+                chapter,
+                chapterTitle,
+                chapterShortLabel,
+                chapterList,
+                prevChapter,
+                nextChapter,
+                buildChapterOptionLabel,
+                dropdownClass: "reader-dropdown--down"
+              }) %>
             </div>
           </div>
           <% const lazyPlaceholderSrc = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="; %>
@@ -205,76 +146,17 @@
           <% } %>
           <div class="reader-fixed reader-fixed--bottom" data-reader-fixed>
             <div class="reader-fixed-inner">
-              <% if (prevChapter) { %>
-                <a
-                  class="reader-float-btn reader-float-btn--nav"
-                  href="/manga/<%= manga.slug %>/chapters/<%= prevChapter.number %>"
-                  aria-label="Chương trước"
-                  title="Chương trước"
-                >
-                  <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M15 18l-6-6 6-6" />
-                  </svg>
-                </a>
-              <% } else { %>
-                <span class="reader-float-btn reader-float-btn--nav is-disabled" aria-hidden="true">
-                  <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M15 18l-6-6 6-6" />
-                  </svg>
-                </span>
-              <% } %>
-              <div class="reader-dropdown" data-reader-dropdown>
-                <button class="reader-dropdown-trigger" type="button" data-reader-toggle>
-                  <span class="reader-dropdown-label">
-                    <%= chapterShortLabel %><% if (chapterTitle) { %> — <%= chapterTitle %><% } %>
-                  </span>
-                  <svg class="reader-icon reader-dropdown-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </button>
-                <div class="reader-dropdown-panel" data-reader-panel>
-                  <button class="reader-dropdown-nav" type="button" data-reader-scroll="up" aria-label="Cuộn lên">
-                    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M6 15l6-6 6 6" />
-                    </svg>
-                  </button>
-                  <div class="reader-dropdown-list" data-reader-list>
-                    <% chapterList.forEach((item) => { %>
-                      <button
-                        class="reader-dropdown-option <%= Number(item.number) === Number(chapter.number) ? "is-active" : "" %>"
-                        type="button"
-                        data-reader-option
-                        data-href="/manga/<%= manga.slug %>/chapters/<%= item.number %>"
-                      >
-                        <%= buildChapterOptionLabel(item) %>
-                      </button>
-                    <% }) %>
-                  </div>
-                  <button class="reader-dropdown-nav" type="button" data-reader-scroll="down" aria-label="Cuộn xuống">
-                    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              <% if (nextChapter) { %>
-                <a
-                  class="reader-float-btn reader-float-btn--nav"
-                  href="/manga/<%= manga.slug %>/chapters/<%= nextChapter.number %>"
-                  aria-label="Chương sau"
-                  title="Chương sau"
-                >
-                  <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                </a>
-              <% } else { %>
-                <span class="reader-float-btn reader-float-btn--nav is-disabled" aria-hidden="true">
-                  <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                </span>
-              <% } %>
+              <%- include("partials/chapter-reader-controls", {
+                manga,
+                chapter,
+                chapterTitle,
+                chapterShortLabel,
+                chapterList,
+                prevChapter,
+                nextChapter,
+                buildChapterOptionLabel,
+                dropdownClass: ""
+              }) %>
             </div>
           </div>
         </section>
@@ -595,76 +477,17 @@
       </main>
       <div class="reader-float" data-reader-float>
         <div class="reader-float-inner">
-          <% if (prevChapter) { %>
-            <a
-              class="reader-float-btn reader-float-btn--nav"
-              href="/manga/<%= manga.slug %>/chapters/<%= prevChapter.number %>"
-              aria-label="Chương trước"
-              title="Chương trước"
-            >
-              <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </a>
-          <% } else { %>
-            <span class="reader-float-btn reader-float-btn--nav is-disabled" aria-hidden="true">
-              <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </span>
-          <% } %>
-          <div class="reader-dropdown" data-reader-dropdown>
-            <button class="reader-dropdown-trigger" type="button" data-reader-toggle>
-              <span class="reader-dropdown-label">
-                <%= chapterShortLabel %><% if (chapterTitle) { %> — <%= chapterTitle %><% } %>
-              </span>
-              <svg class="reader-icon reader-dropdown-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-            <div class="reader-dropdown-panel" data-reader-panel>
-              <button class="reader-dropdown-nav" type="button" data-reader-scroll="up" aria-label="Cuộn lên">
-                <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M6 15l6-6 6 6" />
-                </svg>
-              </button>
-              <div class="reader-dropdown-list" data-reader-list>
-                <% chapterList.forEach((item) => { %>
-                  <button
-                    class="reader-dropdown-option <%= Number(item.number) === Number(chapter.number) ? "is-active" : "" %>"
-                    type="button"
-                    data-reader-option
-                    data-href="/manga/<%= manga.slug %>/chapters/<%= item.number %>"
-                  >
-                    <%= buildChapterOptionLabel(item) %>
-                  </button>
-                <% }) %>
-              </div>
-              <button class="reader-dropdown-nav" type="button" data-reader-scroll="down" aria-label="Cuộn xuống">
-                <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <% if (nextChapter) { %>
-            <a
-              class="reader-float-btn reader-float-btn--nav"
-              href="/manga/<%= manga.slug %>/chapters/<%= nextChapter.number %>"
-              aria-label="Chương sau"
-              title="Chương sau"
-            >
-              <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9 18l6-6-6-6" />
-              </svg>
-            </a>
-          <% } else { %>
-            <span class="reader-float-btn reader-float-btn--nav is-disabled" aria-hidden="true">
-              <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9 18l6-6-6-6" />
-              </svg>
-            </span>
-          <% } %>
+          <%- include("partials/chapter-reader-controls", {
+            manga,
+            chapter,
+            chapterTitle,
+            chapterShortLabel,
+            chapterList,
+            prevChapter,
+            nextChapter,
+            buildChapterOptionLabel,
+            dropdownClass: ""
+          }) %>
         </div>
       </div>
       <div class="reader-quick" data-reader-quick>

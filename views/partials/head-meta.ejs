@@ -1,0 +1,51 @@
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= fullTitle %></title>
+  <meta name="description" content="<%= seoDescription %>" />
+  <% if (seoKeywords) { %>
+    <meta name="keywords" content="<%= seoKeywords %>" />
+    <meta name="news_keywords" content="<%= seoKeywords %>" />
+  <% } %>
+  <meta name="robots" content="<%= seoRobots %>" />
+  <meta name="googlebot" content="<%= seoRobots %>" />
+  <meta name="author" content="<%= siteName %>" />
+  <meta name="theme-color" content="#0f0f11" />
+  <link rel="icon" type="image/svg+xml" href="<%= assetUrl("/logobfang.svg") %>" />
+
+  <% if (seoCanonical) { %>
+    <link rel="canonical" href="<%= seoCanonical %>" />
+    <link rel="alternate" hreflang="vi-VN" href="<%= seoCanonical %>" />
+  <% } %>
+  <% if (seoAmpHtml) { %>
+    <link rel="amphtml" href="<%= seoAmpHtml %>" />
+  <% } %>
+
+  <meta property="og:locale" content="vi_VN" />
+  <meta property="og:type" content="<%= ogType %>" />
+  <% if (ogType === "article" && seoKeywordList.length) { %>
+    <% seoKeywordList.slice(0, 12).forEach((keyword) => { %>
+      <meta property="article:tag" content="<%= keyword %>" />
+    <% }) %>
+  <% } %>
+  <meta property="og:site_name" content="<%= siteName %>" />
+  <meta property="og:title" content="<%= fullTitle %>" />
+  <meta property="og:description" content="<%= seoDescription %>" />
+  <% if (seoCanonical) { %>
+    <meta property="og:url" content="<%= seoCanonical %>" />
+  <% } %>
+  <% if (ogImage) { %>
+    <meta property="og:image" content="<%= ogImage %>" />
+  <% } %>
+
+  <meta name="twitter:card" content="<%= twitterCard %>" />
+  <meta name="twitter:title" content="<%= fullTitle %>" />
+  <meta name="twitter:description" content="<%= seoDescription %>" />
+  <% if (ogImage) { %>
+    <meta name="twitter:image" content="<%= ogImage %>" />
+  <% } %>
+
+  <% if (jsonLdList.length) { %>
+    <% jsonLdList.forEach((schema) => { %>
+      <script type="application/ld+json" nonce="<%= cspNonce || "" %>"><%- safeJsonForScript(schema) %></script>
+    <% }) %>
+  <% } %>

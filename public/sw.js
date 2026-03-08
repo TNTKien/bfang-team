@@ -1,4 +1,4 @@
-const SW_VERSION = "v3";
+const SW_VERSION = "v4";
 const CACHE_PREFIX = "bfang";
 const STATIC_CACHE_NAME = `${CACHE_PREFIX}-static-${SW_VERSION}`;
 const PAGE_CACHE_NAME = `${CACHE_PREFIX}-page-${SW_VERSION}`;
@@ -32,11 +32,46 @@ const isMangaDetailPath = (pathname) => MANGA_DETAIL_PATH_PATTERN.test(pathname 
 const prefetchInFlight = new Set();
 
 const buildPageCacheRequest = (targetUrl) => {
-  const href = targetUrl instanceof URL ? targetUrl.toString() : String(targetUrl || "").trim();
+  let normalizedUrl = null;
+  try {
+    normalizedUrl = targetUrl instanceof URL
+      ? new URL(targetUrl.toString())
+      : new URL(String(targetUrl || "").trim(), self.location.origin);
+  } catch (_error) {
+    normalizedUrl = null;
+  }
+
+  const href = normalizedUrl
+    ? (() => {
+      normalizedUrl.hash = "";
+      normalizedUrl.searchParams.delete("__bfv");
+      return normalizedUrl.toString();
+    })()
+    : String(targetUrl || "").trim();
+
   return new Request(href, {
     method: "GET",
     credentials: "same-origin"
   });
+};
+
+const isHtmlRequest = (request) => {
+  if (!request) return false;
+  if (request.mode === "navigate") return true;
+  const acceptHeader = (request.headers.get("Accept") || "").toLowerCase();
+  return acceptHeader.includes("text/html");
+};
+
+const isFastNavHtmlRequest = (request) => {
+  if (!request || !isHtmlRequest(request)) return false;
+  return (request.headers.get("X-BFANG-Fast-Nav") || "") === "1";
+};
+
+const shouldForceFreshPageResponse = (request, url) => {
+  if (!request) return false;
+  if ((request.headers.get("X-BFANG-Fast-Nav-Fresh") || "") === "1") return true;
+  if (url && url.searchParams && url.searchParams.has("__bfv")) return true;
+  return request.cache === "reload" || request.cache === "no-store";
 };
 
 const isCacheableResponse = (response) => {
@@ -269,6 +304,80 @@ const resolveFetchFailure = async (request, url) => {
   return buildFetchFailureResponse(request);
 };
 
+const handleCachedHtmlRequest = async (event, url) => {
+  const { request } = event;
+  const cacheRequest = buildPageCacheRequest(url);
+  const pageCache = await caches.open(PAGE_CACHE_NAME);
+  const cachedResponse = await pageCache.match(cacheRequest);
+  const prefetchMeta = readPrefetchMeta(cachedResponse);
+  const forceFreshResponse = shouldForceFreshPageResponse(request, url);
+
+  const refreshCachedResponse = async ({ allowPreload = true, allowNetworkFallback = true } = {}) => {
+    try {
+      if (allowPreload) {
+        const preloadResponse = await getNavigationPreloadResponse(event);
+        if (preloadResponse) {
+          await cacheHtmlPageResponse({
+            request: cacheRequest,
+            response: preloadResponse,
+            cachedAt: Date.now()
+          });
+          return preloadResponse;
+        }
+      }
+
+      if (!allowNetworkFallback) return null;
+
+      const networkResponse = await fetch(request);
+      await cacheHtmlPageResponse({
+        request: cacheRequest,
+        response: networkResponse,
+        cachedAt: Date.now()
+      });
+      return networkResponse;
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  if (cachedResponse && !forceFreshResponse) {
+    if (prefetchMeta.isFresh) {
+      event.waitUntil(
+        (async () => {
+          await refreshCachedResponse({
+            allowPreload: request.mode === "navigate",
+            allowNetworkFallback: false
+          });
+          await prefetchPageNavigation(url.toString());
+        })()
+      );
+    } else {
+      event.waitUntil(
+        refreshCachedResponse({
+          allowPreload: request.mode === "navigate",
+          allowNetworkFallback: true
+        })
+      );
+    }
+
+    return cachedResponse;
+  }
+
+  const networkResponse = await refreshCachedResponse({
+    allowPreload: request.mode === "navigate",
+    allowNetworkFallback: true
+  });
+  if (networkResponse) {
+    return networkResponse;
+  }
+
+  if (cachedResponse) {
+    return cachedResponse;
+  }
+
+  return fetch(request);
+};
+
 const handleFetch = async (event, url) => {
   const { request } = event;
 
@@ -288,61 +397,11 @@ const handleFetch = async (event, url) => {
       return fetch(request);
     }
 
-    const pageCache = await caches.open(PAGE_CACHE_NAME);
-    const cacheRequest = buildPageCacheRequest(url);
-    const cachedResponse = await pageCache.match(cacheRequest);
-    const prefetchMeta = readPrefetchMeta(cachedResponse);
+    return handleCachedHtmlRequest(event, url);
+  }
 
-    const refreshCachedNavigation = async ({ allowNetworkFallback = true } = {}) => {
-      try {
-        const preloadResponse = await getNavigationPreloadResponse(event);
-        if (preloadResponse) {
-          await cacheHtmlPageResponse({
-            request: cacheRequest,
-            response: preloadResponse,
-            cachedAt: Date.now()
-          });
-          return preloadResponse;
-        }
-
-        if (!allowNetworkFallback) return null;
-
-        const networkResponse = await fetch(request);
-        await cacheHtmlPageResponse({
-          request: cacheRequest,
-          response: networkResponse,
-          cachedAt: Date.now()
-        });
-        return networkResponse;
-      } catch (_error) {
-        return null;
-      }
-    };
-
-    if (cachedResponse) {
-      if (prefetchMeta.isFresh) {
-        event.waitUntil(
-          (async () => {
-            await refreshCachedNavigation({ allowNetworkFallback: false });
-            await prefetchPageNavigation(url.toString());
-          })()
-        );
-      } else {
-        event.waitUntil(refreshCachedNavigation({ allowNetworkFallback: true }));
-      }
-      return cachedResponse;
-    }
-
-    const networkResponse = await refreshCachedNavigation({ allowNetworkFallback: true });
-    if (networkResponse) {
-      return networkResponse;
-    }
-
-    if (cachedResponse) {
-      return cachedResponse;
-    }
-
-    return fetch(request);
+  if (isFastNavHtmlRequest(request) && isMangaDetailPath(pathname)) {
+    return handleCachedHtmlRequest(event, url);
   }
 
   const destination = (request.destination || "").toLowerCase();

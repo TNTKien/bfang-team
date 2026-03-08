@@ -7,14 +7,15 @@ app_desktop/dist
 app_desktop/release
 uploads
 backups
+err.png
 .env
 api_server/.env
 app_desktop/.env
 AGENTS.md
 .opencode
 .agents
+.sisyphus
 opencode.json
-sampleforum2
 SKILL.md
 
 # generated CSS build artifacts

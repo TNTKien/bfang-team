@@ -9,6 +9,18 @@
   const aboutNavLabel =
     (brandingConfig.aboutNavLabel || `Về ${brandMark}`).toString().trim() || `Về ${brandMark}`;
 %>
+<%
+  const authConfig = authPublicConfig && typeof authPublicConfig === "object" ? authPublicConfig : {};
+  const initialAuthState =
+    authConfig.initialState && typeof authConfig.initialState === "object" ? authConfig.initialState : null;
+  const isInitiallySignedIn = Boolean(initialAuthState && initialAuthState.signedIn === true);
+  const initialPublishNav =
+    initialAuthState && initialAuthState.publishNav && typeof initialAuthState.publishNav === "object"
+      ? initialAuthState.publishNav
+      : null;
+  const initialPublishLabel = isInitiallySignedIn && initialPublishNav && initialPublishNav.inTeam ? "Nhóm dịch" : "Đăng truyện";
+  const initialPublishMode = initialPublishLabel === "Nhóm dịch" ? "team" : "publish";
+%>
 <header class="site-header">
   <div class="container header-inner">
     <a class="brand" href="/" aria-label="<%= `${brandMark} ${brandSubmark}`.trim() %>">
@@ -40,14 +52,14 @@
           <% if (forumPageEnabled) { %>
             <a href="/forum">Diễn đàn</a>
           <% } %>
-          <a href="/publish" data-publish-nav-link>Đăng truyện</a>
+          <a href="/publish" data-publish-nav-link data-publish-nav-mode="<%= initialPublishMode %>"><%= initialPublishLabel %></a>
           <a href="/#about"><%= aboutNavLabel %></a>
         </nav>
       </div>
       <a
         class="message-trigger"
         href="/messages"
-        hidden
+        <%= isInitiallySignedIn ? "" : "hidden" %>
         data-auth-member-only="1"
         data-message-widget
         title="Tin nhắn"
@@ -58,7 +70,7 @@
         <span class="notify-badge" hidden data-message-badge>0</span>
         <span class="sr-only">Tin nhắn</span>
       </a>
-      <div class="notify-widget" hidden data-notify-widget>
+      <div class="notify-widget" <%= isInitiallySignedIn ? "" : "hidden" %> data-notify-widget>
         <button
           class="notify-trigger"
           type="button"
@@ -86,10 +98,10 @@
         </div>
       </div>
       <div class="auth-widget" data-auth-widget>
-        <button class="button button--ghost auth-widget__login" type="button" data-auth-login>
+        <button class="button button--ghost auth-widget__login" type="button" data-auth-login <%= isInitiallySignedIn ? "hidden" : "" %>>
           Đăng nhập
         </button>
-        <div class="auth-widget__profile" hidden data-auth-profile>
+        <div class="auth-widget__profile" <%= isInitiallySignedIn ? "" : "hidden" %> data-auth-profile>
           <button
             class="auth-trigger"
             type="button"

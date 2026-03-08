@@ -140,199 +140,47 @@
   <% const toastUiRevision = "toast-ui-v12"; %>
   <% const mainStylesheetUrl = assetUrl(`/styles.css?rev=${toastUiRevision}`); %>
 
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title><%= fullTitle %></title>
-  <meta name="description" content="<%= seoDescription %>" />
-  <% if (seoKeywords) { %>
-    <meta name="keywords" content="<%= seoKeywords %>" />
-    <meta name="news_keywords" content="<%= seoKeywords %>" />
-  <% } %>
-  <meta name="robots" content="<%= seoRobots %>" />
-  <meta name="googlebot" content="<%= seoRobots %>" />
-  <meta name="author" content="<%= siteName %>" />
-  <meta name="theme-color" content="#0f0f11" />
-  <link rel="icon" type="image/svg+xml" href="<%= assetUrl("/logobfang.svg") %>" />
-
-  <% if (seoCanonical) { %>
-    <link rel="canonical" href="<%= seoCanonical %>" />
-    <link rel="alternate" hreflang="vi-VN" href="<%= seoCanonical %>" />
-  <% } %>
-  <% if (seoAmpHtml) { %>
-    <link rel="amphtml" href="<%= seoAmpHtml %>" />
-  <% } %>
-
-  <meta property="og:locale" content="vi_VN" />
-  <meta property="og:type" content="<%= ogType %>" />
-  <% if (ogType === "article" && seoKeywordList.length) { %>
-    <% seoKeywordList.slice(0, 12).forEach((keyword) => { %>
-      <meta property="article:tag" content="<%= keyword %>" />
-    <% }) %>
-  <% } %>
-  <meta property="og:site_name" content="<%= siteName %>" />
-  <meta property="og:title" content="<%= fullTitle %>" />
-  <meta property="og:description" content="<%= seoDescription %>" />
-  <% if (seoCanonical) { %>
-    <meta property="og:url" content="<%= seoCanonical %>" />
-  <% } %>
-  <% if (ogImage) { %>
-    <meta property="og:image" content="<%= ogImage %>" />
-  <% } %>
-
-  <meta name="twitter:card" content="<%= twitterCard %>" />
-  <meta name="twitter:title" content="<%= fullTitle %>" />
-  <meta name="twitter:description" content="<%= seoDescription %>" />
-  <% if (ogImage) { %>
-    <meta name="twitter:image" content="<%= ogImage %>" />
-  <% } %>
-
-  <% if (isHeadStyleEnabled("googleFonts")) { %>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <% } %>
-  <% if (isHeadStyleEnabled("fontAwesome")) { %>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
-  <% } %>
-  <% extraPreconnectOrigins.forEach((origin) => { %>
-    <link rel="preconnect" href="<%= origin %>" />
-  <% }) %>
-  <% if (isHeadStyleEnabled("googleFonts")) { %>
-    <link rel="stylesheet" href="<%= googleFontsStylesheetUrl %>" />
-  <% } %>
-  <% if (isHeadStyleEnabled("fontAwesome")) { %>
-    <link rel="stylesheet" href="<%= fontAwesomeStylesheetUrl %>" media="print" data-head-async-style="1" />
-    <noscript>
-      <link rel="stylesheet" href="<%= fontAwesomeStylesheetUrl %>" />
-    </noscript>
-  <% } %>
-  <link rel="stylesheet" href="<%= mainStylesheetUrl %>" />
-  <% extraStylesheets.forEach((stylesheetHref) => { %>
-    <% const resolvedStylesheetHref = stylesheetHref.startsWith("/") ? assetUrl(stylesheetHref) : stylesheetHref; %>
-    <link rel="stylesheet" href="<%= resolvedStylesheetHref %>" />
-  <% }) %>
-  <script nonce="<%= cspNonce || "" %>">
-    (() => {
-      const links = Array.from(document.querySelectorAll("link[data-head-async-style]"));
-      if (!links.length) return;
-
-      const activate = (link) => {
-        if (!link || link.media === "all") return;
-        link.media = "all";
-      };
-
-      links.forEach((link) => {
-        const onDone = () => activate(link);
-        link.addEventListener("load", onDone, { once: true });
-        link.addEventListener("error", onDone, { once: true });
-
-        if (link.sheet) {
-          activate(link);
-          return;
-        }
-
-        window.setTimeout(() => {
-          activate(link);
-        }, 2500);
-      });
-    })();
-  </script>
-  <% preloadImages.forEach((imageHref, index) => { %>
-    <link
-      rel="preload"
-      as="image"
-      href="<%= imageHref %>"
-      fetchpriority="<%= index === 0 ? "high" : "auto" %>"
-    />
-  <% }) %>
-
-  <% if (jsonLdList.length) { %>
-    <% jsonLdList.forEach((schema) => { %>
-      <script type="application/ld+json" nonce="<%= cspNonce || "" %>"><%- safeJsonForScript(schema) %></script>
-    <% }) %>
-  <% } %>
-
-  <script nonce="<%= cspNonce || "" %>">
-    window.__SITE_CONFIG = <%- safeJsonForScript(runtimeSiteConfig || {}) %>;
-    window.__AUTH = <%- safeJsonForScript(authPublicConfig || {}) %>;
-    if (window.__AUTH && typeof window.__AUTH === "object") {
-      window.__AUTH.notificationsScriptUrl = "<%= assetUrl("/notifications.js") %>";
-    }
-    window.__TURNSTILE = <%- safeJsonForScript(turnstilePublicConfig || {}) %>;
-  </script>
-  <script nonce="<%= cspNonce || "" %>">
-    (() => {
-      const root = document.documentElement;
-      if (!root) return;
-
-      root.setAttribute("data-auth-ready", "0");
-      root.setAttribute("data-auth-hint", "out");
-
-      try {
-        const hint = (window.localStorage.getItem("bfang_auth_hint") || "").toString().trim();
-        if (hint === "in") {
-          root.setAttribute("data-auth-hint", "in");
-        }
-      } catch (_err) {
-        // ignore
-      }
-    })();
-  </script>
-  <% if (isHeadScriptEnabled("flowbite")) { %>
-    <script src="<%= flowbiteScriptUrl %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("confirm")) { %>
-    <script src="<%= assetUrl("/confirm.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("toast")) { %>
-    <script src="<%= assetUrl(`/toast.js?rev=${toastUiRevision}`) %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("auth")) { %>
-    <script src="<%= assetUrl("/auth.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("buttonUi")) { %>
-    <script src="<%= assetUrl(`/button-ui.js?rev=${toastUiRevision}`) %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("serviceWorker")) { %>
-    <script src="<%= assetUrl("/sw-register.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("fastNav")) { %>
-    <script src="<%= assetUrl("/fast-nav.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("readingHistory")) { %>
-    <script src="<%= assetUrl("/reading-history.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("bookmarks")) { %>
-    <script src="<%= assetUrl("/bookmarks.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("notifications")) { %>
-    <script src="<%= assetUrl("/notifications.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("messagesIndicator")) { %>
-    <script src="<%= assetUrl("/messages-indicator.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("comments")) { %>
-    <script src="<%= assetUrl("/comments.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("mangaDetail")) { %>
-    <script src="<%= assetUrl("/manga-detail.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("filters")) { %>
-    <script src="<%= assetUrl("/filters.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("lazysizes")) { %>
-    <script nonce="<%= cspNonce || '' %>">
-      window.lazySizesConfig = window.lazySizesConfig || {};
-      window.lazySizesConfig.expand = 1800;
-      window.lazySizesConfig.expFactor = 1.4;
-      window.lazySizesConfig.loadMode = 2;
-      window.lazySizesConfig.throttleDelay = 80;
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/lazysizes@5.3.2/lazysizes.min.js" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("reader")) { %>
-    <script src="<%= assetUrl("/reader.js") %>" defer></script>
-  <% } %>
-  <% if (isHeadScriptEnabled("admin")) { %>
-    <script src="<%= assetUrl("/admin.js") %>" defer></script>
-  <% } %>
+  <%- include("head-meta", {
+    fullTitle,
+    seoDescription,
+    seoKeywords,
+    seoRobots,
+    siteName,
+    seoCanonical,
+    seoAmpHtml,
+    ogType,
+    seoKeywordList,
+    ogImage,
+    twitterCard,
+    jsonLdList,
+    safeJsonForScript,
+    assetUrl,
+    cspNonce
+  }) %>
+  <%- include("head-styles", {
+    isHeadStyleEnabled,
+    extraPreconnectOrigins,
+    googleFontsStylesheetUrl,
+    fontAwesomeStylesheetUrl,
+    mainStylesheetUrl,
+    extraStylesheets,
+    assetUrl,
+    preloadImages,
+    cspNonce
+  }) %>
+  <%- include("head-config", {
+    runtimeSiteConfig,
+    authPublicConfig,
+    turnstilePublicConfig,
+    safeJsonForScript,
+    assetUrl,
+    cspNonce
+  }) %>
+  <%- include("head-scripts", {
+    isHeadScriptEnabled,
+    flowbiteScriptUrl,
+    assetUrl,
+    toastUiRevision,
+    cspNonce
+  }) %>
 </head>

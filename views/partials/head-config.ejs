@@ -1,0 +1,42 @@
+  <script nonce="<%= cspNonce || "" %>">
+    window.__SITE_CONFIG = <%- safeJsonForScript(runtimeSiteConfig || {}) %>;
+    window.__AUTH = <%- safeJsonForScript(authPublicConfig || {}) %>;
+    if (window.__AUTH && typeof window.__AUTH === "object") {
+      window.__AUTH.notificationsScriptUrl = "<%= assetUrl("/notifications.js") %>";
+    }
+    window.__TURNSTILE = <%- safeJsonForScript(turnstilePublicConfig || {}) %>;
+  </script>
+  <script nonce="<%= cspNonce || "" %>">
+    (() => {
+      const root = document.documentElement;
+      if (!root) return;
+
+      const authConfig = window.__AUTH && typeof window.__AUTH === "object" ? window.__AUTH : {};
+      const initialState = authConfig.initialState && typeof authConfig.initialState === "object"
+        ? authConfig.initialState
+        : null;
+      const hasServerState = Boolean(initialState && initialState.hasServerState === true);
+      const serverSignedIn = Boolean(initialState && initialState.signedIn === true);
+
+      root.setAttribute("data-auth-ready", "0");
+      root.setAttribute("data-auth-hint", serverSignedIn ? "in" : "out");
+
+      if (hasServerState) {
+        try {
+          window.localStorage.setItem("bfang_auth_hint", serverSignedIn ? "in" : "out");
+        } catch (_err) {
+          // ignore
+        }
+        return;
+      }
+
+      try {
+        const hint = (window.localStorage.getItem("bfang_auth_hint") || "").toString().trim();
+        if (hint === "in") {
+          root.setAttribute("data-auth-hint", "in");
+        }
+      } catch (_err) {
+        // ignore
+      }
+    })();
+  </script>

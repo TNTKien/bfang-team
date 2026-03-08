@@ -1,27 +1,9 @@
 <%
+  const { appendCoverVariant } = coverHelpers;
   const mangaDetailHeadScripts = {
     comments: false,
     readingHistory: true,
     bookmarks: true
-  };
-
-  const appendCoverVariant = (url, width, height, quality) => {
-    const raw = (url || "").toString().trim();
-    const parsedWidth = Number(width);
-    const parsedHeight = Number(height);
-    const parsedQuality = Number(quality);
-    if (!raw || !Number.isFinite(parsedWidth) || parsedWidth <= 0) return raw;
-
-    const params = [`w=${Math.floor(parsedWidth)}`];
-    if (Number.isFinite(parsedHeight) && parsedHeight > 0) {
-      params.push(`h=${Math.floor(parsedHeight)}`);
-    }
-    if (Number.isFinite(parsedQuality) && parsedQuality > 0) {
-      params.push(`q=${Math.floor(parsedQuality)}`);
-    }
-
-    const separator = raw.includes("?") ? "&" : "?";
-    return `${raw}${separator}${params.join("&")}`;
   };
 
   const detailCoverBaseUrl = manga && manga.cover ? cacheBust(manga.cover, manga.coverUpdatedAt) : "";
@@ -287,33 +269,6 @@
                 <% chapterVisiblePageNumbers.push(1, "...", chapterPage - 1, chapterPage, chapterPage + 1, "...", chapterTotalPages); %>
               <% } %>
 
-              <style>
-                @media (max-width: 760px) {
-                  #chapters .admin-pagination {
-                    gap: 0.08rem;
-                    padding: 0.1rem;
-                  }
-                  #chapters .admin-pagination > .button {
-                    min-height: 28px;
-                    height: 28px;
-                    padding: 0 0.42rem;
-                    font-size: 0.68rem;
-                  }
-                  #chapters .admin-pagination__numbers {
-                    display: flex !important;
-                    gap: 0.12rem;
-                  }
-                  #chapters .admin-pagination__numbers .button,
-                  #chapters .admin-pagination__numbers .chip {
-                    min-width: 26px;
-                    min-height: 26px;
-                    height: 26px;
-                    padding: 0 0.34rem;
-                    font-size: 0.66rem;
-                  }
-                }
-              </style>
-
               <nav class="admin-pagination" aria-label="Phân trang chương truyện">
                 <a
                   class="button button--ghost <%= chapterPagination && chapterPagination.hasPrev ? "" : "is-disabled" %>"
@@ -324,7 +279,7 @@
                   Trước
                 </a>
 
-                <div class="admin-pagination__numbers" style="display: flex;">
+                <div class="admin-pagination__numbers">
                   <% chapterVisiblePageNumbers.forEach((num) => { %>
                     <% if (num === "...") { %>
                       <span class="admin-pagination__dots">...</span>

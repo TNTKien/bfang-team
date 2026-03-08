@@ -12,6 +12,7 @@ const configureCoreRuntime = (app, deps) => {
     compression,
     crypto,
     cssMinifier,
+    dbGet,
     ensureLeadingSlash,
     express,
     formatDate,
@@ -22,6 +23,7 @@ const configureCoreRuntime = (app, deps) => {
     isJsMinifyEnabled,
     isProductionApp,
     isServerSessionVersionMismatch,
+    loadSessionUserById,
     minifyJs,
     parseEnvBoolean,
     passport,
@@ -54,6 +56,77 @@ const shouldCompressResponse = (req, res) => {
   }
 
   return compression.filter(req, res);
+};
+
+const shouldPrepareInitialAuthState = (req) => {
+  if (!req || req.method !== "GET") return false;
+  const acceptHeader = (req.get("accept") || "").toString().toLowerCase();
+  return acceptHeader.includes("text/html") || acceptHeader.includes("application/xhtml+xml");
+};
+
+const buildSignedOutInitialAuthState = () => ({
+  hasServerState: true,
+  signedIn: false,
+  session: null
+});
+
+const loadInitialPublishNavState = async (userId) => {
+  const safeUserId = (userId || "").toString().trim();
+  if (!safeUserId || typeof dbGet !== "function") {
+    return { inTeam: false };
+  }
+
+  const membership = await dbGet(
+    `
+      SELECT tm.team_id
+      FROM translation_team_members tm
+      JOIN translation_teams t ON t.id = tm.team_id
+      WHERE tm.user_id = ?
+        AND tm.status = 'approved'
+        AND t.status = 'approved'
+      ORDER BY CASE WHEN tm.role = 'leader' THEN 0 ELSE 1 END ASC, tm.reviewed_at DESC, tm.requested_at DESC
+      LIMIT 1
+    `,
+    [safeUserId]
+  );
+
+  return {
+    inTeam: Boolean(membership && membership.team_id)
+  };
+};
+
+const buildInitialAuthStateForRequest = async (req) => {
+  if (!shouldPrepareInitialAuthState(req)) {
+    return null;
+  }
+
+  const authUserId = (req && req.session && req.session.authUserId ? req.session.authUserId : "")
+    .toString()
+    .trim();
+  if (!authUserId) {
+    return buildSignedOutInitialAuthState();
+  }
+
+    try {
+      const user = typeof loadSessionUserById === "function" ? await loadSessionUserById(authUserId) : null;
+      if (!user || !user.id) {
+        return buildSignedOutInitialAuthState();
+      }
+
+      const publishNav = await loadInitialPublishNavState(user.id);
+
+      return {
+        hasServerState: true,
+        signedIn: true,
+        session: {
+          user
+        },
+        publishNav
+      };
+    } catch (error) {
+      console.warn("Cannot prepare initial auth state.", error);
+    return buildSignedOutInitialAuthState();
+  }
 };
 
 const staticImageFilePattern = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
@@ -329,6 +402,26 @@ app.use((req, _res, next) => {
     clearAllAuthSessionState(req);
   }
   next();
+});
+app.use((req, res, next) => {
+  const authPublicConfig =
+    res.locals && res.locals.authPublicConfig && typeof res.locals.authPublicConfig === "object"
+      ? { ...res.locals.authPublicConfig }
+      : {};
+
+  buildInitialAuthStateForRequest(req)
+    .then((initialState) => {
+      if (initialState) {
+        authPublicConfig.initialState = initialState;
+      }
+      res.locals.authPublicConfig = authPublicConfig;
+      next();
+    })
+    .catch((error) => {
+      console.warn("Cannot attach initial auth state.", error);
+      res.locals.authPublicConfig = authPublicConfig;
+      next();
+    });
 });
 app.use(requireSameOriginForAdminWrites);
   app.use("/vendor/emoji-mart", express.static(path.join(appRootDir, "node_modules", "emoji-mart")));

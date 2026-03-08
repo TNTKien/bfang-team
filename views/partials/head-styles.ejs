@@ -1,0 +1,58 @@
+  <% if (isHeadStyleEnabled("googleFonts")) { %>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <% } %>
+  <% if (isHeadStyleEnabled("fontAwesome")) { %>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <% } %>
+  <% extraPreconnectOrigins.forEach((origin) => { %>
+    <link rel="preconnect" href="<%= origin %>" />
+  <% }) %>
+  <% if (isHeadStyleEnabled("googleFonts")) { %>
+    <link rel="stylesheet" href="<%= googleFontsStylesheetUrl %>" />
+  <% } %>
+  <% if (isHeadStyleEnabled("fontAwesome")) { %>
+    <link rel="stylesheet" href="<%= fontAwesomeStylesheetUrl %>" media="print" data-head-async-style="1" />
+    <noscript>
+      <link rel="stylesheet" href="<%= fontAwesomeStylesheetUrl %>" />
+    </noscript>
+  <% } %>
+  <link rel="stylesheet" href="<%= mainStylesheetUrl %>" />
+  <% extraStylesheets.forEach((stylesheetHref) => { %>
+    <% const resolvedStylesheetHref = stylesheetHref.startsWith("/") ? assetUrl(stylesheetHref) : stylesheetHref; %>
+    <link rel="stylesheet" href="<%= resolvedStylesheetHref %>" />
+  <% }) %>
+  <script nonce="<%= cspNonce || "" %>">
+    (() => {
+      const links = Array.from(document.querySelectorAll("link[data-head-async-style]"));
+      if (!links.length) return;
+
+      const activate = (link) => {
+        if (!link || link.media === "all") return;
+        link.media = "all";
+      };
+
+      links.forEach((link) => {
+        const onDone = () => activate(link);
+        link.addEventListener("load", onDone, { once: true });
+        link.addEventListener("error", onDone, { once: true });
+
+        if (link.sheet) {
+          activate(link);
+          return;
+        }
+
+        window.setTimeout(() => {
+          activate(link);
+        }, 2500);
+      });
+    })();
+  </script>
+  <% preloadImages.forEach((imageHref, index) => { %>
+    <link
+      rel="preload"
+      as="image"
+      href="<%= imageHref %>"
+      fetchpriority="<%= index === 0 ? "high" : "auto" %>"
+    />
+  <% }) %>

@@ -133,6 +133,48 @@
     <link rel="stylesheet" href="<%= assetUrl(`${newsAssets}/css/video-player.css`) %>">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Noto+Sans+JP:wght@400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.7.2/css/all.min.css">
+
+    <script nonce="<%= cspNonce || '' %>">
+        window.__SITE_CONFIG = <%- safeJsonForScript(siteConfig || {}) %>;
+        window.__AUTH = <%- safeJsonForScript(authPublicConfig || {}) %>;
+        if (window.__AUTH && typeof window.__AUTH === "object") {
+            window.__AUTH.notificationsScriptUrl = "<%= assetUrl('/notifications.js') %>";
+        }
+    </script>
+    <script nonce="<%= cspNonce || '' %>">
+        (() => {
+            const root = document.documentElement;
+            if (!root) return;
+
+            const authConfig = window.__AUTH && typeof window.__AUTH === "object" ? window.__AUTH : {};
+            const initialState = authConfig.initialState && typeof authConfig.initialState === "object"
+                ? authConfig.initialState
+                : null;
+            const hasServerState = Boolean(initialState && initialState.hasServerState === true);
+            const serverSignedIn = Boolean(initialState && initialState.signedIn === true);
+
+            root.setAttribute("data-auth-ready", "0");
+            root.setAttribute("data-auth-hint", serverSignedIn ? "in" : "out");
+
+            if (hasServerState) {
+                try {
+                    window.localStorage.setItem("bfang_auth_hint", serverSignedIn ? "in" : "out");
+                } catch (_err) {
+                    // ignore
+                }
+                return;
+            }
+
+            try {
+                const hint = (window.localStorage.getItem("bfang_auth_hint") || "").toString().trim();
+                if (hint === "in") {
+                    root.setAttribute("data-auth-hint", "in");
+                }
+            } catch (_err) {
+                // ignore
+            }
+        })();
+    </script>
 </head>
 <body data-news-base-path="<%= newsBase %>">
     <%- include("../../../views/partials/header") %>
@@ -275,13 +317,9 @@
 
     <div id="toast" class="toast"></div>
 
-    <script nonce="<%= cspNonce || '' %>">
-        window.__AUTH = <%- safeJsonForScript(authPublicConfig || {}) %>;
-        if (window.__AUTH && typeof window.__AUTH === "object") {
-            window.__AUTH.notificationsScriptUrl = "/notifications.js";
-        }
-    </script>
     <script src="<%= assetUrl('/confirm.js') %>"></script>
+    <script src="<%= assetUrl('/auth-core.js') %>"></script>
+    <script src="<%= assetUrl('/auth-ui.js') %>"></script>
     <script src="<%= assetUrl('/auth.js') %>"></script>
     <script src="<%= assetUrl('/messages-indicator.js') %>"></script>
     <script src="<%= assetUrl(`${newsAssets}/js/video-player.js`) %>"></script>

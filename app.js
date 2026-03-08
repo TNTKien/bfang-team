@@ -34,10 +34,12 @@ const createMentionNotificationDomain = require("./src/domains/mention-notificat
 const createInitDbDomain = require("./src/domains/init-db-domain");
 const configureCoreRuntime = require("./src/app/configure-core-runtime");
 const { parseEnvBoolean } = require("./src/utils/env");
+const viewCoverHelpers = require("./src/utils/view-cover-helpers");
 const { loadSiteConfig } = require("./src/config/site-config");
 require("dotenv").config();
 
 const app = express();
+app.locals.coverHelpers = viewCoverHelpers;
 const PORT = process.env.PORT || 3000;
 const appEnv = (process.env.APP_ENV || process.env.NODE_ENV || "development")
   .toString()
@@ -3395,6 +3397,7 @@ const coreRuntime = configureCoreRuntime(app, {
   compression,
   crypto,
   cssMinifier,
+  dbGet,
   ensureLeadingSlash,
   express,
   formatDate,
@@ -3405,6 +3408,7 @@ const coreRuntime = configureCoreRuntime(app, {
   isJsMinifyEnabled,
   isProductionApp,
   isServerSessionVersionMismatch,
+  loadSessionUserById,
   minifyJs,
   parseEnvBoolean,
   passport,

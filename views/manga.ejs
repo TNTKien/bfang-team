@@ -1,19 +1,5 @@
 <%
-  const truncateCardTitle = (value) => {
-    const text = (value || "").toString().replace(/\s+/g, " ").trim();
-    if (!text) return "";
-
-    const maxWords = 4;
-    const maxChars = 24;
-    const words = text.split(" ").filter(Boolean);
-    let shortened = words.length > maxWords ? words.slice(0, maxWords).join(" ") : text;
-    if (shortened.length > maxChars) {
-      shortened = shortened.slice(0, maxChars).trimEnd();
-    }
-
-    return shortened.length < text.length ? `${shortened}...` : shortened;
-  };
-
+  const { truncateCardTitle, appendCoverVariant } = coverHelpers;
   const pageState = pagination && typeof pagination === "object"
     ? pagination
     : { page: 1, totalPages: 1, hasPrev: false, hasNext: false, prevPage: 1, nextPage: 1, perPage: 24 };
@@ -37,25 +23,6 @@
     }
     const query = params.toString();
     return query ? `/manga?${query}` : "/manga";
-  };
-
-  const appendCoverVariant = (url, width, height, quality) => {
-    const raw = (url || "").toString().trim();
-    const parsedWidth = Number(width);
-    const parsedHeight = Number(height);
-    const parsedQuality = Number(quality);
-    if (!raw || !Number.isFinite(parsedWidth) || parsedWidth <= 0) return raw;
-
-    const params = [`w=${Math.floor(parsedWidth)}`];
-    if (Number.isFinite(parsedHeight) && parsedHeight > 0) {
-      params.push(`h=${Math.floor(parsedHeight)}`);
-    }
-    if (Number.isFinite(parsedQuality) && parsedQuality > 0) {
-      params.push(`q=${Math.floor(parsedQuality)}`);
-    }
-
-    const separator = raw.includes("?") ? "&" : "?";
-    return `${raw}${separator}${params.join("&")}`;
   };
 
   const mangaCatalogSpeculationTargets = [];
