@@ -3,6 +3,14 @@
     const commentsRoot = document.querySelector("#comments");
     if (!commentsRoot) return;
 
+    const notifyReaderLayout = (phase) => {
+      window.dispatchEvent(
+        new CustomEvent("bfang:reader-comments-layout", {
+          detail: { phase }
+        })
+      );
+    };
+
     const scriptSrc = (commentsRoot.getAttribute("data-comment-script-src") || "").toString().trim();
     if (!scriptSrc) return;
 
@@ -25,11 +33,14 @@
       loaded = true;
       cleanup();
       commentsRoot.setAttribute("data-comment-auto-hydrate", "1");
+      notifyReaderLayout("hydrate-start");
 
       if (document.querySelector(`script[src="${scriptSrc}"]`)) {
         if (window.BfangComments && typeof window.BfangComments.refresh === "function") {
           window.BfangComments.refresh();
         }
+        window.setTimeout(() => notifyReaderLayout("hydrate-refresh"), 60);
+        window.setTimeout(() => notifyReaderLayout("hydrate-settled"), 260);
         return;
       }
 
@@ -37,6 +48,13 @@
       script.src = scriptSrc;
       script.defer = true;
       script.nonce = "<%= cspNonce || '' %>";
+      script.addEventListener("load", () => {
+        notifyReaderLayout("hydrate-loaded");
+        window.setTimeout(() => notifyReaderLayout("hydrate-settled"), 260);
+      });
+      script.addEventListener("error", () => {
+        notifyReaderLayout("hydrate-error");
+      });
       document.head.appendChild(script);
     };
 

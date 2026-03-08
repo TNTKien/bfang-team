@@ -4,6 +4,9 @@ const commentsSection = document.querySelector("#comments");
 const quickTop = document.querySelector("[data-reader-top]");
 const quickComments = document.querySelector("[data-reader-comments]");
 const dropdowns = Array.from(document.querySelectorAll("[data-reader-dropdown]"));
+const READER_JUMP_COMMENTS_EVENT = "bfang:reader-jump-comments";
+const READER_CANCEL_JUMP_COMMENTS_EVENT = "bfang:reader-cancel-jump-comments";
+const READER_COMMENTS_LAYOUT_EVENT = "bfang:reader-comments-layout";
 
 const isElementVisible = (element) => {
   if (!element) return false;
@@ -141,6 +144,7 @@ if (readerFloat) {
 
 if (quickTop) {
   quickTop.addEventListener("click", () => {
+    window.dispatchEvent(new CustomEvent(READER_CANCEL_JUMP_COMMENTS_EVENT));
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 }
@@ -148,6 +152,7 @@ if (quickTop) {
 if (quickComments) {
   quickComments.addEventListener("click", () => {
     if (commentsSection) {
+      window.dispatchEvent(new CustomEvent(READER_JUMP_COMMENTS_EVENT));
       commentsSection.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   });
@@ -214,6 +219,42 @@ if (quickComments) {
     .sort((a, b) => a.pageIndex - b.pageIndex)
     .map((entry) => entry.img);
 
+  const getPageFrame = (img) => (img && img.closest ? img.closest(".page-frame") : null);
+
+  const getPositiveDimension = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+    return Math.round(numeric);
+  };
+
+  const applyPageFrameWidth = (img) => {
+    if (!img || !img.isConnected) return;
+
+    const frame = getPageFrame(img);
+    if (!frame) return;
+
+    const naturalWidth = getPositiveDimension(img.naturalWidth);
+    const naturalHeight = getPositiveDimension(img.naturalHeight);
+    const measuredRect = img.getBoundingClientRect();
+    const measuredWidth = getPositiveDimension(measuredRect.width);
+    const measuredHeight = getPositiveDimension(measuredRect.height);
+
+    const sourceWidth = naturalWidth || measuredWidth;
+    if (!sourceWidth) return;
+
+    const sourceHeight = naturalHeight || measuredHeight;
+    const isLandscape = sourceHeight > 0 ? sourceWidth > sourceHeight : sourceWidth > 1200;
+    const desktopPixelCap = isLandscape ? 1800 : 1200;
+    const desktopViewportCap = isLandscape ? "90vw" : "85vw";
+    const resolvedWidth = Math.min(sourceWidth, desktopPixelCap);
+    const frameWidth = `${Math.round(resolvedWidth)}px`;
+
+    frame.style.setProperty("--page-frame-width", frameWidth);
+    frame.style.setProperty("--page-desktop-max-viewport", desktopViewportCap);
+    pagesRoot.style.setProperty("--reader-page-width", frameWidth);
+    pagesRoot.style.setProperty("--reader-page-desktop-max-viewport", desktopViewportCap);
+  };
+
   const getDeferredSrc = (img) =>
     (img && img.dataset && img.dataset.src ? String(img.dataset.src).trim() : "");
 
@@ -229,6 +270,7 @@ if (quickComments) {
   const lookAheadForwardCount = 5;
   const lookBehindCount = 3;
   const maxLookAheadConcurrency = saveData ? 1 : 3;
+  const jumpToCommentsMaxMs = saveData ? 24000 : 16000;
 
   let activePageIndex = 0;
   let syncTicking = false;
@@ -237,12 +279,91 @@ if (quickComments) {
 
   const lookAheadQueue = [];
   const lookAheadQueuedSet = new Set();
+  let jumpToCommentsActive = false;
+  let jumpToCommentsTimer = null;
+  let jumpToCommentsStartedAt = 0;
 
   const getLazyState = (img) =>
     (img && img.dataset && img.dataset.lazyState ? String(img.dataset.lazyState).trim() : "");
 
+  const clearJumpToComments = () => {
+    jumpToCommentsActive = false;
+    if (!jumpToCommentsTimer) return;
+    window.clearTimeout(jumpToCommentsTimer);
+    jumpToCommentsTimer = null;
+  };
+
+  const isCommentsReached = () => {
+    if (!commentsSection) return true;
+    const rect = commentsSection.getBoundingClientRect();
+    const threshold = Math.max(24, window.innerHeight * 0.08);
+    return rect.top <= threshold && rect.bottom > threshold;
+  };
+
+  const scrollToCommentsTarget = (behavior) => {
+    if (!commentsSection) return;
+    commentsSection.scrollIntoView({ behavior, block: "start" });
+  };
+
   const getLoadingCount = () =>
     lazyImages.reduce((count, img) => (getLazyState(img) === "loading" ? count + 1 : count), 0);
+
+  const getPendingLazyCount = () =>
+    lazyImages.reduce((count, img) => {
+      const state = getLazyState(img);
+      return state === "loaded" || state === "error" ? count : count + 1;
+    }, 0);
+
+  const enqueueImagesTowardComments = () => {
+    if (!orderedImages.length) return;
+    const startIndex = Math.max(0, Math.min(orderedImages.length - 1, activePageIndex));
+    for (let index = startIndex; index < orderedImages.length; index += 1) {
+      enqueueLookAheadImage(orderedImages[index]);
+    }
+  };
+
+  const scheduleJumpToCommentsSync = (delayMs, behavior) => {
+    if (!jumpToCommentsActive) return;
+    if (jumpToCommentsTimer) {
+      window.clearTimeout(jumpToCommentsTimer);
+      jumpToCommentsTimer = null;
+    }
+
+    const delay = Number.isFinite(Number(delayMs))
+      ? Math.max(40, Math.min(1200, Math.floor(Number(delayMs))))
+      : 180;
+
+    jumpToCommentsTimer = window.setTimeout(() => {
+      jumpToCommentsTimer = null;
+      if (!jumpToCommentsActive) return;
+      const pendingLazyCount = getPendingLazyCount();
+      if (pendingLazyCount === 0 && isElementVisible(commentsSection)) {
+        clearJumpToComments();
+        return;
+      }
+      if (jumpToCommentsStartedAt && Date.now() - jumpToCommentsStartedAt >= jumpToCommentsMaxMs) {
+        if (isElementVisible(commentsSection)) {
+          clearJumpToComments();
+          return;
+        }
+      }
+      enqueueImagesTowardComments();
+      drainLookAheadQueue();
+      scrollToCommentsTarget(behavior || "auto");
+      scheduleJumpToCommentsSync(180, "auto");
+    }, delay);
+  };
+
+  const requestJumpToComments = () => {
+    if (!commentsSection) return;
+    jumpToCommentsActive = true;
+    jumpToCommentsStartedAt = Date.now();
+    activePageIndex = resolveActivePageIndex();
+    enqueueImagesTowardComments();
+    drainLookAheadQueue();
+    scrollToCommentsTarget("smooth");
+    scheduleJumpToCommentsSync(220, "auto");
+  };
 
   const isChapterReady = () =>
     orderedImages.every((img) => {
@@ -442,6 +563,11 @@ if (quickComments) {
 
   const syncActiveWindow = () => {
     activePageIndex = resolveActivePageIndex();
+    if (jumpToCommentsActive) {
+      enqueueImagesTowardComments();
+      drainLookAheadQueue();
+      return;
+    }
     queueLookAround(activePageIndex);
   };
 
@@ -457,8 +583,15 @@ if (quickComments) {
   const onImageLoaded = (img) => {
     resetRetry(img);
     markLoaded(img);
+    applyPageFrameWidth(img);
     activePageIndex = resolveActivePageIndex();
-    queueLookAround(activePageIndex);
+    if (jumpToCommentsActive) {
+      enqueueImagesTowardComments();
+      drainLookAheadQueue();
+      scheduleJumpToCommentsSync(80, "auto");
+    } else {
+      queueLookAround(activePageIndex);
+    }
     triggerNextChapterPrefetch();
   };
 
@@ -495,6 +628,9 @@ if (quickComments) {
       if (state === "loaded") return;
       requestUnveil(img);
       scheduleLookAheadDrain(220);
+      if (jumpToCommentsActive) {
+        scheduleJumpToCommentsSync(120, "auto");
+      }
     }, retryDelayMs * nextRetry);
   };
 
@@ -510,6 +646,7 @@ if (quickComments) {
       img.classList.remove("lazyload");
     } else {
       markLoaded(img);
+      applyPageFrameWidth(img);
     }
 
     img.addEventListener("load", () => {
@@ -530,11 +667,21 @@ if (quickComments) {
       img.dataset.lazyRetryCount = "0";
       retryLazyImage(img);
     });
+
+    if (img.complete && (img.naturalWidth || img.getBoundingClientRect().width)) {
+      applyPageFrameWidth(img);
+    }
   });
 
   syncActiveWindow();
   window.addEventListener("scroll", scheduleActiveWindowSync, { passive: true });
   window.addEventListener("resize", scheduleActiveWindowSync, { passive: true });
+  window.addEventListener(READER_JUMP_COMMENTS_EVENT, requestJumpToComments);
+  window.addEventListener(READER_CANCEL_JUMP_COMMENTS_EVENT, clearJumpToComments);
+  window.addEventListener(READER_COMMENTS_LAYOUT_EVENT, () => {
+    if (!jumpToCommentsActive) return;
+    scheduleJumpToCommentsSync(60, "auto");
+  });
 
   const nextChapterPrefetchUrls = (() => {
     const encoded = (pagesRoot.dataset.readerNextPrefetch || "").toString().trim();

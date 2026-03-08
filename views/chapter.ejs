@@ -98,16 +98,18 @@
               <% pageUrls.forEach((src, index) => { %>
                 <% const isEagerPage = index < eagerPageCount; %>
                 <div class="page-card">
-                  <img
-                    class="page-media page-media--lazy <%= isEagerPage ? "is-loaded" : "is-placeholder lazyload" %>"
-                    src="<%= isEagerPage ? src : lazyPlaceholderSrc %>"
-                    <% if (!isEagerPage) { %>data-src="<%= src %>"<% } %>
-                    data-page-index="<%= index %>"
-                    alt="Trang <%= index + 1 %>"
-                    loading="<%= isEagerPage ? "eager" : "lazy" %>"
-                    decoding="async"
-                    fetchpriority="<%= index === 0 ? "high" : isEagerPage ? "auto" : "low" %>"
-                  />
+                  <div class="page-frame">
+                    <img
+                      class="page-media page-media--lazy <%= isEagerPage ? "is-loaded" : "is-placeholder lazyload" %>"
+                      src="<%= isEagerPage ? src : lazyPlaceholderSrc %>"
+                      <% if (!isEagerPage) { %>data-src="<%= src %>"<% } %>
+                      data-page-index="<%= index %>"
+                      alt="Trang <%= index + 1 %>"
+                      loading="<%= isEagerPage ? "eager" : "lazy" %>"
+                      decoding="async"
+                      fetchpriority="<%= index === 0 ? "high" : isEagerPage ? "auto" : "low" %>"
+                    />
+                  </div>
                 </div>
               <% }) %>
             <% } else if (pages.length === 0) { %>
@@ -133,12 +135,14 @@
               <div class="reader-pages">
                 <% pageUrls.forEach((src, index) => { %>
                   <div class="page-card">
-                    <img
-                      class="page-media"
-                      src="<%= src %>"
-                      alt="Trang <%= index + 1 %>"
-                      loading="lazy"
-                    />
+                    <div class="page-frame">
+                      <img
+                        class="page-media"
+                        src="<%= src %>"
+                        alt="Trang <%= index + 1 %>"
+                        loading="lazy"
+                      />
+                    </div>
                   </div>
                 <% }) %>
               </div>

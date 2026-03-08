@@ -7418,6 +7418,19 @@ body.reader-page .page-media--lazy {
   margin: 0 auto;
 }
 
+.page-frame {
+  width: min(100%, var(--page-frame-width, var(--reader-page-width, 1200px)));
+  max-width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+@media (min-width: 761px) {
+  .page-frame {
+    max-width: min(100%, var(--page-desktop-max-viewport, var(--reader-page-desktop-max-viewport, 85vw)));
+  }
+}
+
 .page-paper {
   background: #f8f8f2;
   color: #0c0c0c;
