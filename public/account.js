@@ -77,6 +77,18 @@
     if (variant === "success") statusEl.classList.add("is-success");
   };
 
+  const showToast = (message, tone = "info", kind = "info", dedupe = true) => {
+    const text = (message || "").toString().trim();
+    if (!text) return;
+    if (!window.BfangToast || typeof window.BfangToast.show !== "function") return;
+    window.BfangToast.show({
+      message: text,
+      tone,
+      kind,
+      dedupe
+    });
+  };
+
   const EMPTY_API_KEY_META = {
     hasKey: false,
     keyPrefix: "",
@@ -501,14 +513,20 @@
     }
   };
 
-  const fetchMeProfile = async (accessToken) => {
+  const buildAuthHeaders = (accessToken, extraHeaders) => {
     const token = (accessToken || "").toString().trim();
-    if (!token) return null;
+    const headers = Object.assign({}, extraHeaders || {});
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
+  const fetchMeProfile = async (accessToken) => {
     const response = await fetch("/account/me", {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${token}`
-      },
+      headers: buildAuthHeaders(accessToken, {
+        Accept: "application/json"
+      }),
       credentials: "same-origin"
     });
     const data = await response.json().catch(() => null);
@@ -519,16 +537,12 @@
   };
 
   const syncProfileToComments = async (accessToken) => {
-    const token = (accessToken || "").toString().trim();
-    if (!token) return null;
-
     const response = await fetch("/account/profile/sync", {
       method: "POST",
-      headers: {
+      headers: buildAuthHeaders(accessToken, {
         "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${token}`
-      },
+        Accept: "application/json"
+      }),
       credentials: "same-origin",
       body: JSON.stringify({})
     });
@@ -621,11 +635,6 @@
 
   const uploadAvatarWithProgress = (file, accessToken, onProgress) =>
     new Promise((resolve, reject) => {
-      const token = (accessToken || "").toString().trim();
-      if (!token) {
-        reject(new Error("Vui lòng đăng nhập để upload avatar."));
-        return;
-      }
       if (!file) {
         reject(new Error("Chưa chọn ảnh avatar."));
         return;
@@ -636,7 +645,10 @@
       xhr.responseType = "json";
       xhr.timeout = 120000;
       xhr.setRequestHeader("Accept", "application/json");
-      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      const token = (accessToken || "").toString().trim();
+      if (token) {
+        xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      }
 
       xhr.upload.addEventListener("progress", (event) => {
         if (!event.lengthComputable) {
@@ -720,7 +732,7 @@
     }
 
     const token = session.access_token ? String(session.access_token).trim() : "";
-    if (token && !cachedProfile) {
+    if (!cachedProfile) {
       const me = await fetchMeProfile(token);
       if (me && typeof me === "object") {
         cachedProfile = me;
@@ -1126,6 +1138,7 @@
         showOverlay({ pct: 100, text: "Hoàn tất" });
         window.setTimeout(hideOverlay, 600);
         setStatus("Đã lưu thay đổi.", "success");
+        showToast("Đã lưu thay đổi.", "success", "account-save");
       } catch (err) {
         hideOverlay();
         const message = (err && err.message) || "Không thể lưu. Vui lòng thử lại.";
