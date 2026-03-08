@@ -141,6 +141,32 @@
       } catch (_err) {
         // ignore
       }
+
+      if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+        const currentUrl = (window.location && window.location.href ? String(window.location.href).trim() : "") || "";
+        if (currentUrl) {
+          const postInvalidate = (worker) => {
+            if (!worker || typeof worker.postMessage !== "function") return;
+            worker.postMessage({
+              type: "INVALIDATE_PAGE_CACHE",
+              url: currentUrl
+            });
+          };
+
+          try {
+            postInvalidate(navigator.serviceWorker.controller);
+          } catch (_err) {
+            // ignore
+          }
+
+          navigator.serviceWorker.ready
+            .then((registration) => {
+              if (!registration) return;
+              postInvalidate(registration.active || registration.waiting || registration.installing);
+            })
+            .catch(() => null);
+        }
+      }
     };
 
     const normalizeAuthProvider = (value) => {
@@ -797,7 +823,7 @@
         }
       },
       loadInitialSession: ({ shouldAutoOpenLoginDialogFromUrl, openLoginProviderDialog }) =>
-        loadSession({ force: !hasInitialServerState })
+        loadSession({ force: !hasInitialServerState || !initialSignedIn })
           .then(() => {
             if (!shouldAutoOpenLoginDialogFromUrl) return;
             if (lastSession && lastSession.user) return;

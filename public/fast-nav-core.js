@@ -681,6 +681,11 @@
         }
       });
 
+      window.addEventListener("bfang:auth", () => {
+        htmlCache.clear();
+        inFlightFetches.clear();
+      });
+
       document.querySelectorAll("script[type='speculationrules']").forEach((script) => {
         script.setAttribute("data-fast-nav-speculation", "1");
       });
