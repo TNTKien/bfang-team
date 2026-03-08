@@ -92,6 +92,12 @@ Phần này giả định máy bạn chưa có gì ngoài Windows mới.
 Script `scripts/setup-all.js` chạy được trên cả Windows và Ubuntu (yêu cầu đã có Node.js).
 
 - Script sẽ kiểm tra cứng: Node.js LTS 20+ và PostgreSQL 16+.
+- Mặc định script chạy ở chế độ tương tác và sẽ hỏi lần lượt từng thông số setup.
+- Script giả định database đã tồn tại và KHÔNG hỏi tài khoản PostgreSQL admin để tạo DB.
+- Mặc định tài khoản DB gợi ý là `postgres` / `12345`.
+- Ngay sau khi nhập xong thông số SQL, script sẽ test kết nối PostgreSQL (fail sớm nếu sai user/pass/host/port/db).
+- Wizard sẽ hỏi thêm bạn có muốn setup ngay S3, Google OAuth, Discord OAuth hay không.
+- Nếu bỏ qua các mục trên, script sẽ nhắc bạn cấu hình lại sau trong `.env`.
 
 - Chạy mặc định:
 
@@ -102,13 +108,13 @@ npm run setup:all
 - Ví dụ chỉ định thông số DB:
 
 ```powershell
-npm run setup:all -- --db-host=127.0.0.1 --db-port=5432 --db-name=moetruyen --db-user=moetruyen --db-pass=12345 --postgres-admin-user=postgres --postgres-admin-password=postgres
+npm run setup:all -- --db-host=127.0.0.1 --db-port=5432 --db-name=moetruyen --db-user=postgres --db-pass=12345
 ```
 
-- Nếu DB đã tạo sẵn, bỏ qua bước tạo role/database:
+- Non-interactive, đồng thời bỏ qua setup S3/Google/Discord lúc này:
 
 ```powershell
-npm run setup:all -- --skip-db-create
+npm run setup:all -- --non-interactive --setup-s3=false --setup-google=false --setup-discord=false
 ```
 
 ### Bước 0 - Cài phần mềm nền

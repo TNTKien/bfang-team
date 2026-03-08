@@ -5,10 +5,11 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const readline = require("readline");
 const { spawnSync } = require("child_process");
 
 const projectRoot = path.resolve(__dirname, "..");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCommand = "npm";
 const psqlCommand = process.platform === "win32" ? "psql.exe" : "psql";
 const MIN_NODE_MAJOR = 20;
 const MIN_POSTGRES_MAJOR = 16;
@@ -55,8 +56,8 @@ const parseBoolean = (value, fallback = false) => {
   if (value == null) return Boolean(fallback);
   const text = String(value).trim().toLowerCase();
   if (!text) return Boolean(fallback);
-  if (["1", "true", "yes", "y", "on"].includes(text)) return true;
-  if (["0", "false", "no", "n", "off"].includes(text)) return false;
+  if (["1", "true", "yes", "y", "on", "co", "c", "có", "ok"].includes(text)) return true;
+  if (["0", "false", "no", "n", "off", "khong", "không", "k"].includes(text)) return false;
   return Boolean(fallback);
 };
 
@@ -66,16 +67,354 @@ const parsePort = (value, fallback) => {
   return Math.min(Math.max(parsed, 1), 65535);
 };
 
-const quotePgLiteral = (value) => `'${String(value == null ? "" : value).replace(/'/g, "''")}'`;
-const quotePgIdent = (value) => `"${String(value == null ? "" : value).replace(/"/g, '""')}"`;
+const parseDatabaseUrlParts = (databaseUrl) => {
+  const raw = String(databaseUrl || "").trim();
+  if (!raw) {
+    return {
+      host: "",
+      port: 0,
+      database: "",
+      user: "",
+      password: ""
+    };
+  }
 
-const runCommand = ({ title, command, args = [], cwd = projectRoot, extraEnv = null, capture = false }) => {
+  try {
+    const parsed = new URL(raw);
+    return {
+      host: String(parsed.hostname || "").trim(),
+      port: parsePort(parsed.port, 0),
+      database: String(parsed.pathname || "").replace(/^\/+/, "").trim(),
+      user: decodeURIComponent(String(parsed.username || "").trim()),
+      password: decodeURIComponent(String(parsed.password || "").trim())
+    };
+  } catch (_error) {
+    return {
+      host: "",
+      port: 0,
+      database: "",
+      user: "",
+      password: ""
+    };
+  }
+};
+
+const askQuestion = (rl, promptText) => new Promise((resolve) => {
+  rl.question(promptText, (answer) => {
+    resolve(String(answer == null ? "" : answer));
+  });
+});
+
+const formatUnderlinedChoice = (value) => {
+  const text = String(value == null ? "" : value);
+  const canUseAnsi = Boolean(
+    process.stdout && process.stdout.isTTY && process.env.NO_COLOR == null && String(process.env.TERM || "") !== "dumb"
+  );
+  if (canUseAnsi) {
+    return `\u001b[4m${text}\u001b[24m`;
+  }
+  return `_${text}_`;
+};
+
+const promptTextValue = async ({ rl, label, defaultValue = "", allowEmpty = false }) => {
+  while (true) {
+    const fallback = String(defaultValue == null ? "" : defaultValue);
+    const suffix = fallback ? ` [${fallback}]` : "";
+    const answer = await askQuestion(rl, `${label}${suffix}: `);
+    const value = String(answer || "").trim();
+
+    if (!value) {
+      if (fallback) {
+        return fallback;
+      }
+      if (allowEmpty) {
+        return "";
+      }
+      console.log("  ! Giá trị không được để trống.");
+      continue;
+    }
+
+    return value;
+  }
+};
+
+const promptPortValue = async ({ rl, label, defaultValue }) => {
+  while (true) {
+    const fallback = Number.isFinite(defaultValue) ? defaultValue : 0;
+    const answer = await askQuestion(rl, `${label} [${fallback}]: `);
+    const raw = String(answer || "").trim();
+    const candidate = raw ? Number.parseInt(raw, 10) : fallback;
+    if (Number.isFinite(candidate) && candidate >= 1 && candidate <= 65535) {
+      return Math.floor(candidate);
+    }
+    console.log("  ! Port phải là số từ 1 đến 65535.");
+  }
+};
+
+const promptBooleanValue = async ({ rl, label, defaultValue = false }) => {
+  const fallback = Boolean(defaultValue);
+  const hint = fallback
+    ? `${formatUnderlinedChoice("Y")}/n`
+    : `y/${formatUnderlinedChoice("N")}`;
+
+  while (true) {
+    const answer = await askQuestion(rl, `${label} (${hint}): `);
+    const raw = String(answer || "").trim().toLowerCase();
+    if (!raw) return fallback;
+    if (["y", "yes", "1", "true", "on", "co", "c", "có", "ok"].includes(raw)) return true;
+    if (["n", "no", "0", "false", "off", "khong", "không", "k"].includes(raw)) return false;
+    console.log("  ! Nhập y/yes hoặc n/no.");
+  }
+};
+
+const collectInteractiveOptions = async (seedOptions) => {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Chế độ tương tác cần terminal TTY. Dùng --non-interactive để chạy tự động.");
+  }
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  try {
+    console.log("\n=== Setup Wizard ===");
+    console.log("Nhập từng thông số cấu hình. Nhấn Enter để dùng giá trị trong ngoặc [].\n");
+
+    const dbHost = await promptTextValue({
+      rl,
+      label: "Host PostgreSQL",
+      defaultValue: seedOptions.dbHost
+    });
+
+    const dbPort = await promptPortValue({
+      rl,
+      label: "Port PostgreSQL",
+      defaultValue: seedOptions.dbPort
+    });
+
+    const dbName = await promptTextValue({
+      rl,
+      label: "Tên database",
+      defaultValue: seedOptions.dbName
+    });
+
+    const dbUser = await promptTextValue({
+      rl,
+      label: "User database",
+      defaultValue: seedOptions.dbUser
+    });
+
+    const dbPassword = await promptTextValue({
+      rl,
+      label: "Password database",
+      defaultValue: seedOptions.dbPassword
+    });
+
+    const webAdminUser = await promptTextValue({
+      rl,
+      label: "username admin web",
+      defaultValue: seedOptions.webAdminUser
+    });
+
+    const webAdminPass = await promptTextValue({
+      rl,
+      label: "Password admin web",
+      defaultValue: seedOptions.webAdminPass
+    });
+
+    const appPort = await promptPortValue({
+      rl,
+      label: "Port web app",
+      defaultValue: seedOptions.appPort
+    });
+
+    const withApi = await promptBooleanValue({
+      rl,
+      label: "Cài và cấu hình API Server",
+      defaultValue: seedOptions.withApi
+    });
+
+    let apiPort = seedOptions.apiPort;
+    if (withApi) {
+      apiPort = await promptPortValue({
+        rl,
+        label: "API Server port",
+        defaultValue: seedOptions.apiPort
+      });
+    }
+
+    const withForum = await promptBooleanValue({
+      rl,
+      label: "Cài và build Forum frontend (sampleforum)",
+      defaultValue: seedOptions.withForum
+    });
+
+    const withDesktop = await promptBooleanValue({
+      rl,
+      label: "Cài dependencies app_desktop",
+      defaultValue: seedOptions.withDesktop
+    });
+
+    const setupS3Now = await promptBooleanValue({
+      rl,
+      label: "Setup S3 ngay bây giờ",
+      defaultValue: seedOptions.setupS3Now
+    });
+
+    let s3Endpoint = seedOptions.s3Endpoint;
+    let s3Bucket = seedOptions.s3Bucket;
+    let s3Region = seedOptions.s3Region;
+    let s3AccessKeyId = seedOptions.s3AccessKeyId;
+    let s3SecretAccessKey = seedOptions.s3SecretAccessKey;
+    let s3ForcePathStyle = seedOptions.s3ForcePathStyle;
+    let chapterCdnBaseUrl = seedOptions.chapterCdnBaseUrl;
+    let s3ChapterPrefix = seedOptions.s3ChapterPrefix;
+
+    if (setupS3Now) {
+      s3Endpoint = await promptTextValue({
+        rl,
+        label: "Endpoint S3 (để trống nếu dùng AWS)",
+        defaultValue: seedOptions.s3Endpoint,
+        allowEmpty: true
+      });
+
+      s3Bucket = await promptTextValue({
+        rl,
+        label: "Bucket S3",
+        defaultValue: seedOptions.s3Bucket
+      });
+
+      s3Region = await promptTextValue({
+        rl,
+        label: "Region S3",
+        defaultValue: seedOptions.s3Region
+      });
+
+      s3AccessKeyId = await promptTextValue({
+        rl,
+        label: "S3 Access Key ID",
+        defaultValue: seedOptions.s3AccessKeyId
+      });
+
+      s3SecretAccessKey = await promptTextValue({
+        rl,
+        label: "S3 Secret Access Key",
+        defaultValue: seedOptions.s3SecretAccessKey
+      });
+
+      const forcePathStyleBool = await promptBooleanValue({
+        rl,
+        label: "Bật S3 force path style",
+        defaultValue: parseBoolean(seedOptions.s3ForcePathStyle, true)
+      });
+      s3ForcePathStyle = forcePathStyleBool ? "true" : "false";
+
+      chapterCdnBaseUrl = await promptTextValue({
+        rl,
+        label: "Chapter CDN base URL",
+        defaultValue: seedOptions.chapterCdnBaseUrl,
+        allowEmpty: true
+      });
+
+      s3ChapterPrefix = await promptTextValue({
+        rl,
+        label: "S3 chapter prefix",
+        defaultValue: seedOptions.s3ChapterPrefix
+      });
+    }
+
+    const setupGoogleNow = await promptBooleanValue({
+      rl,
+      label: "Setup Google OAuth ngay bây giờ",
+      defaultValue: seedOptions.setupGoogleNow
+    });
+
+    let googleClientId = seedOptions.googleClientId;
+    let googleClientSecret = seedOptions.googleClientSecret;
+    if (setupGoogleNow) {
+      googleClientId = await promptTextValue({
+        rl,
+        label: "Google Client ID",
+        defaultValue: seedOptions.googleClientId
+      });
+      googleClientSecret = await promptTextValue({
+        rl,
+        label: "Google Client Secret",
+        defaultValue: seedOptions.googleClientSecret
+      });
+    }
+
+    const setupDiscordNow = await promptBooleanValue({
+      rl,
+      label: "Setup Discord OAuth ngay bây giờ",
+      defaultValue: seedOptions.setupDiscordNow
+    });
+
+    let discordClientId = seedOptions.discordClientId;
+    let discordClientSecret = seedOptions.discordClientSecret;
+    if (setupDiscordNow) {
+      discordClientId = await promptTextValue({
+        rl,
+        label: "Discord Client ID",
+        defaultValue: seedOptions.discordClientId
+      });
+      discordClientSecret = await promptTextValue({
+        rl,
+        label: "Discord Client Secret",
+        defaultValue: seedOptions.discordClientSecret
+      });
+    }
+
+    const startWeb = await promptBooleanValue({
+      rl,
+      label: "Start web server sau khi setup",
+      defaultValue: seedOptions.startWeb
+    });
+
+    return {
+      ...seedOptions,
+      dbHost,
+      dbPort,
+      dbName,
+      dbUser,
+      dbPassword,
+      webAdminUser,
+      webAdminPass,
+      appPort,
+      apiPort,
+      withApi,
+      withForum,
+      withDesktop,
+      setupS3Now,
+      s3Endpoint,
+      s3Bucket,
+      s3Region,
+      s3AccessKeyId,
+      s3SecretAccessKey,
+      s3ForcePathStyle,
+      chapterCdnBaseUrl,
+      s3ChapterPrefix,
+      setupGoogleNow,
+      googleClientId,
+      googleClientSecret,
+      setupDiscordNow,
+      discordClientId,
+      discordClientSecret,
+      startWeb
+    };
+  } finally {
+    rl.close();
+  }
+};
+
+const runCommand = ({ title, command, args = [], cwd = projectRoot, extraEnv = null, capture = false, shell = false }) => {
   console.log(`\n==> ${title}`);
   const env = extraEnv ? { ...process.env, ...extraEnv } : process.env;
   const result = spawnSync(command, args, {
     cwd,
     env,
-    shell: false,
+    shell,
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
     encoding: capture ? "utf8" : undefined
   });
@@ -93,113 +432,110 @@ const runCommand = ({ title, command, args = [], cwd = projectRoot, extraEnv = n
   return result;
 };
 
-const commandAvailable = (command, args = ["--version"]) => {
-  const result = spawnSync(command, args, {
-    cwd: projectRoot,
-    shell: false,
-    stdio: "ignore"
+const runNpmCommand = ({ title, args = [], cwd = projectRoot }) => {
+  const npmExecPath = String(process.env.npm_execpath || "").trim();
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    return runCommand({
+      title,
+      command: process.execPath,
+      args: [npmExecPath, ...args],
+      cwd,
+      shell: false
+    });
+  }
+
+  if (process.platform === "win32") {
+    return runCommand({
+      title,
+      command: "npm",
+      args,
+      cwd,
+      shell: true
+    });
+  }
+
+  return runCommand({
+    title,
+    command: "npm",
+    args,
+    cwd,
+    shell: false
   });
-  if (result.error) return false;
-  return result.status === 0;
 };
 
-const readPsqlClientMajorVersion = () => {
-  const result = spawnSync(psqlCommand, ["--version"], {
-    cwd: projectRoot,
-    shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf8"
-  });
+const testSqlConnectionWithPsql = ({ host, port, database, user, password, minMajor }) => {
+  const baseArgs = [
+    "-h",
+    String(host || "").trim(),
+    "-p",
+    String(port || "").trim(),
+    "-U",
+    String(user || "").trim(),
+    "-d",
+    String(database || "").trim(),
+    "-v",
+    "ON_ERROR_STOP=1"
+  ];
 
-  if (result.error || result.status !== 0) {
-    return 0;
-  }
+  const env = {
+    ...process.env,
+    PGPASSWORD: String(password == null ? "" : password)
+  };
 
-  const text = `${String(result.stdout || "")} ${String(result.stderr || "")}`;
-  const match = text.match(/(\d+)(?:\.\d+)?/);
-  if (!match || !match[1]) return 0;
-
-  const major = Number.parseInt(match[1], 10);
-  return Number.isFinite(major) ? major : 0;
-};
-
-const ensurePsqlClientVersion = (minMajor) => {
-  if (!commandAvailable(psqlCommand)) {
-    const hint = process.platform === "win32"
-      ? "Install PostgreSQL 16+ (psql) and add it to PATH, or run with --skip-db-create."
-      : "Install PostgreSQL 16+ client tools (psql), or run with --skip-db-create.";
-    throw new Error(`Cannot find ${psqlCommand}. ${hint}`);
-  }
-
-  const major = readPsqlClientMajorVersion();
-  if (!major) {
-    throw new Error(`Cannot detect ${psqlCommand} version. PostgreSQL ${minMajor}+ is required.`);
-  }
-
-  if (major < minMajor) {
-    throw new Error(`PostgreSQL client ${minMajor}+ is required. Detected ${psqlCommand} major version ${major}.`);
-  }
-
-  return major;
-};
-
-const ensurePostgresServerVersion = ({ databaseUrl, minMajor }) => {
-  const verifierScript = [
-    'const { Pool } = require("pg");',
-    '(async () => {',
-    '  const pool = new Pool({ connectionString: process.env.DATABASE_URL });',
-    '  try {',
-    '    const result = await pool.query("SHOW server_version_num");',
-    '    const row = result && Array.isArray(result.rows) ? result.rows[0] : null;',
-    '    const raw = row && row.server_version_num != null ? String(row.server_version_num).trim() : "";',
-    '    const numeric = Number.parseInt(raw, 10);',
-    '    const major = Number.isFinite(numeric) ? Math.floor(numeric / 10000) : 0;',
-    '    if (!major) throw new Error("Cannot read PostgreSQL server version.");',
-    '    const minMajor = Number.parseInt(process.env.MIN_PG_MAJOR || "16", 10);',
-    '    if (!Number.isFinite(minMajor) || minMajor < 1) {',
-    '      throw new Error("Invalid minimum PostgreSQL version.");',
-    '    }',
-    '    if (major < minMajor) {',
-    '      throw new Error(`PostgreSQL ${minMajor}+ is required. Detected server major ${major}.`);',
-    '    }',
-    '    process.stdout.write(String(major));',
-    '  } finally {',
-    '    await pool.end().catch(() => undefined);',
-    '  }',
-    '})().catch((error) => {',
-    '  const message = error && error.message ? error.message : String(error);',
-    '  process.stderr.write(`${message}\\n`);',
-    '  process.exit(1);',
-    '});'
-  ].join("\n");
-
-  const result = spawnSync(process.execPath, ["-e", verifierScript], {
+  const testResult = spawnSync(psqlCommand, [...baseArgs, "-tAc", "SELECT 1;"], {
     cwd: projectRoot,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
-    env: {
-      ...process.env,
-      DATABASE_URL: String(databaseUrl || ""),
-      MIN_PG_MAJOR: String(minMajor)
-    }
+    env
   });
 
-  if (result.error) {
-    throw result.error;
+  if (testResult.error) {
+    if (testResult.error.code === "ENOENT") {
+      throw new Error("Không tìm thấy psql. Hãy cài PostgreSQL client 16+ và thêm vào PATH.");
+    }
+    throw testResult.error;
   }
 
-  if (result.status !== 0) {
-    const message = String(result.stderr || "").trim() || "Cannot verify PostgreSQL server version.";
-    throw new Error(message);
+  if (testResult.status !== 0) {
+    const message = String(testResult.stderr || "").trim() || "Không thể kết nối PostgreSQL.";
+    throw new Error(`Kết nối SQL thất bại: ${message}`);
   }
 
-  const major = Number.parseInt(String(result.stdout || "").trim(), 10);
-  if (!Number.isFinite(major) || major < minMajor) {
-    throw new Error(`PostgreSQL ${minMajor}+ is required.`);
+  const selectOutput = String(testResult.stdout || "").trim();
+  if (selectOutput !== "1") {
+    throw new Error("Kết nối SQL thất bại: truy vấn kiểm tra không trả về kết quả hợp lệ.");
   }
 
-  return major;
+  const versionResult = spawnSync(psqlCommand, [...baseArgs, "-tAc", "SHOW server_version_num;"], {
+    cwd: projectRoot,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+    env
+  });
+
+  if (versionResult.error || versionResult.status !== 0) {
+    const message = versionResult.error
+      ? String(versionResult.error.message || versionResult.error)
+      : String(versionResult.stderr || "").trim();
+    throw new Error(`Không đọc được phiên bản PostgreSQL server: ${message || "unknown error"}`);
+  }
+
+  const rawVersionNum = String(versionResult.stdout || "").trim();
+  const versionNum = Number.parseInt(rawVersionNum, 10);
+  const major = Number.isFinite(versionNum) ? Math.floor(versionNum / 10000) : 0;
+  if (!major) {
+    throw new Error("Không đọc được PostgreSQL server major version.");
+  }
+
+  if (major < minMajor) {
+    throw new Error(`PostgreSQL ${minMajor}+ là bắt buộc. Server hiện tại là ${major}.`);
+  }
+
+  return {
+    major
+  };
 };
 
 const ensureFileFromTemplate = (targetPath, templatePath) => {
@@ -288,92 +624,6 @@ const maskDatabaseUrl = (url) => {
   }
 };
 
-const createDatabaseAndRole = (options) => {
-  ensurePsqlClientVersion(MIN_POSTGRES_MAJOR);
-
-  const baseArgs = [
-    "-h",
-    options.dbHost,
-    "-p",
-    String(options.dbPort),
-    "-U",
-    options.postgresAdminUser,
-    "-d",
-    "postgres",
-    "-v",
-    "ON_ERROR_STOP=1"
-  ];
-
-  const authEnv = options.postgresAdminPassword
-    ? {
-      PGPASSWORD: options.postgresAdminPassword
-    }
-    : null;
-
-  const roleSql = [
-    "DO $$",
-    "BEGIN",
-    `  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${quotePgLiteral(options.dbUser)}) THEN`,
-    `    CREATE ROLE ${quotePgIdent(options.dbUser)} WITH LOGIN PASSWORD ${quotePgLiteral(options.dbPassword)};`,
-    "  ELSE",
-    `    ALTER ROLE ${quotePgIdent(options.dbUser)} WITH LOGIN PASSWORD ${quotePgLiteral(options.dbPassword)};`,
-    "  END IF;",
-    "END",
-    "$$;"
-  ].join("\n");
-
-  runCommand({
-    title: "Ensure PostgreSQL role",
-    command: psqlCommand,
-    args: [...baseArgs, "-c", roleSql],
-    extraEnv: authEnv
-  });
-
-  const existsResult = runCommand({
-    title: "Check PostgreSQL database",
-    command: psqlCommand,
-    args: [...baseArgs, "-tAc", `SELECT 1 FROM pg_database WHERE datname = ${quotePgLiteral(options.dbName)};`],
-    extraEnv: authEnv,
-    capture: true
-  });
-
-  const exists = String(existsResult.stdout || "").trim() === "1";
-  if (!exists) {
-    runCommand({
-      title: "Create PostgreSQL database",
-      command: psqlCommand,
-      args: [...baseArgs, "-c", `CREATE DATABASE ${quotePgIdent(options.dbName)} OWNER ${quotePgIdent(options.dbUser)};`],
-      extraEnv: authEnv
-    });
-  } else {
-    runCommand({
-      title: "Ensure PostgreSQL database owner",
-      command: psqlCommand,
-      args: [...baseArgs, "-c", `ALTER DATABASE ${quotePgIdent(options.dbName)} OWNER TO ${quotePgIdent(options.dbUser)};`],
-      extraEnv: authEnv
-    });
-  }
-
-  const dbArgs = [
-    "-h",
-    options.dbHost,
-    "-p",
-    String(options.dbPort),
-    "-U",
-    options.postgresAdminUser,
-    "-d",
-    options.dbName,
-    "-v",
-    "ON_ERROR_STOP=1"
-  ];
-
-  runCommand({
-    title: "Grant schema privileges",
-    command: psqlCommand,
-    args: [...dbArgs, "-c", `GRANT ALL ON SCHEMA public TO ${quotePgIdent(options.dbUser)};`],
-    extraEnv: authEnv
-  });
-};
 
 const printHelp = () => {
   console.log([
@@ -381,6 +631,7 @@ const printHelp = () => {
     "",
     "Cross-platform project bootstrap for Windows and Ubuntu.",
     `Requirements: Node.js LTS ${MIN_NODE_MAJOR}+ and PostgreSQL ${MIN_POSTGRES_MAJOR}+.`,
+    "By default, setup runs in interactive wizard mode and asks each parameter.",
     "This script installs dependencies, creates env files, prepares DB,",
     "runs schema bootstrap, and builds required assets.",
     "",
@@ -388,10 +639,8 @@ const printHelp = () => {
     "  --db-host <host>                 PostgreSQL host (default: 127.0.0.1)",
     "  --db-port <port>                 PostgreSQL port (default: 5432)",
     "  --db-name <name>                 App database name (default: moetruyen)",
-    "  --db-user <user>                 App database user (default: moetruyen)",
-    "  --db-pass <pass>                 App database password (default: moetruyen123)",
-    "  --postgres-admin-user <user>     Admin DB user for create/alter (default: postgres)",
-    "  --postgres-admin-password <pass> Admin DB password (optional)",
+    "  --db-user <user>                 App database user (default: postgres)",
+    "  --db-pass <pass>                 App database password (default: 12345)",
     "  --admin-user <user>              Web admin username (default: admin)",
     "  --admin-pass <pass>              Web admin password (default: 12345)",
     "  --app-port <port>                Web port (default: 3000)",
@@ -399,19 +648,35 @@ const printHelp = () => {
     "  --with-api <true|false>          Install api_server deps (default: true)",
     "  --with-forum <true|false>        Install/build sampleforum (default: true)",
     "  --with-desktop <true|false>      Install app_desktop deps (default: false)",
-    "  --skip-db-create                 Skip role/database create step",
+    "  --setup-s3 <true|false>          Setup S3 vars now",
+    "  --s3-endpoint <url>              S3 endpoint (optional)",
+    "  --s3-bucket <name>               S3 bucket",
+    "  --s3-region <name>               S3 region (default: us-east-1)",
+    "  --s3-access-key-id <id>          S3 access key id",
+    "  --s3-secret-access-key <secret>  S3 secret access key",
+    "  --s3-force-path-style <bool>     S3 force path style",
+    "  --chapter-cdn-base-url <url>     CDN base URL for chapter images",
+    "  --s3-chapter-prefix <prefix>     S3 chapter prefix (default: chapters)",
+    "  --setup-google <true|false>      Setup Google OAuth vars now",
+    "  --google-client-id <id>          Google OAuth client id",
+    "  --google-client-secret <secret>  Google OAuth client secret",
+    "  --setup-discord <true|false>     Setup Discord OAuth vars now",
+    "  --discord-client-id <id>         Discord OAuth client id",
+    "  --discord-client-secret <secret> Discord OAuth client secret",
+    "  --non-interactive                Do not prompt; use args/env/defaults",
     "  --start                          Start web server (`npm run dev`) after setup",
     "  --help                           Show this help",
     "",
     "Examples:",
     "  npm run setup:all",
-    "  npm run setup:all -- --db-pass=secret --postgres-admin-password=postgres",
-    "  npm run setup:all -- --skip-db-create --with-desktop=true",
+    "  npm run setup:all -- --db-user=postgres --db-pass=12345",
+    "  npm run setup:all -- --non-interactive --setup-s3=true --setup-google=false --setup-discord=false",
+    "  npm run setup:all -- --with-desktop=true",
     ""
   ].join("\n"));
 };
 
-const main = () => {
+const main = async () => {
   if (process.platform !== "win32" && process.platform !== "linux") {
     throw new Error("This setup script supports Windows and Linux/Ubuntu only.");
   }
@@ -427,40 +692,139 @@ const main = () => {
     return;
   }
 
-  const options = {
-    dbHost: String(args["db-host"] || process.env.SETUP_DB_HOST || "127.0.0.1").trim() || "127.0.0.1",
-    dbPort: parsePort(args["db-port"] || process.env.SETUP_DB_PORT, 5432),
-    dbName: String(args["db-name"] || process.env.SETUP_DB_NAME || "moetruyen").trim() || "moetruyen",
-    dbUser: String(args["db-user"] || process.env.SETUP_DB_USER || "moetruyen").trim() || "moetruyen",
-    dbPassword: String(args["db-pass"] || process.env.SETUP_DB_PASS || "moetruyen123"),
-    postgresAdminUser:
-      String(args["postgres-admin-user"] || process.env.POSTGRES_ADMIN_USER || "postgres").trim() || "postgres",
-    postgresAdminPassword: String(
-      args["postgres-admin-password"] || process.env.POSTGRES_ADMIN_PASSWORD || process.env.PGPASSWORD || ""
-    ),
-    webAdminUser: String(args["admin-user"] || process.env.SETUP_ADMIN_USER || "admin").trim() || "admin",
-    webAdminPass: String(args["admin-pass"] || process.env.SETUP_ADMIN_PASS || "12345"),
-    appPort: parsePort(args["app-port"] || process.env.SETUP_APP_PORT, 3000),
-    apiPort: parsePort(args["api-port"] || process.env.SETUP_API_PORT, 3001),
-    withApi: parseBoolean(args["with-api"], true),
-    withForum: parseBoolean(args["with-forum"], true),
-    withDesktop: parseBoolean(args["with-desktop"], false),
-    skipDbCreate: parseBoolean(args["skip-db-create"], false),
-    startWeb: parseBoolean(args.start, false)
-  };
-
   const rootEnvTemplatePath = path.join(projectRoot, ".env.example");
   const rootEnvPath = path.join(projectRoot, ".env");
   const apiEnvTemplatePath = path.join(projectRoot, "api_server", ".env.example");
   const apiEnvPath = path.join(projectRoot, "api_server", ".env");
 
   ensureFileFromTemplate(rootEnvPath, rootEnvTemplatePath);
-  if (options.withApi) {
-    ensureFileFromTemplate(apiEnvPath, apiEnvTemplatePath);
-  }
 
   const rootEnvOriginal = readTextFile(rootEnvPath);
   const rootEnvMap = readEnvMap(rootEnvOriginal);
+  const parsedDatabaseUrl = parseDatabaseUrlParts(rootEnvMap.DATABASE_URL);
+  const hasS3Configured = Boolean(
+    String(rootEnvMap.S3_BUCKET || "").trim() &&
+    String(rootEnvMap.S3_ACCESS_KEY_ID || "").trim() &&
+    String(rootEnvMap.S3_SECRET_ACCESS_KEY || "").trim()
+  );
+  const hasGoogleConfigured = Boolean(
+    String(rootEnvMap.GOOGLE_CLIENT_ID || "").trim() &&
+    String(rootEnvMap.GOOGLE_CLIENT_SECRET || "").trim()
+  );
+  const hasDiscordConfigured = Boolean(
+    String(rootEnvMap.DISCORD_CLIENT_ID || "").trim() &&
+    String(rootEnvMap.DISCORD_CLIENT_SECRET || "").trim()
+  );
+
+  const seedOptions = {
+    dbHost: String(args["db-host"] || process.env.SETUP_DB_HOST || parsedDatabaseUrl.host || "127.0.0.1").trim() || "127.0.0.1",
+    dbPort: parsePort(args["db-port"] || process.env.SETUP_DB_PORT || parsedDatabaseUrl.port, 5432),
+    dbName: String(args["db-name"] || process.env.SETUP_DB_NAME || parsedDatabaseUrl.database || "moetruyen").trim() || "moetruyen",
+    dbUser: String(args["db-user"] || process.env.SETUP_DB_USER || parsedDatabaseUrl.user || "postgres").trim() || "postgres",
+    dbPassword: String(args["db-pass"] || process.env.SETUP_DB_PASS || parsedDatabaseUrl.password || "12345"),
+    webAdminUser: String(args["admin-user"] || process.env.SETUP_ADMIN_USER || rootEnvMap.ADMIN_USER || "admin").trim() || "admin",
+    webAdminPass: String(args["admin-pass"] || process.env.SETUP_ADMIN_PASS || rootEnvMap.ADMIN_PASS || "12345"),
+    appPort: parsePort(args["app-port"] || process.env.SETUP_APP_PORT || rootEnvMap.PORT, 3000),
+    apiPort: parsePort(args["api-port"] || process.env.SETUP_API_PORT, 3001),
+    withApi: parseBoolean(args["with-api"], true),
+    withForum: parseBoolean(args["with-forum"], true),
+    withDesktop: parseBoolean(args["with-desktop"], false),
+    setupS3Now: parseBoolean(args["setup-s3"], hasS3Configured),
+    s3Endpoint: String(args["s3-endpoint"] || process.env.SETUP_S3_ENDPOINT || rootEnvMap.S3_ENDPOINT || "").trim(),
+    s3Bucket: String(args["s3-bucket"] || process.env.SETUP_S3_BUCKET || rootEnvMap.S3_BUCKET || "").trim(),
+    s3Region: String(args["s3-region"] || process.env.SETUP_S3_REGION || rootEnvMap.S3_REGION || "us-east-1").trim() || "us-east-1",
+    s3AccessKeyId: String(args["s3-access-key-id"] || process.env.SETUP_S3_ACCESS_KEY_ID || rootEnvMap.S3_ACCESS_KEY_ID || "").trim(),
+    s3SecretAccessKey: String(args["s3-secret-access-key"] || process.env.SETUP_S3_SECRET_ACCESS_KEY || rootEnvMap.S3_SECRET_ACCESS_KEY || "").trim(),
+    s3ForcePathStyle: String(
+      args["s3-force-path-style"] ||
+      process.env.SETUP_S3_FORCE_PATH_STYLE ||
+      rootEnvMap.S3_FORCE_PATH_STYLE ||
+      "true"
+    ).trim() || "true",
+    chapterCdnBaseUrl: String(
+      args["chapter-cdn-base-url"] ||
+      process.env.SETUP_CHAPTER_CDN_BASE_URL ||
+      rootEnvMap.CHAPTER_CDN_BASE_URL ||
+      ""
+    ).trim(),
+    s3ChapterPrefix: String(
+      args["s3-chapter-prefix"] ||
+      process.env.SETUP_S3_CHAPTER_PREFIX ||
+      rootEnvMap.S3_CHAPTER_PREFIX ||
+      "chapters"
+    ).trim() || "chapters",
+    setupGoogleNow: parseBoolean(args["setup-google"], hasGoogleConfigured),
+    googleClientId: String(
+      args["google-client-id"] ||
+      process.env.SETUP_GOOGLE_CLIENT_ID ||
+      rootEnvMap.GOOGLE_CLIENT_ID ||
+      ""
+    ).trim(),
+    googleClientSecret: String(
+      args["google-client-secret"] ||
+      process.env.SETUP_GOOGLE_CLIENT_SECRET ||
+      rootEnvMap.GOOGLE_CLIENT_SECRET ||
+      ""
+    ).trim(),
+    setupDiscordNow: parseBoolean(args["setup-discord"], hasDiscordConfigured),
+    discordClientId: String(
+      args["discord-client-id"] ||
+      process.env.SETUP_DISCORD_CLIENT_ID ||
+      rootEnvMap.DISCORD_CLIENT_ID ||
+      ""
+    ).trim(),
+    discordClientSecret: String(
+      args["discord-client-secret"] ||
+      process.env.SETUP_DISCORD_CLIENT_SECRET ||
+      rootEnvMap.DISCORD_CLIENT_SECRET ||
+      ""
+    ).trim(),
+    startWeb: parseBoolean(args.start, false),
+    nonInteractive: parseBoolean(args["non-interactive"], false)
+  };
+
+  const options = seedOptions.nonInteractive
+    ? seedOptions
+    : await collectInteractiveOptions(seedOptions);
+
+  console.log("\n==> Kiểm tra kết nối SQL với thông số bạn vừa nhập...");
+  const sqlCheck = testSqlConnectionWithPsql({
+    host: options.dbHost,
+    port: options.dbPort,
+    database: options.dbName,
+    user: options.dbUser,
+    password: options.dbPassword,
+    minMajor: MIN_POSTGRES_MAJOR
+  });
+  console.log(`==> Kết nối SQL thành công (PostgreSQL ${sqlCheck.major}).`);
+
+  if (options.setupS3Now) {
+    const requiredS3 = [
+      ["S3 bucket", options.s3Bucket],
+      ["S3 access key id", options.s3AccessKeyId],
+      ["S3 secret access key", options.s3SecretAccessKey]
+    ];
+    const missing = requiredS3.filter((entry) => !String(entry[1] || "").trim()).map((entry) => entry[0]);
+    if (missing.length) {
+      throw new Error(`Missing required S3 values: ${missing.join(", ")}`);
+    }
+  }
+
+  if (options.setupGoogleNow) {
+    if (!String(options.googleClientId || "").trim() || !String(options.googleClientSecret || "").trim()) {
+      throw new Error("Google OAuth setup is enabled but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET is empty.");
+    }
+  }
+
+  if (options.setupDiscordNow) {
+    if (!String(options.discordClientId || "").trim() || !String(options.discordClientSecret || "").trim()) {
+      throw new Error("Discord OAuth setup is enabled but DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET is empty.");
+    }
+  }
+
+  if (options.withApi) {
+    ensureFileFromTemplate(apiEnvPath, apiEnvTemplatePath);
+  }
 
   const databaseUrl = buildDatabaseUrl({
     user: options.dbUser,
@@ -486,8 +850,30 @@ const main = () => {
     rootEnvUpdates.NEWS_PAGE_ENABLED = "off";
   }
 
+  if (options.setupS3Now) {
+    rootEnvUpdates.S3_ENDPOINT = String(options.s3Endpoint || "").trim();
+    rootEnvUpdates.S3_BUCKET = String(options.s3Bucket || "").trim();
+    rootEnvUpdates.S3_REGION = String(options.s3Region || "us-east-1").trim() || "us-east-1";
+    rootEnvUpdates.S3_ACCESS_KEY_ID = String(options.s3AccessKeyId || "").trim();
+    rootEnvUpdates.S3_SECRET_ACCESS_KEY = String(options.s3SecretAccessKey || "").trim();
+    rootEnvUpdates.S3_FORCE_PATH_STYLE = parseBoolean(options.s3ForcePathStyle, true) ? "true" : "false";
+    rootEnvUpdates.CHAPTER_CDN_BASE_URL = String(options.chapterCdnBaseUrl || "").trim();
+    rootEnvUpdates.S3_CHAPTER_PREFIX = String(options.s3ChapterPrefix || "chapters").trim() || "chapters";
+  }
+
+  if (options.setupGoogleNow) {
+    rootEnvUpdates.GOOGLE_CLIENT_ID = String(options.googleClientId || "").trim();
+    rootEnvUpdates.GOOGLE_CLIENT_SECRET = String(options.googleClientSecret || "").trim();
+  }
+
+  if (options.setupDiscordNow) {
+    rootEnvUpdates.DISCORD_CLIENT_ID = String(options.discordClientId || "").trim();
+    rootEnvUpdates.DISCORD_CLIENT_SECRET = String(options.discordClientSecret || "").trim();
+  }
+
   const rootEnvNext = upsertEnvValues(rootEnvOriginal, rootEnvUpdates);
   writeTextFile(rootEnvPath, rootEnvNext);
+  const rootEnvFinalMap = readEnvMap(rootEnvNext);
 
   if (options.withApi) {
     const apiEnvOriginal = readTextFile(apiEnvPath);
@@ -507,7 +893,7 @@ const main = () => {
       "S3_FORCE_PATH_STYLE",
       "S3_CHAPTER_PREFIX"
     ].forEach((key) => {
-      const value = String(rootEnvMap[key] || "").trim();
+      const value = String(rootEnvFinalMap[key] || "").trim();
       if (!value) return;
       apiEnvUpdates[key] = value;
     });
@@ -523,65 +909,50 @@ const main = () => {
   console.log(`- API enabled: ${options.withApi ? "yes" : "no"}`);
   console.log(`- Forum enabled: ${options.withForum ? "yes" : "no"}`);
   console.log(`- Desktop deps install: ${options.withDesktop ? "yes" : "no"}`);
+  console.log(`- Setup S3 now: ${options.setupS3Now ? "yes" : "no"}`);
+  console.log(`- Setup Google OAuth now: ${options.setupGoogleNow ? "yes" : "no"}`);
+  console.log(`- Setup Discord OAuth now: ${options.setupDiscordNow ? "yes" : "no"}`);
+  console.log(`- Interactive mode: ${options.nonInteractive ? "off" : "on"}`);
 
-  runCommand({
+  runNpmCommand({
     title: "Install root dependencies",
-    command: npmCommand,
     args: ["install"]
   });
 
   if (options.withApi) {
-    runCommand({
+    runNpmCommand({
       title: "Install api_server dependencies",
-      command: npmCommand,
       args: ["--prefix", "api_server", "install"]
     });
   }
 
   if (options.withForum) {
-    runCommand({
+    runNpmCommand({
       title: "Install sampleforum dependencies",
-      command: npmCommand,
       args: ["--prefix", "sampleforum", "install"]
     });
   }
 
   if (options.withDesktop) {
-    runCommand({
+    runNpmCommand({
       title: "Install app_desktop dependencies",
-      command: npmCommand,
       args: ["--prefix", "app_desktop", "install"]
     });
   }
 
-  if (!options.skipDbCreate) {
-    createDatabaseAndRole(options);
-  } else {
-    console.log("\n==> Skip database create step (--skip-db-create)");
-  }
-
-  const postgresServerMajor = ensurePostgresServerVersion({
-    databaseUrl,
-    minMajor: MIN_POSTGRES_MAJOR
-  });
-  console.log(`\n==> PostgreSQL server version check passed (major ${postgresServerMajor})`);
-
-  runCommand({
+  runNpmCommand({
     title: "Bootstrap database schema",
-    command: npmCommand,
     args: ["run", "db:bootstrap"]
   });
 
-  runCommand({
+  runNpmCommand({
     title: "Build web styles",
-    command: npmCommand,
     args: ["run", "styles:build"]
   });
 
   if (options.withForum) {
-    runCommand({
+    runNpmCommand({
       title: "Build sampleforum frontend",
-      command: npmCommand,
       args: ["--prefix", "sampleforum", "run", "build"]
     });
   }
@@ -591,6 +962,15 @@ const main = () => {
   if (options.withApi) {
     console.log(`- API env: ${path.relative(projectRoot, apiEnvPath)}`);
   }
+  if (!options.setupS3Now) {
+    console.log("- S3 setup skipped: hãy cấu hình S3_* và CHAPTER_CDN_BASE_URL trong .env khi cần.");
+  }
+  if (!options.setupGoogleNow) {
+    console.log("- Google OAuth skipped: hãy cập nhật GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET trong .env khi cần.");
+  }
+  if (!options.setupDiscordNow) {
+    console.log("- Discord OAuth skipped: hãy cập nhật DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET trong .env khi cần.");
+  }
   console.log("\nRun services:");
   console.log(`- Web: ${npmCommand} run dev`);
   if (options.withApi) {
@@ -598,18 +978,15 @@ const main = () => {
   }
 
   if (options.startWeb) {
-    runCommand({
+    runNpmCommand({
       title: "Start web server",
-      command: npmCommand,
       args: ["run", "dev"]
     });
   }
 };
 
-try {
-  main();
-} catch (error) {
+main().catch((error) => {
   console.error("\nSetup failed.");
   console.error(error && error.message ? error.message : error);
   process.exit(1);
-}
+});
