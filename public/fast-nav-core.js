@@ -55,7 +55,7 @@
 
     const isFreshNavigationPath = (pathname) => {
       const safePathname = (pathname || "/").toString();
-      return /^\/(?:$|manga\/?$|manga\/[^/?#]+\/?$|user\/[^/?#]+\/?$)/i.test(safePathname);
+      return /^\/(?:user\/[^/?#]+\/?$|account\/history\/?$|account\/saved\/?$)/i.test(safePathname);
     };
 
     const isFastNavigableUrl = (url) => {
@@ -188,6 +188,9 @@
       if (!isFastNavigableUrl(targetUrl)) return;
       if (toCacheKey(targetUrl) === toCacheKey(window.location.href)) return;
       if (readCachedPayload(targetUrl)) return;
+
+       void ensurePageStyles(targetUrl.pathname);
+       void ensurePageScripts(targetUrl.pathname);
 
       const payload = await fetchPagePayload(targetUrl, { noStore: false, reuseInFlight: true });
       if (payload) {

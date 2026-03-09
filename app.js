@@ -2943,6 +2943,7 @@ const buildContentSecurityPolicy = (nonce) => {
   const scriptSrc = uniqueList([
     "'self'",
     nonceToken,
+    "'inline-speculation-rules'",
     "https://cdn.jsdelivr.net",
     "https://cdn.ampproject.org",
     turnstileOrigin

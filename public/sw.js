@@ -11,7 +11,7 @@ const PREFETCH_PAGE_TTL_MS = 10 * 60 * 1000;
 const CACHEABLE_DESTINATIONS = new Set(["script", "style", "font", "image"]);
 const STATIC_ASSET_PATH_PATTERN = /\.(?:avif|css|eot|gif|ico|jpe?g|js|json|mjs|png|svg|ttf|webp|woff2?)$/i;
 const SCRIPT_PATH_PATTERN = /\.(?:js|mjs)$/i;
-const MANGA_DETAIL_PATH_PATTERN = /^\/manga\/[^/?#]+\/?$/i;
+const FAST_HTML_PATH_PATTERN = /^\/(?:$|manga\/?$|manga\/[^/?#]+\/?$)/i;
 
 const DYNAMIC_PATH_PREFIXES = [
   "/admin",
@@ -27,7 +27,7 @@ const shouldBypassPath = (pathname) =>
   DYNAMIC_PATH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 
 const isServiceWorkerScript = (pathname) => pathname === "/sw.js" || pathname === "/sw-register.js";
-const isMangaDetailPath = (pathname) => MANGA_DETAIL_PATH_PATTERN.test(pathname || "");
+const isFastHtmlPath = (pathname) => FAST_HTML_PATH_PATTERN.test(pathname || "");
 
 const prefetchInFlight = new Set();
 
@@ -158,7 +158,7 @@ const prefetchPageNavigation = async (urlText) => {
   }
 
   if (targetUrl.origin !== self.location.origin) return;
-  if (!isMangaDetailPath(targetUrl.pathname || "/")) return;
+  if (!isFastHtmlPath(targetUrl.pathname || "/")) return;
   if (isServiceWorkerScript(targetUrl.pathname || "/") || shouldBypassPath(targetUrl.pathname || "/")) return;
 
   const cacheKey = targetUrl.toString();
@@ -391,7 +391,7 @@ const handleFetch = async (event, url) => {
   }
 
   if (request.mode === "navigate") {
-    if (!isMangaDetailPath(pathname)) {
+    if (!isFastHtmlPath(pathname)) {
       const preloadResponse = await getNavigationPreloadResponse(event);
       if (preloadResponse) return preloadResponse;
       return fetch(request);
@@ -400,7 +400,7 @@ const handleFetch = async (event, url) => {
     return handleCachedHtmlRequest(event, url);
   }
 
-  if (isFastNavHtmlRequest(request) && isMangaDetailPath(pathname)) {
+  if (isFastNavHtmlRequest(request) && isFastHtmlPath(pathname)) {
     return handleCachedHtmlRequest(event, url);
   }
 
@@ -496,7 +496,7 @@ const invalidatePageCacheUrls = async (rawUrls) => {
     parsed.searchParams.delete("__bfv");
     targets.add(parsed.toString());
 
-    if (isMangaDetailPath(parsed.pathname || "/")) {
+    if (isFastHtmlPath(parsed.pathname || "/")) {
       const base = new URL(parsed.toString());
       base.search = "";
       targets.add(base.toString());
