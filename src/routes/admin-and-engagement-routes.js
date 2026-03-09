@@ -1486,14 +1486,14 @@ app.get(
       mangaRow.id
     ]);
     const chapterCount = chapterCountRow ? Number(chapterCountRow.count) || 0 : 0;
-    const hasExistingChapters = chapterCount > 0;
-    const canEnableOneshotByChapterCount = isOneshot || !hasExistingChapters;
-    const canToggleOneshot = !(oneshotLocked && !isOneshot) && canEnableOneshotByChapterCount;
+    const hasMultipleChapters = chapterCount > 1;
+    const hideOneshotToggle = !isOneshot && hasMultipleChapters;
+    const canToggleOneshot = isOneshot || (!(oneshotLocked && !isOneshot) && !hasMultipleChapters);
     let oneshotToggleDisabledReason = "";
     if (oneshotLocked && !isOneshot) {
       oneshotToggleDisabledReason = "Truyện này đã tắt Oneshot trước đó nên không thể bật lại.";
-    } else if (!isOneshot && hasExistingChapters) {
-      oneshotToggleDisabledReason = "Chỉ có thể bật Oneshot khi truyện chưa có chương nào.";
+    } else if (!hideOneshotToggle && hasMultipleChapters) {
+      oneshotToggleDisabledReason = "Chỉ có thể bật Oneshot khi truyện có tối đa 1 chương.";
     }
 
     if (isOneshot && oneshotGenreId && !selectedGenreIds.includes(oneshotGenreId)) {
@@ -1535,6 +1535,7 @@ app.get(
         isOneshot,
         oneshotLocked,
         chapterCount,
+        hideOneshotToggle,
         canToggleOneshot,
         oneshotToggleDisabledReason
       }
@@ -1601,13 +1602,14 @@ app.post(
       return res.status(400).send("Truyện đã tắt Oneshot trước đó và không thể bật lại.");
     }
 
+    if (requestOneshot && !currentIsOneshot && chapterCount > 1) {
+      return res.status(400).send("Chỉ có thể bật Oneshot khi truyện có tối đa 1 chương.");
+    }
+
     let nextIsOneshot = currentIsOneshot;
     let nextOneshotLocked = currentOneshotLocked;
 
     if (requestOneshot && !currentIsOneshot) {
-      if (chapterCount > 0) {
-        return res.status(400).send("Chỉ có thể bật Oneshot khi truyện chưa có chương nào.");
-      }
       nextIsOneshot = true;
     }
 
@@ -1705,6 +1707,10 @@ app.post(
       } else {
         await dbRun("UPDATE chapters SET is_oneshot = false WHERE manga_id = ?", [mangaRow.id]);
       }
+    }
+
+    if (nextIsOneshot && chapterCount === 1) {
+      await dbRun("UPDATE chapters SET is_oneshot = true WHERE manga_id = ?", [mangaRow.id]);
     }
 
     await dbRun(

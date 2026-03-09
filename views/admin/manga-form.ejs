@@ -58,6 +58,7 @@
                 class="admin-field admin-field--wide admin-team-selector"
                 data-team-group-picker
                 data-team-search-endpoint="/admin/teams/search"
+                data-team-search-iconless="1"
               >
                 <span>Nhóm dịch</span>
                 <input type="hidden" name="group_name" value="<%= initialGroupName %>" data-team-group-value />
@@ -104,27 +105,29 @@
                 />
               </label>
 
-              <div class="admin-field admin-field--wide">
-                <span>Chế độ truyện</span>
-                <label class="admin-checkbox-inline">
-                  <input
-                    type="checkbox"
-                    name="is_oneshot"
-                    value="1"
-                    data-manga-oneshot-toggle
-                    <%= manga.isOneshot ? "checked" : "" %>
-                    <%= manga.canToggleOneshot ? "" : "disabled" %>
-                  />
-                  <span>Đây là truyện Oneshot</span>
-                </label>
-                <% if (manga.canToggleOneshot) { %>
-                  <span class="admin-sub">Khi bật Oneshot, truyện chỉ có 1 chương và dùng chung bình luận giữa trang truyện với trang chương.</span>
-                <% } else if (manga.oneshotToggleDisabledReason) { %>
-                  <span class="admin-sub"><%= manga.oneshotToggleDisabledReason %></span>
-                <% } else { %>
-                  <span class="admin-sub">Chỉ có thể bật Oneshot khi truyện chưa có chương nào.</span>
-                <% } %>
-              </div>
+              <% if (!manga.hideOneshotToggle) { %>
+                <div class="admin-field admin-field--wide">
+                  <span>Chế độ truyện</span>
+                  <label class="admin-checkbox-inline">
+                    <input
+                      type="checkbox"
+                      name="is_oneshot"
+                      value="1"
+                      data-manga-oneshot-toggle
+                      <%= manga.isOneshot ? "checked" : "" %>
+                      <%= manga.canToggleOneshot ? "" : "disabled" %>
+                    />
+                    <span>Đây là truyện Oneshot</span>
+                  </label>
+                  <% if (manga.canToggleOneshot) { %>
+                    <span class="admin-sub">Chỉ nên bật Oneshot khi truyện chưa có chương nào hoặc có tối đa 1 chương. Khi bật, truyện sẽ chỉ có 1 chương và dùng chung bình luận giữa trang truyện với trang chương.</span>
+                  <% } else if (manga.oneshotToggleDisabledReason) { %>
+                    <span class="admin-sub"><%= manga.oneshotToggleDisabledReason %></span>
+                  <% } else { %>
+                    <span class="admin-sub">Chỉ có thể bật Oneshot khi truyện có tối đa 1 chương.</span>
+                  <% } %>
+                </div>
+              <% } %>
 
               <div class="admin-field admin-field--wide">
                 <span>Thể loại</span>

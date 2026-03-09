@@ -5357,6 +5357,7 @@
 
     const form = picker.closest("form");
     const isReadonlyPicker = !selectedWrap || !searchInput || !resultsWrap;
+    const skipOptionIcons = picker.dataset.teamSearchIconless === "1";
 
     const selectedTeams = [];
     const selectedMap = new Map();
@@ -5491,7 +5492,7 @@
           return (
             `<button class="admin-team-selector__option${picked ? " is-selected" : ""}" type="button" data-team-option-id="${
               item.id
-            }" ${picked ? "disabled" : ""}>` +
+            }"${skipOptionIcons ? ' data-button-icon-skip="1"' : ""} ${picked ? "disabled" : ""}>` +
             `<span class="admin-team-selector__option-name">${escapeHtml(item.name)}</span>` +
             `<span class="admin-team-selector__option-sub">/${escapeHtml(item.slug || "")}</span>` +
             `</button>`
