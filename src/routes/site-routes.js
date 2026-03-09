@@ -56,6 +56,7 @@ const registerSiteRoutes = (app, deps) => {
     getUserBadgeContext,
     hasOwnObjectKey,
     isDuplicateCommentRequestError,
+    isForumPageAvailable,
     isOauthProviderEnabled,
     isServerSessionVersionMismatch,
     isUploadedAvatarUrl,
@@ -123,6 +124,8 @@ const registerSiteRoutes = (app, deps) => {
   const TEAM_BADGE_LEADER_PRIORITY_FALLBACK = 55;
   const TEAM_BADGE_MEMBER_PRIORITY_FALLBACK = 45;
   const HOMEPAGE_CACHE_TTL_MS = 45 * 1000;
+  const HOMEPAGE_FORUM_POST_LIMIT = 5;
+  const HOMEPAGE_FORUM_REQUEST_ID_LIKE = "forum-%";
   const HOMEPAGE_LATEST_LIMIT = 8;
   const HOMEPAGE_RANDOM_SLICE_LIMIT = 16;
   const COMMENT_PANEL_PER_PAGE = 20;
@@ -1143,6 +1146,111 @@ const registerSiteRoutes = (app, deps) => {
       `,
       [safeUserId]
     );
+  };
+
+  const decodeForumHtmlEntities = (value) =>
+    String(value || "")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'");
+
+  const stripForumSpoilerHtml = (value) =>
+    String(value || "").replace(
+      /<span\b[^>]*class\s*=\s*(["'])[^"']*\bspoiler\b[^"']*\1[^>]*>[\s\S]*?<\/span>/gi,
+      " [spoiler] "
+    );
+
+  const forumContentToPlainText = (value) => {
+    const decoded = decodeForumHtmlEntities(value);
+    const withoutHtml = stripForumSpoilerHtml(decoded).replace(/<[^>]+>/g, " ");
+    return decodeForumHtmlEntities(withoutHtml).replace(/\s+/g, " ").trim();
+  };
+
+  const extractForumTopicHeadline = (content, limit = 84) => {
+    const raw = content == null ? "" : String(content);
+    const htmlHeadlineMatch = raw.match(/^\s*<p>\s*<strong[^>]*>([\s\S]*?)<\/strong>\s*<\/p>/i);
+    const source = htmlHeadlineMatch ? htmlHeadlineMatch[1] : raw;
+    const lines = source
+      .split(/\r?\n/)
+      .map((line) => forumContentToPlainText(line))
+      .filter(Boolean);
+    if (!lines.length) return "";
+    const normalized = lines[0]
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/^[-*+]\s+/, "")
+      .trim();
+    if (!normalized) return "";
+    if (normalized.length <= limit) return normalized;
+    return `${normalized.slice(0, Math.max(0, limit - 1)).trim()}...`;
+  };
+
+  const FORUM_HOME_SECTION_LABEL_BY_SLUG = new Map([
+    ["thao-luan-chung", "Thảo luận chung"],
+    ["thong-bao", "Thông báo"],
+    ["huong-dan", "Hướng dẫn"],
+    ["tim-truyen", "Tìm truyện"],
+    ["gop-y", "Góp ý"],
+    ["tam-su", "Tâm sự"],
+    ["chia-se", "Chia sẻ"],
+  ]);
+
+  const extractForumSectionSlug = (content) => {
+    const match = String(content || "").match(/forum-meta:section=([a-z0-9]+(?:-[a-z0-9]+)*)/i);
+    if (!match || !match[1]) return "thao-luan-chung";
+    const normalized = String(match[1]).trim().toLowerCase();
+    if (normalized === "goi-y") return "gop-y";
+    if (normalized === "tin-tuc") return "thong-bao";
+    return normalized;
+  };
+
+  const buildForumSectionLabel = (content) => {
+    const sectionSlug = extractForumSectionSlug(content);
+    return FORUM_HOME_SECTION_LABEL_BY_SLUG.get(sectionSlug) || FORUM_HOME_SECTION_LABEL_BY_SLUG.get("thao-luan-chung") || "Thảo luận chung";
+  };
+
+  const buildAvatarFallback = (value) => {
+    const parts = String(value || "")
+      .replace(/^@+/, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean);
+    if (!parts.length) return "FM";
+    if (parts.length === 1) {
+      return Array.from(parts[0]).slice(0, 2).join("").toUpperCase();
+    }
+    return `${Array.from(parts[0])[0] || ""}${Array.from(parts[parts.length - 1])[0] || ""}`.toUpperCase();
+  };
+
+  const buildForumAuthorDecorationMap = async (rows) => {
+    const map = new Map();
+    if (typeof getUserBadgeContext !== "function") return map;
+
+    const userIds = Array.from(
+      new Set(
+        (Array.isArray(rows) ? rows : [])
+          .map((row) => (row && row.author_user_id ? String(row.author_user_id).trim() : ""))
+          .filter(Boolean)
+      )
+    );
+
+    if (!userIds.length) return map;
+
+    await Promise.all(
+      userIds.map(async (userId) => {
+        try {
+          const context = await getUserBadgeContext(userId);
+          map.set(userId, context && context.userColor ? String(context.userColor).trim() : "");
+        } catch (_error) {
+          map.set(userId, "");
+        }
+      })
+    );
+
+    return map;
   };
 
   const getPendingTeamMembership = async (userId) => {
@@ -6487,9 +6595,85 @@ const resolveHomepagePayload = async () => {
       WHERE COALESCE(m.is_hidden, 0) = 0
     `
     );
+    const latestForumPostRows = isForumPageAvailable
+      ? await dbAll(
+          `
+            SELECT
+              p.id,
+              p.content,
+              p.created_at,
+              COALESCE(reply_stats.latest_activity_at, p.created_at) AS latest_activity_at,
+              p.author,
+              p.author_name,
+              p.author_avatar_url,
+              p.author_user_id,
+              COALESCE(u.username, '') AS user_username,
+              COALESCE(u.display_name, '') AS user_display_name,
+              COALESCE(u.avatar_url, '') AS user_avatar_url,
+              COALESCE(reply_stats.reply_count, 0) AS reply_count
+            FROM forum_posts p
+            LEFT JOIN users u ON u.id = p.author_user_id
+            LEFT JOIN LATERAL (
+              WITH RECURSIVE subtree AS (
+                SELECT child.id, child.created_at
+                FROM forum_posts child
+                WHERE child.status = 'visible'
+                  AND COALESCE(child.client_request_id, '') ILIKE ?
+                  AND child.parent_id = p.id
+                UNION ALL
+                SELECT child.id, child.created_at
+                FROM forum_posts child
+                JOIN subtree ON child.parent_id = subtree.id
+                WHERE child.status = 'visible'
+                  AND COALESCE(child.client_request_id, '') ILIKE ?
+              )
+              SELECT COUNT(*)::int AS reply_count, MAX(created_at) AS latest_activity_at
+              FROM subtree
+            ) reply_stats ON TRUE
+            WHERE p.status = 'visible'
+              AND p.parent_id IS NULL
+              AND COALESCE(p.client_request_id, '') ILIKE ?
+            ORDER BY COALESCE(reply_stats.latest_activity_at, p.created_at) DESC, p.created_at DESC, p.id DESC
+            LIMIT ?
+          `,
+          [HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_POST_LIMIT]
+        )
+      : [];
 
     const mappedFeatured = featuredRows.map(mapMangaListRow);
     const mappedLatest = latestRows.map(mapMangaListRow);
+    const forumAuthorDecorationMap = await buildForumAuthorDecorationMap(latestForumPostRows);
+    const mappedLatestForumPosts = latestForumPostRows.map((row) => {
+      const postId = Number(row && row.id);
+      const safePostId = Number.isFinite(postId) && postId > 0 ? Math.floor(postId) : 0;
+      const title = extractForumTopicHeadline(row && row.content) || "Bài viết diễn đàn";
+      const authorDisplayName = (row && row.user_display_name ? String(row.user_display_name) : "").trim();
+      const authorUsername = (row && row.user_username ? String(row.user_username) : "").trim().toLowerCase();
+      const fallbackAuthor = (row && (row.author_name || row.author) ? String(row.author_name || row.author) : "").trim();
+      const authorName = authorDisplayName || (authorUsername ? `@${authorUsername}` : fallbackAuthor || "Thành viên");
+      const avatarCandidate = row && (row.user_avatar_url || row.author_avatar_url) ? String(row.user_avatar_url || row.author_avatar_url) : "";
+      const avatarUrl = typeof normalizeAvatarUrl === "function" ? normalizeAvatarUrl(avatarCandidate) : avatarCandidate.trim();
+      const metadataAuthor = authorDisplayName || authorUsername || fallbackAuthor || "Thành viên";
+      const authorUserId = row && row.author_user_id ? String(row.author_user_id).trim() : "";
+      const authorColor = authorUserId && forumAuthorDecorationMap.has(authorUserId)
+        ? forumAuthorDecorationMap.get(authorUserId) || ""
+        : "";
+      const sectionLabel = buildForumSectionLabel(row && row.content);
+
+      return {
+        id: safePostId,
+        title,
+        authorName,
+        metadataAuthor,
+        authorColor,
+        avatarUrl,
+        avatarFallback: buildAvatarFallback(authorDisplayName || authorUsername || fallbackAuthor),
+        sectionLabel,
+        commentCount: Number(row && row.reply_count) || 0,
+        timeAgo: formatTimeAgo(row && row.latest_activity_at || row && row.created_at),
+        href: safePostId > 0 ? `/forum/post/${safePostId}` : "/forum"
+      };
+    });
     const cdnBaseUrl = getB2Config().cdnBaseUrl;
     let randomPageSlices = [];
 
@@ -6545,6 +6729,7 @@ const resolveHomepagePayload = async () => {
       featured: mappedFeatured,
       randomPageSlices,
       latest: mappedLatest,
+      latestForumPosts: mappedLatestForumPosts,
       homepage: {
         notices
       },
@@ -6600,6 +6785,8 @@ app.get(
       featured: homepagePayload.featured,
       randomPageSlices: homepagePayload.randomPageSlices,
       latest: homepagePayload.latest,
+      forumLatestPosts: homepagePayload.latestForumPosts,
+      forumPageEnabled: Boolean(isForumPageAvailable),
       homepage: homepagePayload.homepage,
       stats: homepagePayload.stats,
       seo: buildSeoPayload(req, {

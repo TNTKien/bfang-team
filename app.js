@@ -40,6 +40,7 @@ require("dotenv").config();
 
 const app = express();
 app.locals.coverHelpers = viewCoverHelpers;
+app.locals.isForumPageEnabled = false;
 const PORT = process.env.PORT || 3000;
 const appEnv = (process.env.APP_ENV || process.env.NODE_ENV || "development")
   .toString()
@@ -52,11 +53,16 @@ const siteSeoConfig = siteConfig.seo || {};
 const serverAssetVersion = Date.now();
 const serverSessionVersion = String(serverAssetVersion);
 const cssMinifier = new CleanCSS({ level: 1, inline: false });
+const forumDistIndexPath = path.join(__dirname, "sampleforum", "dist", "index.html");
+const isForumFrontendAvailable = fs.existsSync(forumDistIndexPath);
 
 const isJsMinifyEnabled = parseEnvBoolean(process.env.JS_MINIFY_ENABLED, true);
 const isNewsPageEnabled = parseEnvBoolean(process.env.NEWS_PAGE_ENABLED, true);
 const isForumPageEnabled = parseEnvBoolean(process.env.FORUM_PAGE_ENABLED, false);
+const isForumPageAvailable = isForumPageEnabled && isForumFrontendAvailable;
 const trustProxy = parseEnvBoolean(process.env.TRUST_PROXY, false);
+app.locals.isForumPageEnabled = isForumPageEnabled;
+app.locals.isForumPageAvailable = isForumPageAvailable;
 
 const isTruthyInput = (value) => {
   const raw = (value == null ? "" : String(value)).trim().toLowerCase();
@@ -3595,6 +3601,8 @@ const appContainer = {
   isChapterDraftPageIdValid,
   isChapterDraftTokenValid,
   isPasswordAdminEnabled,
+  isForumPageAvailable,
+  isForumPageEnabled,
   isTruthyInput,
   listQuery,
   loadCoverTempBuffer,
@@ -3628,11 +3636,11 @@ registerSiteRoutes(app, appContainer);
 if (isNewsPageEnabled) {
   registerNewsRoutes(app, appContainer);
 }
-if (isForumPageEnabled) {
+if (isForumPageAvailable) {
   registerForumApiRoutes(app, appContainer);
 
   const forumDistDir = path.join(__dirname, "sampleforum", "dist");
-  const forumIndexPath = path.join(forumDistDir, "index.html");
+  const forumIndexPath = forumDistIndexPath;
   if (fs.existsSync(forumIndexPath)) {
     const forumSiteName =
       (siteBrandingConfig && siteBrandingConfig.siteName ? String(siteBrandingConfig.siteName).trim() : "") ||
@@ -3794,6 +3802,8 @@ if (isForumPageEnabled) {
   } else {
     console.warn("Forum page enabled nhưng chưa có build frontend tại sampleforum/dist.");
   }
+} else if (isForumPageEnabled && !isForumFrontendAvailable) {
+  console.warn("Forum page enabled nhưng chưa có build frontend tại sampleforum/dist.");
 }
 registerAdminAndEngagementRoutes(app, appContainer);
 registerEngagementRoutes(app, appContainer);

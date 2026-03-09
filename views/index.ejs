@@ -15,6 +15,8 @@
     : { src: "", srcset: "" };
   const firstFeaturedCover = firstFeaturedCoverSources.src;
   const homepageHeadPreloadImages = firstFeaturedCover ? [firstFeaturedCover] : [];
+  const latestForumPosts = Array.isArray(forumLatestPosts) ? forumLatestPosts : [];
+  const isForumHomepageEnabled = Boolean(forumPageEnabled);
   const homepageSpeculationTargets = [];
   const homepageSpeculationSeen = new Set();
   const appendHomepageSpeculationTarget = (slug) => {
@@ -182,6 +184,57 @@
           </div>
         </section>
 
+        <% if (isForumHomepageEnabled && latestForumPosts.length > 0) { %>
+          <section class="section container">
+            <div class="section-header">
+              <h2>Diễn đàn</h2>
+              <span class="section-line"></span>
+            </div>
+            <div class="panel forum-latest-panel reveal" style="--delay: 0.18s;">
+              <div class="forum-latest-list" role="list" aria-label="<%= latestForumPosts.length %> bài viết forum mới nhất">
+                <% latestForumPosts.forEach((post) => { %>
+                  <article class="forum-latest-item" role="listitem">
+                    <a class="forum-latest-link" href="<%= post.href %>">
+                      <div class="forum-latest-avatar-wrap">
+                        <% if (post.avatarUrl) { %>
+                          <img
+                            class="forum-latest-avatar"
+                            src="<%= post.avatarUrl %>"
+                            alt="Avatar của <%= post.authorName %>"
+                            loading="lazy"
+                            onerror="this.hidden=true;if(this.nextElementSibling){this.nextElementSibling.hidden=false;}"
+                          />
+                        <% } %>
+                        <span class="forum-latest-avatar forum-latest-avatar--fallback" <%= post.avatarUrl ? "hidden" : "" %> aria-hidden="true"><%= post.avatarFallback %></span>
+                      </div>
+                      <div class="forum-latest-item__body">
+                        <h3 title="<%= post.title %>"><%= post.title %></h3>
+                        <p class="forum-latest-item__meta">
+                          <span
+                            class="forum-latest-item__meta-part forum-latest-item__meta-part--author"
+                            <% if (post.authorColor) { %>style="color: <%= post.authorColor %>;"<% } %>
+                          ><%= post.metadataAuthor %></span>
+                          <span class="forum-latest-item__meta-part"><%= post.timeAgo %></span>
+                          <span class="forum-latest-item__meta-part"><%= post.commentCount %> bình luận</span>
+                        </p>
+                      </div>
+                      <span class="forum-latest-item__category"><%= post.sectionLabel %></span>
+                    </a>
+                  </article>
+                <% }) %>
+              </div>
+              <div class="forum-latest-footer">
+                <a class="forum-latest-footer__link" href="/forum" aria-label="Vào forum" title="Vào forum">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M3 12h16"></path>
+                    <path d="m13 5 8 7-8 7"></path>
+                  </svg>
+                </a>
+              </div>
+            </div>
+          </section>
+        <% } %>
+
         <section id="featured" class="section container">
           <div class="section-header">
             <h2>Tựa nổi bật</h2>
@@ -261,13 +314,13 @@
         <% if (randomSliceBlocks.length > 0) { %>
           <section class="section container">
             <div class="section-header section-header--panel-strip">
-              <h2>Chương truyện ngẫu nhiên</h2>
+                <h2>Chương ngẫu nhiên</h2>
               <span class="section-line"></span>
             </div>
             <div class="panel panel-strip-panel reveal" style="--delay: 0.24s;">
-              <div class="koma-stream-ranking-list" role="list" aria-label="Trang truyện ngẫu nhiên">
+              <div class="koma-stream-ranking-list" role="list" aria-label="Chương ngẫu nhiên">
                 <% randomSliceBlocks.forEach((block, blockIndex) => { %>
-                  <ul class="koma-stream-ranking-list-block <%= block.className %>" role="listitem" aria-label="Cụm lát cắt truyện">
+                  <ul class="koma-stream-ranking-list-block <%= block.className %>" role="listitem" aria-label="Cụm chương ngẫu nhiên">
                     <% block.items.forEach((slice) => { %>
                       <li>
                         <a
