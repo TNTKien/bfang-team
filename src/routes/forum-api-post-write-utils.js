@@ -118,7 +118,7 @@ const createForumApiPostWriteUtils = ({
 
     return dbGet(
       `
-        SELECT id, forum_post_locked
+        SELECT id, forum_post_locked, author_user_id
         FROM comments
         WHERE id = ?
           AND parent_id IS NULL
@@ -136,7 +136,7 @@ const createForumApiPostWriteUtils = ({
 
     return dbGet(
       `
-        SELECT id, parent_id
+        SELECT id, parent_id, author_user_id
         FROM comments
         WHERE id = ?
           AND status = 'visible'

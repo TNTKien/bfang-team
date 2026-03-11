@@ -69,6 +69,8 @@ import {
   Megaphone,
   Trash2,
   Edit3,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 
 const basicCategories = [
@@ -84,6 +86,8 @@ const basicCategories = [
 const FORUM_META_COMMENT_PATTERN = /<!--\s*forum-meta:([^>]*?)\s*-->/gi;
 const FORUM_USERNAME_PATTERN = /^[a-z0-9_]{1,24}$/;
 const ROOT_COMMENTS_PAGE_SIZE = 10;
+const FORUM_COMMENT_TARGET_HIGHLIGHT_TIMEOUT_MS = 6200;
+const COMMENT_TARGET_REVEAL_EVENT = "bfang:reveal-comment-target";
 
 const normalizeForumSectionSlug = (value: string): string => {
   const slug = String(value || "")
@@ -276,10 +280,20 @@ const getCommentSortValue = (comment: UiComment): number => {
   return 0;
 };
 
+const hasCommentInDetail = (payload: ForumPostDetailResponse | null | undefined, commentId: string): boolean => {
+  const safeCommentId = String(commentId || "").trim();
+  if (!safeCommentId || !payload || !Array.isArray(payload.comments)) {
+    return false;
+  }
+
+  return payload.comments.some((item) => String(item && item.id ? item.id : "").trim() === safeCommentId);
+};
+
 const buildCommentTree = (params: {
   comments: UiComment[];
   sortMode: "best" | "new" | "old";
   rootPostId: string;
+  pinnedRootIdSet?: Set<string>;
   pinnedReplyIdSet?: Set<string>;
 }): UiComment[] => {
   const items = Array.isArray(params.comments)
@@ -350,7 +364,20 @@ const buildCommentTree = (params: {
     });
   };
 
-  rootComments.sort(sortRootComments);
+  const pinnedRootSet = params.pinnedRootIdSet instanceof Set ? params.pinnedRootIdSet : new Set<string>();
+  const pendingRoots = rootComments
+    .filter((item) => item && item.isPending)
+    .sort((a, b) => getCommentSortValue(b) - getCommentSortValue(a));
+
+  const pinnedRoots = rootComments
+    .filter((item) => !item.isPending && pinnedRootSet.has(String(item.id)))
+    .sort((a, b) => getCommentSortValue(b) - getCommentSortValue(a));
+
+  const persistedRoots = rootComments
+    .filter((item) => !item.isPending && !pinnedRootSet.has(String(item.id)))
+    .sort(sortRootComments);
+
+  rootComments.splice(0, rootComments.length, ...pendingRoots, ...pinnedRoots, ...persistedRoots);
   rootComments.forEach((item) => {
     if (item.replies.length) {
       sortReplies(item.replies);
@@ -376,12 +403,16 @@ const PostDetail = () => {
   const [visibleRootCommentCount, setVisibleRootCommentCount] = useState(ROOT_COMMENTS_PAGE_SIZE);
   const [submitting, setSubmitting] = useState(false);
   const [optimisticComments, setOptimisticComments] = useState<UiComment[]>([]);
+  const [tempPinnedRootCommentIds, setTempPinnedRootCommentIds] = useState<Set<string>>(new Set());
   const [tempPinnedReplyIds, setTempPinnedReplyIds] = useState<Set<string>>(new Set());
   const [forceExpandedReplyParentIds, setForceExpandedReplyParentIds] = useState<Set<string>>(new Set());
   const [forceVisibleReplyCountByParentId, setForceVisibleReplyCountByParentId] = useState<Record<string, number>>({});
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [reportedIds, setReportedIds] = useState<Set<string>>(new Set());
   const [pendingActionIds, setPendingActionIds] = useState<Set<string>>(new Set());
+  const [deletingCommentIds, setDeletingCommentIds] = useState<Set<string>>(new Set());
+  const [highlightedCommentId, setHighlightedCommentId] = useState("");
+  const [manualRevealToken, setManualRevealToken] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState<{
     action: "delete" | "report";
     targetId: string;
@@ -390,6 +421,7 @@ const PostDetail = () => {
     confirmText: string;
   } | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editDialogExpanded, setEditDialogExpanded] = useState(false);
   const [editDialogTitle, setEditDialogTitle] = useState("Chỉnh sửa bình luận");
   const [editDialogTargetId, setEditDialogTargetId] = useState("");
   const [editDialogPostTitle, setEditDialogPostTitle] = useState("");
@@ -404,6 +436,22 @@ const PostDetail = () => {
   } | null>(null);
   const optimisticCommentRef = useRef<string>("");
   const hashScrollDoneRef = useRef<string>("");
+  const hashTargetRefreshAttemptRef = useRef<string>("");
+  const consumedManualRevealTokenRef = useRef(0);
+  const commentHighlightTimerRef = useRef<number | null>(null);
+  const activateCommentHashHighlight = useCallback((commentId: string) => {
+    const safeCommentId = String(commentId || "").trim();
+    if (!safeCommentId) return;
+
+    setHighlightedCommentId(safeCommentId);
+    if (commentHighlightTimerRef.current != null) {
+      window.clearTimeout(commentHighlightTimerRef.current);
+    }
+    commentHighlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedCommentId((current) => (current === safeCommentId ? "" : current));
+      commentHighlightTimerRef.current = null;
+    }, FORUM_COMMENT_TARGET_HIGHLIGHT_TIMEOUT_MS);
+  }, []);
   const forumBackPath = useMemo(() => {
     const source = new URLSearchParams(location.search || "");
     const next = new URLSearchParams();
@@ -456,11 +504,19 @@ const PostDetail = () => {
     let cancelled = false;
     const postId = String(id || "").trim();
     setOptimisticComments([]);
+    setTempPinnedRootCommentIds(new Set());
     setTempPinnedReplyIds(new Set());
     setForceExpandedReplyParentIds(new Set());
     setForceVisibleReplyCountByParentId({});
+    setDeletingCommentIds(new Set());
+    setHighlightedCommentId("");
+    if (commentHighlightTimerRef.current != null) {
+      window.clearTimeout(commentHighlightTimerRef.current);
+      commentHighlightTimerRef.current = null;
+    }
     optimisticCommentRef.current = "";
     hashScrollDoneRef.current = "";
+    hashTargetRefreshAttemptRef.current = "";
 
     const load = async () => {
       if (!postId) {
@@ -494,6 +550,35 @@ const PostDetail = () => {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    return () => {
+      if (commentHighlightTimerRef.current != null) {
+        window.clearTimeout(commentHighlightTimerRef.current);
+        commentHighlightTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleManualCommentReveal = (event: Event) => {
+      const customEvent = event as CustomEvent<{ hash?: string }>;
+      const requestedHash = decodeURIComponent(String(customEvent?.detail?.hash || "")).trim();
+      if (!/^#comment-[a-z0-9_-]+$/i.test(requestedHash)) return;
+
+      const currentHash = decodeURIComponent(String(window.location.hash || "")).trim();
+      if (requestedHash !== currentHash) {
+        window.location.hash = requestedHash;
+      }
+
+      setManualRevealToken((value) => value + 1);
+    };
+
+    window.addEventListener(COMMENT_TARGET_REVEAL_EVENT, handleManualCommentReveal as EventListener);
+    return () => {
+      window.removeEventListener(COMMENT_TARGET_REVEAL_EVENT, handleManualCommentReveal as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -717,9 +802,10 @@ const PostDetail = () => {
       comments: Array.from(mergedById.values()),
       sortMode: sortComments,
       rootPostId: String(detail?.post?.id || "").trim(),
+      pinnedRootIdSet: tempPinnedRootCommentIds,
       pinnedReplyIdSet: tempPinnedReplyIds,
     });
-  }, [detail, optimisticComments, sortComments, tempPinnedReplyIds]);
+  }, [detail, optimisticComments, sortComments, tempPinnedRootCommentIds, tempPinnedReplyIds]);
 
   useEffect(() => {
     setVisibleRootCommentCount(ROOT_COMMENTS_PAGE_SIZE);
@@ -731,10 +817,11 @@ const PostDetail = () => {
   );
 
   const hashTargetCommentId = useMemo(() => {
-    const rawHash = decodeURIComponent(String(location.hash || "")).trim();
+    const currentHash = typeof window !== "undefined" ? window.location.hash : "";
+    const rawHash = decodeURIComponent(String(currentHash || location.hash || "")).trim();
     const match = rawHash.match(/^#comment-([A-Za-z0-9_-]+)$/);
     return match ? String(match[1] || "").trim() : "";
-  }, [location.hash]);
+  }, [location.hash, manualRevealToken]);
 
   const hashTargetMeta = useMemo(() => {
     if (!hashTargetCommentId) return null;
@@ -771,7 +858,38 @@ const PostDetail = () => {
 
   useEffect(() => {
     hashScrollDoneRef.current = "";
-  }, [hashTargetCommentId, detail?.post?.id]);
+  }, [hashTargetCommentId, detail?.post?.id, manualRevealToken]);
+
+  useEffect(() => {
+    const safePostId = String(detail?.post?.id || "").trim();
+    if (!safePostId || !hashTargetCommentId || hashTargetMeta) {
+      return;
+    }
+
+    const refreshKey = `${safePostId}:${hashTargetCommentId}:${manualRevealToken}`;
+    if (hashTargetRefreshAttemptRef.current === refreshKey) {
+      return;
+    }
+    hashTargetRefreshAttemptRef.current = refreshKey;
+
+    let cancelled = false;
+    const refreshMissingTarget = async () => {
+      try {
+        const refreshed = await fetchForumPostDetail(safePostId);
+        if (!cancelled) {
+          setDetail(refreshed);
+        }
+      } catch (_error) {
+        // ignore refresh failures; user can retry by clicking notification again
+      }
+    };
+
+    void refreshMissingTarget();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.post?.id, hashTargetCommentId, hashTargetMeta, manualRevealToken]);
 
   useEffect(() => {
     if (!hashTargetCommentId || !hashTargetMeta) return;
@@ -807,23 +925,58 @@ const PostDetail = () => {
     if (requiresNextRender) return;
 
     const scrollKey = `${String(detail?.post?.id || "")}:${hashTargetCommentId}`;
-    if (hashScrollDoneRef.current === scrollKey) return;
+    const forceScroll = consumedManualRevealTokenRef.current !== manualRevealToken;
+    if (forceScroll) {
+      consumedManualRevealTokenRef.current = manualRevealToken;
+      hashScrollDoneRef.current = "";
+    }
+    let cancelled = false;
+    const retryTimers: number[] = [];
 
-    const target = document.getElementById(`comment-${hashTargetCommentId}`);
-    if (!target) return;
+    const revealTargetComment = () => {
+      const target = document.getElementById(`comment-${hashTargetCommentId}`);
+      if (!target) return false;
 
-    hashScrollDoneRef.current = scrollKey;
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        target.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
+      activateCommentHashHighlight(hashTargetCommentId);
+      if (forceScroll || hashScrollDoneRef.current !== scrollKey) {
+        hashScrollDoneRef.current = scrollKey;
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            if (cancelled) return;
+            target.scrollIntoView({ behavior: "smooth", block: "center" });
+          });
+        });
+      }
+
+      return true;
+    };
+
+    if (revealTargetComment()) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    [180, 420, 860].forEach((delay) => {
+      const timer = window.setTimeout(() => {
+        if (cancelled) return;
+        revealTargetComment();
+      }, delay);
+      retryTimers.push(timer);
     });
+
+    return () => {
+      cancelled = true;
+      retryTimers.forEach((timer) => window.clearTimeout(timer));
+    };
   }, [
     detail?.post?.id,
     forceExpandedReplyParentIds,
     forceVisibleReplyCountByParentId,
     hashTargetCommentId,
     hashTargetMeta,
+    activateCommentHashHighlight,
+    manualRevealToken,
     visibleRootCommentCount,
   ]);
 
@@ -1017,6 +1170,11 @@ const PostDetail = () => {
     if (!safeId || !detail) return;
 
     try {
+      setDeletingCommentIds((prev) => {
+        const next = new Set(prev);
+        next.add(safeId);
+        return next;
+      });
       markActionPending(safeId, true);
       await deleteComment(Number(safeId));
       if (safeId === String(detail.post.id)) {
@@ -1024,10 +1182,19 @@ const PostDetail = () => {
         return;
       }
       await refreshDetail(detail.post.id);
+      toast({
+        title: "Đã xóa bình luận",
+        description: "Bình luận đã được xóa khỏi bài đăng.",
+      });
     } catch (err) {
       setActionNotice(err instanceof Error ? err.message : "Không thể xóa bình luận.");
     } finally {
       markActionPending(safeId, false);
+      setDeletingCommentIds((prev) => {
+        const next = new Set(prev);
+        next.delete(safeId);
+        return next;
+      });
     }
   };
 
@@ -1066,15 +1233,12 @@ const PostDetail = () => {
   const pushOptimisticComment = (comment: UiComment) => {
     setOptimisticComments((prev) => [comment, ...prev.filter((item) => item.id !== comment.id)]);
     optimisticCommentRef.current = comment.id;
-    setSortComments("new");
 
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         const target = document.getElementById(`comment-${comment.id}`);
         if (target) {
           target.scrollIntoView({ behavior: "smooth", block: "center" });
-        } else {
-          handleScrollToComments();
         }
       });
     });
@@ -1277,6 +1441,7 @@ const PostDetail = () => {
       setEditDialogOriginalContent(String(params.initialContent || ""));
       const fallbackCategoryId = availableEditCategories[0]?.id || "thao-luan-chung";
       setEditDialogCategory(normalizedCategorySlug || fallbackCategoryId);
+      setEditDialogExpanded(false);
       setEditDialogOpen(true);
     },
     [availableEditCategories]
@@ -1479,15 +1644,30 @@ const PostDetail = () => {
     try {
       setSubmitting(true);
       pushOptimisticComment(optimisticComment);
-      await submitForumReply({
+      const payload = await submitForumReply({
         postId: detail.post.id,
         content,
         parentId: detail.post.id,
       });
 
+      const persistedRootCommentId = Number(payload && payload.comment && payload.comment.id);
+      const persistedRootCommentKey =
+        Number.isFinite(persistedRootCommentId) && persistedRootCommentId > 0
+          ? String(Math.floor(persistedRootCommentId))
+          : "";
+      if (Number.isFinite(persistedRootCommentId) && persistedRootCommentId > 0) {
+        setTempPinnedRootCommentIds((prev) => {
+          const next = new Set(prev);
+          next.add(String(Math.floor(persistedRootCommentId)));
+          return next;
+        });
+      }
+
       const refreshed = await fetchForumPostDetail(detail.post.id);
       setDetail(refreshed);
-      removeOptimisticComment(optimisticComment.id);
+      if (!persistedRootCommentKey || hasCommentInDetail(refreshed, persistedRootCommentKey)) {
+        removeOptimisticComment(optimisticComment.id);
+      }
     } catch (err) {
       removeOptimisticComment(optimisticComment.id);
       notifyCommentRateLimit(err, "Không thể gửi bình luận.");
@@ -1540,6 +1720,8 @@ const PostDetail = () => {
       });
 
       const persistedReplyId = Number(payload && payload.comment && payload.comment.id);
+      const persistedReplyKey =
+        Number.isFinite(persistedReplyId) && persistedReplyId > 0 ? String(Math.floor(persistedReplyId)) : "";
       if (Number.isFinite(persistedReplyId) && persistedReplyId > 0) {
         setTempPinnedReplyIds((prev) => {
           const next = new Set(prev);
@@ -1550,7 +1732,9 @@ const PostDetail = () => {
 
       const refreshed = await fetchForumPostDetail(detail.post.id);
       setDetail(refreshed);
-      removeOptimisticComment(optimisticComment.id);
+      if (!persistedReplyKey || hasCommentInDetail(refreshed, persistedReplyKey)) {
+        removeOptimisticComment(optimisticComment.id);
+      }
     } catch (err) {
       removeOptimisticComment(optimisticComment.id);
       notifyCommentRateLimit(err, "Không thể gửi phản hồi.");
@@ -1932,8 +2116,10 @@ const PostDetail = () => {
                     likedIds={likedIds}
                     reportedIds={reportedIds}
                     pendingActionIds={pendingActionIds}
+                    deletingCommentIds={deletingCommentIds}
                     mentionRootCommentId={Number(detail?.post.id) || undefined}
                     submitting={submitting}
+                    highlightedCommentId={highlightedCommentId}
                   />
                 ))}
 
@@ -1984,8 +2170,31 @@ const PostDetail = () => {
           </AlertDialogContent>
         </AlertDialog>
 
-        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-card border-border">
+        <Dialog
+          open={editDialogOpen}
+          onOpenChange={(open) => {
+            setEditDialogOpen(open);
+            if (!open) {
+              setEditDialogExpanded(false);
+            }
+          }}
+        >
+          <DialogContent
+            className={`${
+              editDialogExpanded
+                ? "h-[94vh] max-h-[94vh] max-w-[min(96vw,1200px)]"
+                : "max-h-[90vh] max-w-2xl"
+            } overflow-y-auto bg-card border-border`}
+          >
+            <button
+              type="button"
+              onClick={() => setEditDialogExpanded((prev) => !prev)}
+              className="hidden md:inline-flex absolute right-10 top-4 items-center justify-center rounded-sm text-muted-foreground opacity-70 transition-colors transition-opacity hover:opacity-100 hover:text-foreground focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              aria-label={editDialogExpanded ? "Thu nhỏ khung chỉnh sửa" : "Mở rộng khung chỉnh sửa"}
+            >
+              {editDialogExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              <span className="sr-only">{editDialogExpanded ? "Thu nhỏ" : "Mở rộng"}</span>
+            </button>
             <DialogHeader>
               <DialogTitle>{editDialogTitle}</DialogTitle>
               <DialogDescription>
@@ -1997,15 +2206,15 @@ const PostDetail = () => {
 
             {isEditTargetPost ? (
               <>
-                <div className="mt-2">
+                <div className="mt-2 space-y-1.5">
                   <Input
                     placeholder="Tiêu đề bài viết"
                     value={editDialogPostTitle}
                     onChange={(e) => setEditDialogPostTitle(e.target.value)}
-                    className="bg-secondary border-none text-foreground placeholder:text-muted-foreground"
+                    className="h-10 bg-secondary border border-border/70 text-foreground placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-border/70"
                     maxLength={FORUM_POST_TITLE_MAX_LENGTH}
                   />
-                  <p className="text-[11px] text-muted-foreground text-right mt-1">
+                  <p className="text-[11px] text-muted-foreground text-right">
                     {editDialogPostTitle.length}/{FORUM_POST_TITLE_MAX_LENGTH}
                   </p>
                 </div>
@@ -2015,7 +2224,7 @@ const PostDetail = () => {
                   <select
                     value={editDialogCategory}
                     onChange={(e) => setEditDialogCategory(e.target.value)}
-                    className="w-full rounded-lg bg-secondary border-none text-sm text-foreground px-3 py-2 outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full rounded-lg bg-secondary border border-border/70 text-sm text-foreground px-3 py-2.5 outline-none focus:border-border/70 focus:ring-0"
                   >
                     <option value="">Chọn danh mục...</option>
                     {availableEditCategories.map((cat) => (
@@ -2035,7 +2244,22 @@ const PostDetail = () => {
                 onUpdate={setEditDialogContent}
                 placeholder={isEditTargetPost ? "Viết nội dung bài viết..." : "Nhập nội dung..."}
                 compact={false}
-                minHeight={isEditTargetPost ? "140px" : "96px"}
+                minHeight={
+                  isEditTargetPost
+                    ? editDialogExpanded
+                      ? "220px"
+                      : "140px"
+                    : editDialogExpanded
+                      ? "160px"
+                      : "96px"
+                }
+                maxHeight={
+                  editDialogExpanded
+                    ? isEditTargetPost
+                      ? "clamp(280px, 56vh, 620px)"
+                      : "clamp(220px, 52vh, 560px)"
+                    : "320px"
+                }
               />
 
               <p

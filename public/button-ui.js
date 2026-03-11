@@ -121,6 +121,7 @@
       const tabKey = normalizeKey(button.getAttribute("data-team-tab-trigger"));
       if (tabKey === "overview") return "fa-chart-column";
       if (tabKey === "series") return "fa-book-open";
+      if (tabKey === "notifications") return "fa-bell";
       if (tabKey === "members") return "fa-users";
     }
 
@@ -164,6 +165,7 @@
     "go bookmark": "fa-bookmark-slash",
     "tong quan": "fa-chart-column",
     truyen: "fa-book-open",
+    "thong bao": "fa-bell",
     "thanh vien": "fa-users",
     hien: "fa-eye",
     an: "fa-eye-slash",
@@ -198,6 +200,7 @@
     { pattern: /(danh dau da doc|danh dau)/i, icon: "fa-check-double" },
     { pattern: /(tham gia|join)/i, icon: "fa-user-plus" },
     { pattern: /(tong quan|overview)/i, icon: "fa-chart-column" },
+    { pattern: /(thong bao|notification|notifications)/i, icon: "fa-bell" },
     { pattern: /(thanh vien|members)/i, icon: "fa-users" },
     { pattern: /(truyen|series)/i, icon: "fa-book-open" },
     { pattern: /(sua|chinh sua|cap nhat|edit)/i, icon: "fa-pen-to-square" },

@@ -172,15 +172,20 @@ describe("forum backend regression checks", () => {
   it("resolves forum notifications to forum post permalinks", () => {
     const mentionSource = fs.readFileSync(mentionDomainFilePath, "utf8");
     const engagementSource = fs.readFileSync(engagementRouteFilePath, "utf8");
+    const appSource = fs.readFileSync(appFilePath, "utf8");
 
     expect(mentionSource).toContain("const resolveForumCommentPermalinkForNotification = async ({ commentId }) => {");
     expect(mentionSource).toContain("return `/forum/post/${rootId}#comment-${safeCommentId}`;");
     expect(engagementSource).toContain("resolveForumCommentPermalinkForNotification,");
     expect(engagementSource).toContain("comment_row.client_request_id as comment_client_request_id");
     expect(engagementSource).toContain("const isForumCommentNotification = commentRequestId.startsWith(\"forum-\");");
-    expect(engagementSource).toContain(
-      'if (notificationType === "forum_post_comment" || (notificationType === "mention" && isForumCommentNotification)) {'
+    expect(engagementSource).toMatch(
+      /if\s*\(\s*notificationType\s*===\s*"forum_post_comment"\s*\|\|\s*\(\(notificationType\s*===\s*"mention"\s*\|\|\s*notificationType\s*===\s*"comment_reply"\)\s*&&\s*isForumCommentNotification\)\s*\)/m
     );
+
+    const resolverToken = "resolveForumCommentPermalinkForNotification,";
+    const resolverTokenCount = appSource.split(resolverToken).length - 1;
+    expect(resolverTokenCount).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps forum comment lookup independent from manga columns", () => {

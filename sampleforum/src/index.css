@@ -99,6 +99,9 @@
   font-style: normal;
   font-size: 0.875rem;
 }
+.tiptap p.is-empty {
+  min-height: 1.4rem;
+}
 .tiptap h1 { font-size: 1.25rem; font-weight: 700; margin: 0.5rem 0 0.25rem; }
 .tiptap h2 { font-size: 1.1rem; font-weight: 600; margin: 0.4rem 0 0.2rem; }
 .tiptap h3 { font-size: 1rem; font-weight: 600; margin: 0.3rem 0 0.15rem; }
@@ -233,6 +236,40 @@
   100% { transform: scale(1); }
 }
 .animate-reaction-pop { animation: reaction-pop 0.4s ease-out; }
+
+.forum-comment-targeted {
+  scroll-margin-top: 88px;
+}
+
+.forum-comment-bubble-targeted {
+  border: 1px solid hsl(0 0% 92% / 0.58);
+  background: hsl(0 0% 100% / 0.14);
+  box-shadow: 0 0 0 2px hsl(0 0% 100% / 0.18), 0 12px 28px hsl(0 0% 0% / 0.34);
+  animation: forum-comment-target-pulse 1.8s ease-out 2;
+}
+
+.forum-comment-avatar-targeted {
+  box-shadow: 0 0 0 2px hsl(0 0% 100% / 0.22);
+}
+
+.forum-comment-meta-targeted {
+  color: hsl(0 0% 92% / 0.86);
+}
+
+@keyframes forum-comment-target-pulse {
+  0% {
+    box-shadow: 0 0 0 0 hsl(0 0% 100% / 0.45), 0 12px 28px hsl(0 0% 0% / 0.34);
+  }
+
+  60% {
+    box-shadow: 0 0 0 8px hsl(0 0% 100% / 0), 0 12px 28px hsl(0 0% 0% / 0.34);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 hsl(0 0% 100% / 0), 0 12px 28px hsl(0 0% 0% / 0.34);
+  }
+}
+
 .tiptap p { margin: 0.15rem 0; }
 .tiptap code {
   background: hsl(0 0% 16%);

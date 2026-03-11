@@ -6,7 +6,8 @@ import Link from "@tiptap/extension-link";
 import TiptapImage from "@tiptap/extension-image";
 import TextAlign from "@tiptap/extension-text-align";
 import Placeholder from "@tiptap/extension-placeholder";
-import { useCallback, useEffect, useRef, useState, memo } from "react";
+import { NodeSelection } from "@tiptap/pm/state";
+import { useCallback, useEffect, useRef, useState, memo, type ChangeEvent } from "react";
 import {
   Bold, Italic, Underline as UnderlineIcon,
   Heading1, Heading2, Heading3,
@@ -392,6 +393,84 @@ export const RichTextEditor = memo(function RichTextEditor({
 
   const draftStorageKey = draftKey ? `draft_${draftKey}` : "";
 
+  const ensureTrailingParagraph = useCallback((editorInstance: Editor | null) => {
+    if (!editorInstance) return;
+    const editorState = editorInstance.state;
+    const editorDom =
+      editorInstance.view && editorInstance.view.dom && editorInstance.view.dom instanceof HTMLElement
+        ? editorInstance.view.dom
+        : null;
+    const previousScrollTop = editorDom ? editorDom.scrollTop : 0;
+    const previousBottomGap = editorDom
+      ? Math.max(0, editorDom.scrollHeight - editorDom.clientHeight - editorDom.scrollTop)
+      : 0;
+    const doc = editorState.doc;
+    if (!doc.childCount) {
+      return;
+    }
+
+    let trailingEmptyParagraphCount = 0;
+    for (let index = doc.childCount - 1; index >= 0; index -= 1) {
+      const node = doc.child(index);
+      const isEmptyParagraph = node.type.name === "paragraph" && node.content.size === 0;
+      if (!isEmptyParagraph) {
+        break;
+      }
+      trailingEmptyParagraphCount += 1;
+    }
+
+    const trailingStartIndex = doc.childCount - trailingEmptyParagraphCount;
+    const previousNode = trailingStartIndex > 0 ? doc.child(trailingStartIndex - 1) : null;
+    const previousIsImage = Boolean(
+      previousNode &&
+        (previousNode.type.name === "image" ||
+          (previousNode.type.name === "paragraph" &&
+            previousNode.childCount === 1 &&
+            previousNode.firstChild?.type?.name === "image"))
+    );
+
+    if (!previousIsImage || trailingEmptyParagraphCount === 1) {
+      return;
+    }
+
+    const paragraphType = editorState.schema.nodes.paragraph;
+    if (!paragraphType) {
+      return;
+    }
+
+    const paragraphNode = paragraphType.createAndFill();
+    if (!paragraphNode) {
+      return;
+    }
+
+    const getChildOffset = (childIndex: number): number => {
+      let offset = 0;
+      for (let index = 0; index < childIndex; index += 1) {
+        offset += doc.child(index).nodeSize;
+      }
+      return offset;
+    };
+
+    let transaction = editorState.tr;
+    if (trailingEmptyParagraphCount === 0) {
+      transaction = transaction.insert(doc.content.size, paragraphNode);
+    } else {
+      const deleteFrom = getChildOffset(trailingStartIndex);
+      transaction = transaction.delete(deleteFrom, doc.content.size).insert(deleteFrom, paragraphNode);
+    }
+    editorInstance.view.dispatch(transaction);
+
+    if (editorDom) {
+      window.requestAnimationFrame(() => {
+        if (previousBottomGap <= 96) {
+          editorDom.scrollTop = editorDom.scrollHeight;
+          return;
+        }
+        editorDom.scrollTop = previousScrollTop;
+      });
+    }
+  }, []);
+
   const initialContent = draftStorageKey
     ? normalizeDraftHtmlForEditor(readDraftFromStorage(draftStorageKey) || content)
     : normalizeDraftHtmlForEditor(content);
@@ -414,7 +493,17 @@ export const RichTextEditor = memo(function RichTextEditor({
         throw new Error("Ảnh quá lớn sau khi nén. Vui lòng cắt nhỏ ảnh hoặc chọn ảnh khác.");
       }
 
-      editorInstance?.chain().focus().setImage({ src: dataUrl, alt: file.name || "Ảnh bài viết" }).run();
+      if (editorInstance) {
+        const inserted = editorInstance
+          .chain()
+          .focus()
+          .setImage({ src: dataUrl, alt: file.name || "Ảnh bài viết" })
+          .run();
+
+        if (!inserted) {
+          throw new Error("Không thể chèn ảnh vào khung soạn thảo.");
+        }
+      }
       setImageUploadNotice({ type: "success", text: "Đã lưu ảnh tạm trên trình duyệt." });
     } catch (error) {
       setImageUploadNotice({
@@ -481,7 +570,64 @@ export const RichTextEditor = memo(function RichTextEditor({
           : "prose prose-invert prose-sm max-w-none break-words focus:outline-none text-foreground [&_p]:my-0 [&_p]:leading-relaxed",
         style: compact
           ? "min-height: 32px; overflow-wrap: anywhere; word-break: break-word;"
-          : `min-height: ${minHeight};${maxHeight ? ` max-height: ${maxHeight};` : ""} overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; overflow-wrap: anywhere; word-break: break-word;`,
+          : `min-height: ${minHeight};${maxHeight ? ` max-height: ${maxHeight};` : ""} overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; overflow-wrap: anywhere; word-break: break-word; padding-bottom: 5rem;`,
+      },
+      handleKeyDown: (view, event) => {
+        if (event.key !== "Backspace" && event.key !== "Delete") {
+          return false;
+        }
+
+        const { selection, doc } = view.state;
+        if (!selection.empty) {
+          return false;
+        }
+
+        const lastNode = doc.lastChild;
+        if (!lastNode || lastNode.type.name !== "paragraph" || lastNode.content.size !== 0) {
+          return false;
+        }
+
+        const previousNode = doc.childCount > 1 ? doc.child(doc.childCount - 2) : null;
+        const previousIsImage = Boolean(
+          previousNode &&
+            (previousNode.type.name === "image" ||
+              (previousNode.type.name === "paragraph" &&
+                previousNode.childCount === 1 &&
+                previousNode.firstChild?.type?.name === "image"))
+        );
+
+        if (!previousIsImage || selection.$from.parent !== lastNode) {
+          return false;
+        }
+
+        const atParagraphStart = selection.$from.parentOffset === 0;
+        const atParagraphEnd = selection.$from.parentOffset === lastNode.content.size;
+
+        const getChildOffset = (childIndex: number): number => {
+          let offset = 0;
+          for (let index = 0; index < childIndex; index += 1) {
+            offset += doc.child(index).nodeSize;
+          }
+          return offset;
+        };
+
+        if (event.key === "Backspace" && atParagraphStart) {
+          const previousNodeIndex = doc.childCount - 2;
+          if (previousNodeIndex >= 0) {
+            const previousNodeOffset = getChildOffset(previousNodeIndex);
+            const previousNodeSelection = NodeSelection.create(doc, previousNodeOffset);
+            event.preventDefault();
+            view.dispatch(view.state.tr.setSelection(previousNodeSelection).scrollIntoView());
+            return true;
+          }
+        }
+
+        if (event.key === "Delete" && atParagraphEnd) {
+          event.preventDefault();
+          return true;
+        }
+
+        return false;
       },
       handleDrop: (view, event, _slice, moved) => {
         if (!moved && event.dataTransfer?.files?.length) {
@@ -576,6 +722,21 @@ export const RichTextEditor = memo(function RichTextEditor({
 
   useEffect(() => {
     if (!editor) return;
+
+    const handleTransaction = () => {
+      ensureTrailingParagraph(editor);
+    };
+
+    handleTransaction();
+    editor.on("transaction", handleTransaction);
+
+    return () => {
+      editor.off("transaction", handleTransaction);
+    };
+  }, [editor, ensureTrailingParagraph]);
+
+  useEffect(() => {
+    if (!editor) return;
     onUpdate?.(editor.getHTML());
   }, [editor, onUpdate]);
 
@@ -660,24 +821,22 @@ export const RichTextEditor = memo(function RichTextEditor({
 
   const addImage = useCallback(() => {
     if (isUploadingImage) return;
-    if (!fileInputRef.current) {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*";
-      fileInputRef.current = input;
-    }
-
     const picker = fileInputRef.current;
     if (!picker) return;
-    picker.onchange = () => {
+    picker.click();
+  }, [editor, handleImageFile, isUploadingImage]);
+
+  const handleFileInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const picker = event.currentTarget;
       const file = picker.files?.[0];
       if (file && editor) {
         void handleImageFile(file, editor);
       }
       picker.value = "";
-    };
-    picker.click();
-  }, [editor, handleImageFile, isUploadingImage]);
+    },
+    [editor, handleImageFile]
+  );
 
   const openLinkForm = useCallback(() => {
     if (!editor || !hasTextSelection) {
@@ -978,6 +1137,14 @@ export const RichTextEditor = memo(function RichTextEditor({
       <div className={compact ? "px-2.5 py-1.5" : "min-h-0 flex-1 overflow-hidden p-3"}>
         <EditorContent editor={editor} />
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileInputChange}
+      />
 
       {/* @mention dropdown */}
       {showMentions && filteredUsers.length > 0 && (

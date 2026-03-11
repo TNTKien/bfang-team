@@ -32,6 +32,7 @@ type HeaderNotificationItem = {
 };
 
 const HEADER_POLL_INTERVAL_MS = 60 * 1000;
+const COMMENT_TARGET_REVEAL_EVENT = "bfang:reveal-comment-target";
 
 const toSafeText = (value: unknown) => (value == null ? "" : String(value)).trim();
 
@@ -512,6 +513,26 @@ export function Navbar() {
       await markNotificationRead(item.id).catch(() => null);
     }
     closeNotificationMenus();
+
+    const currentUrl = new URL(window.location.href);
+    const targetUrl = new URL(item.url, currentUrl.origin);
+    const hasCommentHash = /^#comment-[a-z0-9_-]+$/i.test(targetUrl.hash || "");
+    const isSamePage =
+      targetUrl.origin === currentUrl.origin &&
+      targetUrl.pathname === currentUrl.pathname;
+
+    if (isSamePage && hasCommentHash) {
+      window.dispatchEvent(
+        new CustomEvent(COMMENT_TARGET_REVEAL_EVENT, {
+          detail: {
+            hash: targetUrl.hash,
+            source: "forum-navbar-notifications"
+          }
+        })
+      );
+      return;
+    }
+
     window.location.assign(item.url);
   };
 

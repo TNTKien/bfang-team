@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
-  <%- include("partials/head", { title, headExtraStylesheets: ["/team-page.css?v=team-media-v3"] }) %>
+  <%- include("partials/head", { title, headExtraStylesheets: ["/team-page.css?v=team-media-v8"] }) %>
   <body>
     <div class="site">
       <%- include("partials/header") %>
@@ -115,6 +115,9 @@
               <div class="team-tabs__list" role="tablist" aria-label="Nội dung nhóm dịch">
                 <button class="team-tab-trigger" type="button" role="tab" data-team-tab-trigger="overview" aria-selected="false">Tổng quan</button>
                 <button class="team-tab-trigger" type="button" role="tab" data-team-tab-trigger="series" aria-selected="false">Truyện</button>
+                <% if (teamProfile.canViewNotifications) { %>
+                  <button class="team-tab-trigger" type="button" role="tab" data-team-tab-trigger="notifications" aria-selected="false">Thông báo</button>
+                <% } %>
                 <button class="team-tab-trigger" type="button" role="tab" data-team-tab-trigger="members" aria-selected="false">Thành viên</button>
               </div>
             </div>
@@ -327,6 +330,88 @@
                 <% } %>
               </section>
             </section>
+
+            <% if (teamProfile.canViewNotifications) { %>
+              <% const teamNotifications = Array.isArray(teamProfile.notifications) ? teamProfile.notifications : []; %>
+              <% const notificationsPagination = teamProfile.notificationsPagination && typeof teamProfile.notificationsPagination === "object" ? teamProfile.notificationsPagination : { page: 1, totalPages: 1, hasPrev: false, hasNext: false, prevPage: 1, nextPage: 1, visiblePageNumbers: [1], totalItems: 0, perPage: 25 }; %>
+              <% const notificationsPageHref = (targetPage) => {
+                const safeTarget = Number.isFinite(Number(targetPage)) && Number(targetPage) > 0 ? Math.floor(Number(targetPage)) : 1;
+                const params = new URLSearchParams();
+                params.set("tab", "notifications");
+                if (safeTarget > 1) {
+                  params.set("notificationsPage", String(safeTarget));
+                }
+                const query = params.toString();
+                return query
+                  ? `/team/${encodeURIComponent(String(teamProfile.id))}/${encodeURIComponent(teamProfile.slug || "")}?${query}`
+                  : `/team/${encodeURIComponent(String(teamProfile.id))}/${encodeURIComponent(teamProfile.slug || "")}`;
+              }; %>
+              <section class="team-tab-panel" data-team-tab-panel="notifications" hidden>
+                <section class="panel team-card team-series-card">
+                  <div class="team-card__head">
+                    <h3>Thông báo bình luận</h3>
+                  </div>
+
+                  <% if (!teamNotifications.length) { %>
+                    <p class="note publish-request-empty">Chưa có thông báo bình luận từ truyện của nhóm.</p>
+                  <% } else { %>
+                    <div class="team-update-list team-update-list--compact team-notify-list">
+                      <% teamNotifications.forEach((item) => { %>
+                        <a class="team-update-item team-notify-item" href="<%= item.commentUrl || '#' %>">
+                          <span class="team-notify-item__avatar" aria-hidden="true">
+                            <% if (item.actorAvatarUrl) { %>
+                              <img src="<%= item.actorAvatarUrl %>" alt="" loading="lazy" referrerpolicy="no-referrer" />
+                            <% } else { %>
+                              <i class="fa-regular fa-user" aria-hidden="true"></i>
+                            <% } %>
+                          </span>
+                          <span class="team-update-item__main team-notify-item__body">
+                            <span class="team-notify-item__title-row">
+                              <strong><%= item.mangaTitle || 'Truyện' %></strong>
+                              <span class="team-notify-item__time-inline"><%= item.timeAgo || '' %></span>
+                            </span>
+                            <span class="team-notify-item__meta"><%= item.actorName || 'Thành viên' %> đã bình luận · <%= item.chapterLabel || 'Bình luận tại trang truyện' %></span>
+                            <span class="team-notify-item__preview"><%= item.preview || '(Bình luận trống)' %></span>
+                          </span>
+                        </a>
+                      <% }) %>
+                    </div>
+
+                    <nav class="admin-pagination team-notify-pagination" aria-label="Phân trang thông báo nhóm dịch">
+                      <a
+                        class="button button--ghost <%= notificationsPagination.hasPrev ? '' : 'is-disabled' %>"
+                        href="<%= notificationsPagination.hasPrev ? notificationsPageHref(notificationsPagination.prevPage) : '#' %>"
+                        aria-label="Trang thông báo trước"
+                        <%= notificationsPagination.hasPrev ? '' : 'tabindex="-1" aria-disabled="true"' %>
+                      >
+                        Trước
+                      </a>
+
+                      <div class="admin-pagination__numbers">
+                        <% (Array.isArray(notificationsPagination.visiblePageNumbers) ? notificationsPagination.visiblePageNumbers : []).forEach((num) => { %>
+                          <% if (num === '...') { %>
+                            <span class="admin-pagination__dots">...</span>
+                          <% } else if (num === notificationsPagination.page) { %>
+                            <span class="chip"><%= num %></span>
+                          <% } else { %>
+                            <a class="button button--ghost" href="<%= notificationsPageHref(num) %>"><%= num %></a>
+                          <% } %>
+                        <% }) %>
+                      </div>
+
+                      <a
+                        class="button button--ghost <%= notificationsPagination.hasNext ? '' : 'is-disabled' %>"
+                        href="<%= notificationsPagination.hasNext ? notificationsPageHref(notificationsPagination.nextPage) : '#' %>"
+                        aria-label="Trang thông báo sau"
+                        <%= notificationsPagination.hasNext ? '' : 'tabindex="-1" aria-disabled="true"' %>
+                      >
+                        Sau
+                      </a>
+                    </nav>
+                  <% } %>
+                </section>
+              </section>
+            <% } %>
 
             <section class="team-tab-panel" data-team-tab-panel="members" hidden>
               <div class="team-layout <%= teamProfile.canReviewRequests ? 'team-layout--split' : 'team-layout--single' %>">

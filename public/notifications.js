@@ -64,6 +64,7 @@
   const NOTIFY_STALE_STREAM_MS = 75 * 1000;
   const NOTIFY_REALTIME_HEALTH_TICK_MS = 20 * 1000;
   const NOTIFY_FETCH_TIMEOUT_MS = 10000;
+  const COMMENT_TARGET_REVEAL_EVENT = "bfang:reveal-comment-target";
 
   const isDocumentVisible = () =>
     !document.visibilityState || document.visibilityState === "visible";
@@ -351,7 +352,7 @@
       return icon;
     }
 
-    if (type === "forum_post_comment" || type === "mention") {
+    if (type === "forum_post_comment" || type === "comment_reply" || type === "mention") {
       icon.innerHTML =
         "<svg viewBox='0 0 24 24' width='16' height='16' aria-hidden='true'><path d='M21 14.2a3.8 3.8 0 0 1-3.8 3.8H9l-4.5 3v-3.4A3.8 3.8 0 0 1 1 13.8V6.8A3.8 3.8 0 0 1 4.8 3h12.4A3.8 3.8 0 0 1 21 6.8z' stroke='currentColor' stroke-width='1.9' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>";
       return icon;
@@ -650,18 +651,50 @@
     const link = event.target.closest("a[data-notify-id]");
     if (!link) return;
 
+    const href = link.getAttribute("href") || "/";
+    const currentUrl = new URL(window.location.href);
+    const targetUrl = new URL(href, currentUrl.origin);
+    const hasCommentHash = /^#comment-[a-z0-9_-]+$/i.test(targetUrl.hash || "");
+    const isSamePage =
+      targetUrl.origin === currentUrl.origin &&
+      targetUrl.pathname === currentUrl.pathname &&
+      targetUrl.search === currentUrl.search;
+    const isSameHash = targetUrl.hash === currentUrl.hash;
+    const shouldForceReveal = isSamePage && isSameHash && hasCommentHash;
+    const triggerCommentReveal = () => {
+      if (!shouldForceReveal) return;
+      window.dispatchEvent(
+        new CustomEvent(COMMENT_TARGET_REVEAL_EVENT, {
+          detail: {
+            hash: targetUrl.hash,
+            source: "header-notifications"
+          }
+        })
+      );
+    };
+
     const id = Number(link.dataset.notifyId);
     const isRead = link.dataset.notifyRead === "1";
     if (!Number.isFinite(id) || id <= 0 || isRead) {
+      if (shouldForceReveal) {
+        event.preventDefault();
+        setMenuOpen(false);
+        triggerCommentReveal();
+        return;
+      }
       setMenuOpen(false);
       return;
     }
 
     event.preventDefault();
-    const href = link.getAttribute("href") || "/";
     markNotificationRead(id)
       .catch(() => null)
       .finally(() => {
+        if (shouldForceReveal) {
+          setMenuOpen(false);
+          triggerCommentReveal();
+          return;
+        }
         window.location.href = href;
       });
   });

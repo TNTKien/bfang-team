@@ -463,6 +463,7 @@ const registerEngagementRoutes = (app, deps) => {
             : "";
         const preferForumRequestId =
           notificationType === "forum_post_comment" ||
+          notificationType === "comment_reply" ||
           (notificationType === "mention" && row && row.manga_id == null && row.chapter_number == null);
 
         if (preferForumRequestId) {
@@ -476,11 +477,18 @@ const registerEngagementRoutes = (app, deps) => {
         const commentRequestId = resolveNotificationCommentRequestId(row, notificationType);
         const isForumCommentNotification = commentRequestId.startsWith("forum-");
 
-        if (notificationType !== "mention" && notificationType !== "forum_post_comment") {
+        if (
+          notificationType !== "mention" &&
+          notificationType !== "forum_post_comment" &&
+          notificationType !== "comment_reply"
+        ) {
           return Promise.resolve("");
         }
 
-        if (notificationType === "forum_post_comment" || (notificationType === "mention" && isForumCommentNotification)) {
+        if (
+          notificationType === "forum_post_comment" ||
+          ((notificationType === "mention" || notificationType === "comment_reply") && isForumCommentNotification)
+        ) {
           const commentId = row && row.comment_id != null ? Number(row.comment_id) : NaN;
           const safeCommentId = Number.isFinite(commentId) && commentId > 0 ? Math.floor(commentId) : 0;
           if (!safeCommentId) {
@@ -527,7 +535,7 @@ const registerEngagementRoutes = (app, deps) => {
           const isForumCommentNotification = commentRequestId.startsWith("forum-");
           const hideContext =
             notificationType === "forum_post_comment" ||
-            (notificationType === "mention" && isForumCommentNotification);
+            ((notificationType === "mention" || notificationType === "comment_reply") && isForumCommentNotification);
 
           return mapNotificationRow(row, {
             url: resolvedUrl,

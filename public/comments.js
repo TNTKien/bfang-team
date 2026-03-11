@@ -3553,7 +3553,7 @@ const isPrimaryUnmodifiedClick = (event) => {
 const COMMENT_TARGET_ACTIVE_CLASS = "is-targeted";
 const COMMENT_TARGET_NOTE_ATTR = "data-comment-target-note";
 const COMMENT_TARGET_NOTE_TIMEOUT_MS = 3200;
-const COMMENT_TARGET_HIGHLIGHT_TIMEOUT_MS = 2400;
+const COMMENT_TARGET_HIGHLIGHT_TIMEOUT_MS = 6200;
 let commentTargetNoteTimer = null;
 let commentTargetHighlightTimer = null;
 
@@ -4221,6 +4221,52 @@ const handleCommentSubmit = async (form) => {
   }
 };
 
+const revealCommentTargetWithLazyHydration = async (options) => {
+  const settings = options && typeof options === "object" ? options : {};
+  const hashValue = settings.hash != null ? String(settings.hash) : window.location.hash;
+  const commentId = extractCommentIdFromHash(hashValue);
+
+  if (!commentId) {
+    return revealCommentTargetFromHash({
+      hash: hashValue,
+      behavior: settings.behavior || "auto",
+      showFallback: settings.showFallback !== false
+    });
+  }
+
+  const lazySection = document.querySelector(`${commentSelectors.section}[data-comment-lazy='1']`);
+  if (lazySection) {
+    lazySection.setAttribute("data-comment-auto-hydrate", "1");
+    await hydrateLazyCommentsSection({ force: true }).catch(() => false);
+  }
+
+  const attemptReveal = (showFallback) =>
+    revealCommentTargetFromHash({
+      hash: hashValue,
+      behavior: settings.behavior || "auto",
+      showFallback
+    });
+
+  if (attemptReveal(false)) {
+    return true;
+  }
+
+  const retryDelays = [180, 420, 860];
+  for (let i = 0; i < retryDelays.length; i += 1) {
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, retryDelays[i]);
+    });
+    if (attemptReveal(false)) {
+      return true;
+    }
+  }
+
+  if (settings.showFallback !== false) {
+    return attemptReveal(true);
+  }
+  return false;
+};
+
 const notifyCommentDataUpdated = (section) => {
   const urls = new Set();
 
@@ -4351,7 +4397,18 @@ window.addEventListener("popstate", () => {
 });
 
 window.addEventListener("hashchange", () => {
-  revealCommentTargetFromHash({ behavior: "smooth", showFallback: true });
+  revealCommentTargetWithLazyHydration({ behavior: "smooth", showFallback: true }).catch(() => null);
+});
+
+window.addEventListener("bfang:reveal-comment-target", (event) => {
+  const detail = event && typeof event === "object" ? event.detail : null;
+  const requestedHash = detail && typeof detail === "object" && detail.hash != null ? String(detail.hash) : "";
+  if (!requestedHash) return;
+  revealCommentTargetWithLazyHydration({
+    hash: requestedHash,
+    behavior: "smooth",
+    showFallback: true
+  }).catch(() => null);
 });
 
 document.addEventListener("click", async (event) => {
@@ -4562,18 +4619,24 @@ window.addEventListener("bfang:me", (event) => {
 });
 
 const refreshCommentsPageUi = () => {
+  const hasCommentHashTarget = extractCommentIdFromHash(window.location.hash) > 0;
   const lazySection = document.querySelector(`${commentSelectors.section}[data-comment-lazy='1']`);
   const canAutoHydrate =
-    !lazySection || lazySection.getAttribute("data-comment-auto-hydrate") === "1";
+    !lazySection ||
+    lazySection.getAttribute("data-comment-auto-hydrate") === "1" ||
+    hasCommentHashTarget;
+  if (lazySection && hasCommentHashTarget) {
+    lazySection.setAttribute("data-comment-auto-hydrate", "1");
+  }
   if (canAutoHydrate) {
-    hydrateLazyCommentsSection().catch(() => null);
+    hydrateLazyCommentsSection({ force: hasCommentHashTarget }).catch(() => null);
   }
   refreshDeleteVisibility().catch(() => null);
   refreshCommentPermissionVisibility().catch(() => null);
   refreshReactionStates().catch(() => null);
   initCommentRichText();
   initCommentCharCounters();
-  revealCommentTargetFromHash({ behavior: "auto", showFallback: true });
+  revealCommentTargetWithLazyHydration({ behavior: "auto", showFallback: true }).catch(() => null);
 };
 
 window.BfangComments = window.BfangComments || {};

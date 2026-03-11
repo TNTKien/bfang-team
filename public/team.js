@@ -21,7 +21,8 @@
   const tabTriggers = tabRoot ? Array.from(tabRoot.querySelectorAll("[data-team-tab-trigger]")) : [];
   const tabPanels = Array.from(page.querySelectorAll("[data-team-tab-panel]"));
 
-  const isValidTab = (value) => value === "overview" || value === "series" || value === "members";
+  const isValidTab = (value) =>
+    value === "overview" || value === "series" || value === "notifications" || value === "members";
 
   const setActiveTab = (nextTab) => {
     const tab = isValidTab(nextTab) ? nextTab : "overview";

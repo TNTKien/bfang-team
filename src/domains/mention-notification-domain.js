@@ -30,6 +30,7 @@ const normalizeRootCommentId = (value) => {
 
 const COMMENT_TABLE_COMMENTS = "comments";
 const COMMENT_TABLE_FORUM = "forum_posts";
+const NOTIFICATION_TYPE_COMMENT_REPLY = "comment_reply";
 const NOTIFICATION_TYPE_BOOKMARK_NEW_CHAPTER =
   (NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER || "manga_bookmark_new_chapter").toString().trim().toLowerCase() ||
   "manga_bookmark_new_chapter";
@@ -621,7 +622,8 @@ const createMentionNotificationsForComment = async ({
   content,
   authorUserId,
   rootCommentId,
-  isForumRequest = false
+  isForumRequest = false,
+  excludeUserIds = []
 }) => {
   const commentValue = Number(commentId);
   if (!Number.isFinite(commentValue) || commentValue <= 0) return 0;
@@ -638,6 +640,18 @@ const createMentionNotificationsForComment = async ({
   });
   if (!targets.length) return 0;
 
+  const excludedUserIdSet = new Set(
+    (Array.isArray(excludeUserIds) ? excludeUserIds : [])
+      .map((value) => (value == null ? "" : String(value)).trim())
+      .filter(Boolean)
+  );
+  const filteredTargets = targets.filter((target) => {
+    const targetUserId = target && target.id ? String(target.id).trim() : "";
+    if (!targetUserId) return false;
+    return !excludedUserIdSet.has(targetUserId);
+  });
+  if (!filteredTargets.length) return 0;
+
   const mangaValue = Number(mangaId);
   const safeMangaId =
     !isForumRequest && Number.isFinite(mangaValue) && mangaValue > 0
@@ -651,7 +665,7 @@ const createMentionNotificationsForComment = async ({
   const createdAt = Date.now();
 
   let createdCount = 0;
-  for (const target of targets) {
+  for (const target of filteredTargets) {
     const targetUserId = target && target.id ? String(target.id).trim() : "";
     if (!targetUserId) continue;
 
@@ -992,6 +1006,28 @@ const mapNotificationRow = (row, options = {}) => {
       message: `${actorName} đã bình luận vào bài viết của bạn.`,
       createdAtText: Number.isFinite(createdAt) ? formatTimeAgo(createdAt) : "",
       url: resolvedUrl || "/forum"
+    };
+  }
+
+  if (type === NOTIFICATION_TYPE_COMMENT_REPLY) {
+    return {
+      id: row.id,
+      type: row.type,
+      isRead: Boolean(row.is_read),
+      actorName,
+      actorAvatarUrl: normalizeAvatarUrl(row && row.actor_avatar_url ? row.actor_avatar_url : ""),
+      mangaTitle,
+      chapterLabel,
+      preview,
+      message: `${actorName} đã trả lời bình luận của bạn.`,
+      createdAtText: Number.isFinite(createdAt) ? formatTimeAgo(createdAt) : "",
+      url:
+        resolvedUrl ||
+        buildCommentPermalink({
+          mangaSlug: row && row.manga_slug ? row.manga_slug : "",
+          chapterNumber: hasChapter ? chapterValue : null,
+          commentId: row && row.comment_id != null ? row.comment_id : null
+        })
     };
   }
 

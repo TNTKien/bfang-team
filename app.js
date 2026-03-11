@@ -3144,6 +3144,7 @@ const {
   publishNotificationStreamUpdate,
   removeNotificationStreamClient,
   resolveCommentPermalinkForNotification,
+  resolveForumCommentPermalinkForNotification,
   scheduleNotificationCleanup,
   writeNotificationStreamEvent,
 } = mentionNotificationDomain;
@@ -3628,6 +3629,7 @@ const appContainer = {
   removeNotificationStreamClient,
   requireAdmin,
   resolveCommentPermalinkForNotification,
+  resolveForumCommentPermalinkForNotification,
   safeCompareText,
   saveCoverBuffer,
   saveCoverTempBuffer,

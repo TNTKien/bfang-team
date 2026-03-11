@@ -18,6 +18,7 @@
       const scriptSrc =
         (commentsRoot.getAttribute("data-comment-script-src") || "").toString().trim() || "/comments.js";
       const isLazyCommentsSection = commentsRoot.getAttribute("data-comment-lazy") === "1";
+      const hasCommentTargetHash = () => /^#comment-\d+$/i.test((window.location.hash || "").toString().trim());
 
       let loaded = false;
       let observer = null;
@@ -26,6 +27,7 @@
         document.removeEventListener("focusin", onIntent, true);
         document.removeEventListener("pointerdown", onIntent, true);
         document.removeEventListener("keydown", onIntent, true);
+        window.removeEventListener("hashchange", onHashIntent);
         if (observer) {
           observer.disconnect();
           observer = null;
@@ -55,9 +57,21 @@
         }
       };
 
+      const onHashIntent = () => {
+        if (hasCommentTargetHash()) {
+          loadCommentsScript();
+        }
+      };
+
       document.addEventListener("focusin", onIntent, true);
       document.addEventListener("pointerdown", onIntent, true);
       document.addEventListener("keydown", onIntent, true);
+      window.addEventListener("hashchange", onHashIntent);
+
+      if (hasCommentTargetHash()) {
+        loadCommentsScript();
+        return;
+      }
 
       if (typeof IntersectionObserver === "function") {
         observer = new IntersectionObserver(

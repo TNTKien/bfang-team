@@ -14961,6 +14961,41 @@ body.admin-page .panel > .note {
   background: rgba(255, 255, 255, 0.07);
 }
 
+#comments .comment-item {
+  scroll-margin-top: 88px;
+}
+
+#comments .comment-item.is-targeted .comment-bubble {
+  border: 1px solid rgba(248, 248, 242, 0.52);
+  background: rgba(248, 248, 242, 0.16);
+  box-shadow: 0 0 0 2px rgba(248, 248, 242, 0.18), 0 12px 28px rgba(0, 0, 0, 0.34);
+  animation: comment-target-pulse 1.8s ease-out 2;
+}
+
+#comments .comment-item.is-targeted .comment-avatar {
+  border-color: rgba(248, 248, 242, 0.6);
+  box-shadow: 0 0 0 2px rgba(248, 248, 242, 0.2);
+}
+
+#comments .comment-item.is-targeted .comment-meta,
+#comments .comment-item.is-targeted .comment-actions {
+  color: rgba(248, 248, 242, 0.82);
+}
+
+@keyframes comment-target-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(248, 248, 242, 0.45), 0 12px 28px rgba(0, 0, 0, 0.34);
+  }
+
+  60% {
+    box-shadow: 0 0 0 8px rgba(248, 248, 242, 0), 0 12px 28px rgba(0, 0, 0, 0.34);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(248, 248, 242, 0), 0 12px 28px rgba(0, 0, 0, 0.34);
+  }
+}
+
 #comments .comment-header {
   display: flex;
   align-items: center;

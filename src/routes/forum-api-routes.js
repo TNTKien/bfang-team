@@ -28,7 +28,9 @@ const registerForumApiRoutes = (app, deps) => {
     b2DeleteAllByPrefix,
     b2DeleteFileVersions,
     b2UploadBuffer,
+    buildCommentNotificationPreview,
     buildCommentMentionsForContent,
+    createMentionNotificationsForComment,
     crypto,
     dbAll: baseDbAll,
     dbGet: baseDbGet,
@@ -40,6 +42,7 @@ const registerForumApiRoutes = (app, deps) => {
     isB2Ready,
     loadSessionUserById,
     normalizeAvatarUrl,
+    publishNotificationStreamUpdate,
     requireAdmin,
     sharp,
     withTransaction: baseWithTransaction,
@@ -53,6 +56,8 @@ const registerForumApiRoutes = (app, deps) => {
   const HOT_RECENT_LIMIT = 5;
   const HOT_COMMENT_ACTIVITY_LIMIT = 10;
   const FORUM_MENTION_MAX_RESULTS = 5;
+  const NOTIFICATION_TYPE_FORUM_POST_COMMENT = "forum_post_comment";
+  const NOTIFICATION_TYPE_COMMENT_REPLY = "comment_reply";
   const ADMIN_DEFAULT_PER_PAGE = 20;
   const ADMIN_MAX_PER_PAGE = 50;
 
@@ -84,6 +89,80 @@ const registerForumApiRoutes = (app, deps) => {
       : null;
 
   const toText = (value) => (value == null ? "" : String(value)).trim();
+
+  const createCommentInteractionNotifications = async ({
+    postId,
+    parentId,
+    parentAuthorUserId,
+    authorUserId,
+    commentId,
+    content,
+  }) => {
+    const safePostId = Number(postId);
+    const safeParentId = Number(parentId);
+    const safeCommentId = Number(commentId);
+    const targetUserId = toText(parentAuthorUserId);
+    const actorUserId = toText(authorUserId);
+
+    if (!Number.isFinite(safePostId) || safePostId <= 0) {
+      return { createdCount: 0, notifiedUserIds: [] };
+    }
+    if (!Number.isFinite(safeParentId) || safeParentId <= 0) {
+      return { createdCount: 0, notifiedUserIds: [] };
+    }
+    if (!Number.isFinite(safeCommentId) || safeCommentId <= 0) {
+      return { createdCount: 0, notifiedUserIds: [] };
+    }
+    if (!targetUserId || !actorUserId || targetUserId === actorUserId) {
+      return { createdCount: 0, notifiedUserIds: [] };
+    }
+
+    const notificationType = Math.floor(safeParentId) === Math.floor(safePostId)
+      ? NOTIFICATION_TYPE_FORUM_POST_COMMENT
+      : NOTIFICATION_TYPE_COMMENT_REPLY;
+    const createdAt = Date.now();
+    const preview =
+      typeof buildCommentNotificationPreview === "function" ? buildCommentNotificationPreview(content) : "";
+
+    const inserted = await dbRun(
+      `
+        INSERT INTO notifications (
+          user_id,
+          type,
+          actor_user_id,
+          manga_id,
+          chapter_number,
+          comment_id,
+          content_preview,
+          is_read,
+          created_at,
+          read_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, false, ?, NULL)
+        ON CONFLICT DO NOTHING
+      `,
+      [
+        targetUserId,
+        notificationType,
+        actorUserId,
+        null,
+        null,
+        Math.floor(safeCommentId),
+        preview,
+        createdAt,
+      ]
+    );
+
+    if (inserted && inserted.changes) {
+      publishNotificationStreamUpdate({ userId: targetUserId, reason: "created" }).catch(() => null);
+      return {
+        createdCount: inserted.changes,
+        notifiedUserIds: [targetUserId]
+      };
+    }
+
+    return { createdCount: 0, notifiedUserIds: [] };
+  };
 
   const toIso = (value) => {
     const raw = toText(value);
@@ -765,6 +844,7 @@ const registerForumApiRoutes = (app, deps) => {
       if (parentId !== postId && parentParentId !== postId) {
         return res.status(400).json({ ok: false, error: "Phản hồi không thuộc chủ đề này." });
       }
+      const parentAuthorUserId = toText(parentRow && parentRow.author_user_id);
 
       const requestId = normalizeForumRequestId(req.body && req.body.requestId);
       const authorIdentity = await loadViewerAuthorIdentity(viewer);
@@ -777,6 +857,39 @@ const registerForumApiRoutes = (app, deps) => {
         createdAt,
         requestId,
       });
+
+      let excludedMentionUserIds = [];
+      try {
+        const interactionNotificationResult = await createCommentInteractionNotifications({
+          postId,
+          parentId,
+          parentAuthorUserId,
+          authorUserId: viewer.userId,
+          commentId: createdCommentId,
+          content,
+        });
+        excludedMentionUserIds =
+          interactionNotificationResult && Array.isArray(interactionNotificationResult.notifiedUserIds)
+            ? interactionNotificationResult.notifiedUserIds
+            : [];
+      } catch (error) {
+        console.warn("Failed to create forum interaction notifications", error);
+      }
+
+      try {
+        await createMentionNotificationsForComment({
+          mangaId: null,
+          chapterNumber: null,
+          commentId: createdCommentId,
+          content,
+          authorUserId: viewer.userId,
+          rootCommentId: postId,
+          isForumRequest: true,
+          excludeUserIds: excludedMentionUserIds
+        });
+      } catch (error) {
+        console.warn("Failed to create forum mention notifications", error);
+      }
 
       return res.json({
         ok: true,

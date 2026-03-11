@@ -30,6 +30,7 @@ interface CommentThreadProps {
   depth?: number;
   canReply?: boolean;
   submitting?: boolean;
+  highlightedCommentId?: string;
   forceExpandedParentIds?: Set<string>;
   forceVisibleReplyCountByParentId?: Record<string, number>;
   onReplySubmit?: (commentId: string, content: string) => void;
@@ -40,6 +41,7 @@ interface CommentThreadProps {
   likedIds?: Set<string>;
   reportedIds?: Set<string>;
   pendingActionIds?: Set<string>;
+  deletingCommentIds?: Set<string>;
   mentionRootCommentId?: number;
 }
 
@@ -57,8 +59,10 @@ const SingleComment = memo(function SingleComment({
   likedIds,
   reportedIds,
   pendingActionIds,
+  deletingCommentIds,
   mentionRootCommentId,
   submitting,
+  isTargeted,
 }: {
   comment: Comment;
   depth: number;
@@ -74,7 +78,9 @@ const SingleComment = memo(function SingleComment({
   likedIds?: Set<string>;
   reportedIds?: Set<string>;
   pendingActionIds?: Set<string>;
+  deletingCommentIds?: Set<string>;
   mentionRootCommentId?: number;
+  isTargeted?: boolean;
 }) {
   const permissions = comment.permissions || {
     canEdit: false,
@@ -86,6 +92,7 @@ const SingleComment = memo(function SingleComment({
   const isLiked = Boolean(likedIds && likedIds.has(comment.id));
   const isReported = Boolean(reportedIds && reportedIds.has(comment.id));
   const isBusy = Boolean(pendingActionIds && pendingActionIds.has(comment.id));
+  const isDeleting = Boolean(deletingCommentIds && deletingCommentIds.has(comment.id));
   const canReplyHere = canReply && permissions.canReply !== false;
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(comment.content || "");
@@ -145,13 +152,15 @@ const SingleComment = memo(function SingleComment({
   };
 
   return (
-    <div className="flex items-start gap-2 py-1.5">
+    <div className={`flex items-start gap-2 py-1.5${isTargeted ? " forum-comment-targeted" : ""}`}>
       {comment.author.profileUrl ? (
         <a href={comment.author.profileUrl} className="shrink-0 mt-0.5">
           <img
             src={comment.author.avatar}
             alt={comment.author.username}
-            className="w-7 h-7 rounded-full bg-accent hover:opacity-80 transition-opacity"
+            className={`w-7 h-7 rounded-full bg-accent hover:opacity-80 transition-opacity${
+              isTargeted ? " forum-comment-avatar-targeted" : ""
+            }`}
             onError={(event) => {
               event.currentTarget.onerror = null;
               event.currentTarget.src = "/logobfang.svg";
@@ -162,7 +171,9 @@ const SingleComment = memo(function SingleComment({
         <img
           src={comment.author.avatar}
           alt={comment.author.username}
-          className="w-7 h-7 rounded-full shrink-0 mt-0.5 bg-accent"
+          className={`w-7 h-7 rounded-full shrink-0 mt-0.5 bg-accent${
+            isTargeted ? " forum-comment-avatar-targeted" : ""
+          }`}
           onError={(event) => {
             event.currentTarget.onerror = null;
             event.currentTarget.src = "/logobfang.svg";
@@ -170,7 +181,7 @@ const SingleComment = memo(function SingleComment({
         />
       )}
       <div className="flex-1 min-w-0">
-        <div className="bg-secondary rounded-xl px-3 py-2">
+        <div className={`bg-secondary rounded-xl px-3 py-2${isTargeted ? " forum-comment-bubble-targeted" : ""}`}>
           <div className="flex items-center gap-1.5">
             {comment.author.profileUrl ? (
               <a
@@ -256,11 +267,16 @@ const SingleComment = memo(function SingleComment({
           )}
         </div>
 
-        <div className="flex items-center gap-2 mt-0.5 px-1">
+        <div className={`flex items-center gap-2 mt-0.5 px-1${isTargeted ? " forum-comment-meta-targeted" : ""}`}>
           {comment.isPending ? (
             <div className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground font-medium">
               <span className="inline-flex h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
               <span>{comment.pendingText || "Đang gửi bình luận..."}</span>
+            </div>
+          ) : isDeleting ? (
+            <div className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground font-medium">
+              <span className="inline-flex h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+              <span>Đang xóa bình luận</span>
             </div>
           ) : (
             <>
@@ -351,6 +367,7 @@ export const CommentThread = memo(function CommentThread({
   comment,
   depth = 0,
   canReply = true,
+  highlightedCommentId,
   forceExpandedParentIds,
   forceVisibleReplyCountByParentId,
   onReplySubmit,
@@ -361,6 +378,7 @@ export const CommentThread = memo(function CommentThread({
   likedIds,
   reportedIds,
   pendingActionIds,
+  deletingCommentIds,
   mentionRootCommentId,
   submitting,
 }: CommentThreadProps) {
@@ -368,6 +386,8 @@ export const CommentThread = memo(function CommentThread({
   const [repliesExpanded, setRepliesExpanded] = useState(false);
   const [visibleReplyCount, setVisibleReplyCount] = useState(REPLY_EXPAND_PAGE_SIZE);
   const maxDepth = 1;
+  const safeHighlightedCommentId = String(highlightedCommentId || "").trim();
+  const isTargeted = safeHighlightedCommentId !== "" && safeHighlightedCommentId === String(comment.id);
   const replies = depth < maxDepth && Array.isArray(comment.replies) ? comment.replies : [];
   const previewReplies = replies.slice(0, REPLY_COLLAPSED_PREVIEW_COUNT);
   const remainingPreviewReplies = Math.max(replies.length - previewReplies.length, 0);
@@ -416,8 +436,10 @@ export const CommentThread = memo(function CommentThread({
         likedIds={likedIds}
         reportedIds={reportedIds}
         pendingActionIds={pendingActionIds}
+        deletingCommentIds={deletingCommentIds}
         mentionRootCommentId={mentionRootCommentId}
         submitting={submitting}
+        isTargeted={isTargeted}
       />
 
       {depth < maxDepth && replies.length > 0 ? (
@@ -439,8 +461,10 @@ export const CommentThread = memo(function CommentThread({
                 likedIds={likedIds}
                 reportedIds={reportedIds}
                 pendingActionIds={pendingActionIds}
+                deletingCommentIds={deletingCommentIds}
                 mentionRootCommentId={mentionRootCommentId}
                 submitting={submitting}
+                highlightedCommentId={highlightedCommentId}
               />
             ))}
 

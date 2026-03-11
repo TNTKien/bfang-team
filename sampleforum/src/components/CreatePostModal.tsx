@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -122,6 +123,7 @@ export function CreatePostModal({
   const [submitError, setSubmitError] = useState("");
   const [imageSyncProgress, setImageSyncProgress] = useState<{ uploaded: number; total: number } | null>(null);
   const [clearDraftOnClose, setClearDraftOnClose] = useState(false);
+  const [dialogExpanded, setDialogExpanded] = useState(false);
   const [pendingImageSync, setPendingImageSync] = useState<{
     postId: number;
     content: string;
@@ -157,6 +159,7 @@ export function CreatePostModal({
   };
 
   const handleClose = () => {
+    setDialogExpanded(false);
     onClose();
     resetForm();
   };
@@ -373,10 +376,27 @@ export function CreatePostModal({
       onOpenChange={(o) => {
         if (!o) {
           handleClose();
+          return;
         }
+        setDialogExpanded(false);
       }}
     >
-      <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden bg-card border-border">
+      <DialogContent
+        className={`flex flex-col overflow-hidden bg-card border-border ${
+          dialogExpanded
+            ? "h-[94vh] max-h-[94vh] max-w-[min(96vw,1200px)]"
+            : "max-h-[90vh] max-w-2xl"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setDialogExpanded((prev) => !prev)}
+          className="hidden md:inline-flex absolute right-10 top-4 items-center justify-center rounded-sm text-muted-foreground opacity-70 transition-colors transition-opacity hover:opacity-100 hover:text-foreground focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+          aria-label={dialogExpanded ? "Thu nhỏ khung tạo bài viết" : "Mở rộng khung tạo bài viết"}
+        >
+          {dialogExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          <span className="sr-only">{dialogExpanded ? "Thu nhỏ" : "Mở rộng"}</span>
+        </button>
         <DialogHeader>
           <DialogTitle className="text-foreground">Tạo bài viết mới</DialogTitle>
         </DialogHeader>
@@ -389,20 +409,18 @@ export function CreatePostModal({
           ) : null}
 
           {/* Title */}
-          <div className="shrink-0">
+          <div className="shrink-0 space-y-1.5">
             <Input
               placeholder="Tiêu đề bài viết"
               value={title}
               onChange={(e) => handleTitleChange(e.target.value)}
-              className="bg-secondary border-none text-foreground placeholder:text-muted-foreground"
+              className="h-10 bg-secondary border border-border/70 text-foreground placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-border/70"
               maxLength={FORUM_POST_TITLE_MAX_LENGTH}
             />
-            <p className="mt-1 text-right text-[11px] text-muted-foreground">
-              {title.length}/{FORUM_POST_TITLE_MAX_LENGTH}
-            </p>
-            {underTitleMin ? (
-              <p className="text-[11px] text-destructive">Tiêu đề cần ít nhất {FORUM_POST_TITLE_MIN_LENGTH} ký tự.</p>
-            ) : null}
+            <div className="flex items-center justify-between gap-3 text-[11px]">
+              <p className="min-h-[14px] text-destructive">{underTitleMin ? `Tiêu đề cần ít nhất ${FORUM_POST_TITLE_MIN_LENGTH} ký tự.` : ""}</p>
+              <p className="shrink-0 text-muted-foreground">{title.length}/{FORUM_POST_TITLE_MAX_LENGTH}</p>
+            </div>
           </div>
 
           {/* Category */}
@@ -411,7 +429,7 @@ export function CreatePostModal({
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full rounded-lg bg-secondary border-none px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-lg bg-secondary border border-border/70 px-3 py-2.5 text-sm text-foreground outline-none focus:border-border/70 focus:ring-0"
             >
               <option value="">Chọn danh mục...</option>
               {availableCategories.map((cat) => (
@@ -421,14 +439,14 @@ export function CreatePostModal({
           </div>
 
           <div className="min-h-0 flex-1 overflow-hidden">
-            <RichTextEditor
-              content={content}
-              onUpdate={setContent}
-              placeholder="Viết nội dung bài viết..."
-              minHeight="140px"
-              maxHeight="320px"
-              draftKey={CREATE_POST_DRAFT_EDITOR_KEY}
-              clearDraftOnUnmount={clearDraftOnClose}
+              <RichTextEditor
+                content={content}
+                onUpdate={setContent}
+                placeholder="Viết nội dung bài viết..."
+                minHeight={dialogExpanded ? "220px" : "140px"}
+                maxHeight={dialogExpanded ? "clamp(280px, 58vh, 640px)" : "320px"}
+                draftKey={CREATE_POST_DRAFT_EDITOR_KEY}
+                clearDraftOnUnmount={clearDraftOnClose}
               footerContent={(
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-4">
                   <p className={overContentLimit ? "text-destructive" : "text-muted-foreground"}>

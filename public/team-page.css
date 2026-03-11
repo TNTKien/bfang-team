@@ -196,7 +196,247 @@
   letter-spacing: 0.04em;
 }
 
+.team-page .team-tabs__list {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0.42rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 0.06rem;
+  scrollbar-width: thin;
+}
+
+.team-page .team-tabs {
+  background: var(--card);
+  background-image: none;
+}
+
+.team-page .team-tab-trigger {
+  flex: 1 1 0;
+  min-width: 170px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--muted);
+  background-image: none;
+}
+
+.team-page .team-tab-trigger:hover,
+.team-page .team-tab-trigger:focus-visible,
+.team-page .team-tab-trigger.is-active,
+.team-page .team-tab-trigger[aria-selected="true"] {
+  background: var(--card);
+  background-image: none;
+}
+
+.team-page .team-notify-list {
+  display: grid;
+  gap: 0.58rem;
+  padding-bottom: 0.18rem;
+  margin-bottom: 0;
+}
+
+.team-page .team-tab-panel[data-team-tab-panel="notifications"] .team-card {
+  background: var(--card);
+  background-image: none;
+}
+
+.team-page .team-tab-panel[data-team-tab-panel="notifications"] .team-series-card {
+  min-height: 0;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+}
+
+.team-page .team-notify-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 0.64rem;
+  padding: 0.68rem 0.76rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.66rem;
+  background: var(--card);
+  background-image: none;
+  min-width: 0;
+}
+
+.team-page .team-notify-item:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: none;
+}
+
+.team-page .team-notify-list .team-notify-item:last-child {
+  padding-bottom: 0.68rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.team-page .team-notify-item__avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.team-page .team-notify-item__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.team-page .team-notify-item__body {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.team-page .team-notify-item__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.team-page .team-notify-item__time-inline {
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.team-page .team-notify-item__meta,
+.team-page .team-notify-item__preview {
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  white-space: normal;
+  min-width: 0;
+}
+
+.team-page .team-notify-item__preview {
+  color: var(--foreground);
+  opacity: 0.92;
+  overflow-wrap: anywhere;
+}
+
+.team-tab-panel .admin-pagination {
+  margin-top: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  flex-wrap: wrap;
+}
+
+.team-tab-panel .admin-pagination > .button {
+  min-height: 32px;
+  padding: 0.36rem 0.72rem;
+  font-size: 0.72rem;
+}
+
+.team-tab-panel .admin-pagination__numbers {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.team-tab-panel .admin-pagination__numbers .button,
+.team-tab-panel .admin-pagination__numbers .chip,
+.team-tab-panel .admin-pagination__dots {
+  min-width: 30px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+}
+
+.team-tab-panel .admin-pagination__dots {
+  color: var(--muted-foreground);
+}
+
+.team-page .team-tab-panel[data-team-tab-panel="notifications"] .admin-pagination {
+  margin-top: 0.5rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  justify-content: center;
+  width: 100%;
+}
+
+.team-page .team-tab-panel[data-team-tab-panel="notifications"] .team-notify-pagination {
+  margin-top: 0.32rem;
+  padding-top: 0.2rem;
+  justify-content: center;
+  gap: 0.22rem;
+}
+
+.team-page .team-tab-panel[data-team-tab-panel="notifications"] .team-notify-pagination .admin-pagination__numbers {
+  justify-content: center;
+}
+
 @media (max-width: 760px) {
+  .team-page .team-tabs__list {
+    gap: 0.24rem;
+    overflow-x: hidden;
+  }
+
+  .team-page .team-tab-trigger {
+    min-width: 0;
+    flex: 1 1 0;
+    font-size: 0.64rem;
+    padding: 0.22rem 0.3rem;
+    letter-spacing: 0.035em;
+  }
+
+  .team-page .team-notify-list {
+    gap: 0.48rem;
+    padding-bottom: 0.12rem;
+  }
+
+  .team-page .team-notify-item {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 0.45rem;
+    padding: 0.54rem 0.56rem;
+    border-radius: 0.58rem;
+  }
+
+  .team-page .team-notify-list .team-notify-item:last-child {
+    padding-bottom: 0.54rem;
+  }
+
+  .team-page .team-notify-item__avatar {
+    width: 28px;
+    height: 28px;
+  }
+
+  .team-page .team-notify-item__title-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.08rem;
+  }
+
+  .team-page .team-notify-item__time-inline {
+    font-size: 0.68rem;
+    white-space: normal;
+    line-height: 1.35;
+  }
+
+  .team-page .team-notify-item__meta,
+  .team-page .team-notify-item__preview {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
   .team-edit-upload-grid {
     align-items: start;
   }
@@ -243,5 +483,47 @@
 
   .team-edit-upload--media .team-edit-upload__actions .button {
     width: 100%;
+  }
+
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] .admin-pagination {
+    margin-top: 0.46rem;
+    padding-top: 0.24rem;
+    gap: 0.15rem;
+    justify-content: center;
+  }
+
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] {
+    overflow-x: hidden;
+  }
+
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] .team-series-card {
+    padding-left: 0.72rem;
+    padding-right: 0.72rem;
+  }
+
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] .team-notify-pagination {
+    margin-top: 0.28rem;
+    padding-top: 0.16rem;
+    gap: 0.18rem;
+  }
+
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] .admin-pagination > .button {
+    min-height: 28px;
+    padding: 0.26rem 0.5rem;
+    font-size: 0.68rem;
+    min-width: 62px;
+    justify-content: center;
+  }
+
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] .admin-pagination__numbers {
+    justify-content: center;
+  }
+
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] .admin-pagination__numbers .button,
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] .admin-pagination__numbers .chip,
+  .team-page .team-tab-panel[data-team-tab-panel="notifications"] .admin-pagination__dots {
+    min-width: 26px;
+    min-height: 26px;
+    font-size: 0.66rem;
   }
 }
