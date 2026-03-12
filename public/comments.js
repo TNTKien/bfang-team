@@ -3151,11 +3151,13 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
   header.appendChild(author);
   if (showChapterLabel) {
     const chapterNumberText = toSafeText(comment && comment.chapterNumberText ? comment.chapterNumberText : "");
-    if (chapterNumberText) {
-      const chapterTag = document.createElement(mangaSlug ? "a" : "span");
+    const chapterLabel = toSafeText(comment && comment.chapterLabel ? comment.chapterLabel : "");
+    const chapterTagText = chapterNumberText ? `Chương ${chapterNumberText}` : chapterLabel;
+    if (chapterTagText) {
+      const chapterTag = document.createElement(chapterNumberText && mangaSlug ? "a" : "span");
       chapterTag.className = "comment-chapter-tag";
-      chapterTag.textContent = `Chương ${chapterNumberText}`;
-      if (mangaSlug) {
+      chapterTag.textContent = chapterTagText;
+      if (chapterNumberText && mangaSlug) {
         chapterTag.href = `/manga/${encodeURIComponent(mangaSlug)}/chapters/${encodeURIComponent(chapterNumberText)}`;
       }
       header.appendChild(chapterTag);

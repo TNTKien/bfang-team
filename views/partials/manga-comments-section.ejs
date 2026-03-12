@@ -138,13 +138,17 @@
                     </span>
                   <% } %>
                 </span>
-                <% if (comment.chapterNumberText) { %>
+                <% const commentChapterNumberText = (comment && comment.chapterNumberText ? String(comment.chapterNumberText) : "").trim(); %>
+                <% const commentChapterLabelText = (comment && comment.chapterLabel ? String(comment.chapterLabel) : "").trim(); %>
+                <% if (commentChapterNumberText) { %>
                   <a
                     class="comment-chapter-tag"
-                    href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(comment.chapterNumberText) %>"
+                    href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(commentChapterNumberText) %>"
                   >
-                    Chương <%= comment.chapterNumberText %>
+                    Chương <%= commentChapterNumberText %>
                   </a>
+                <% } else if (commentChapterLabelText) { %>
+                  <span class="comment-chapter-tag"><%= commentChapterLabelText %></span>
                 <% } %>
               </div>
               <p
@@ -275,13 +279,17 @@
                               </span>
                             <% } %>
                           </span>
-                          <% if (reply.chapterNumberText) { %>
+                          <% const replyChapterNumberText = (reply && reply.chapterNumberText ? String(reply.chapterNumberText) : "").trim(); %>
+                          <% const replyChapterLabelText = (reply && reply.chapterLabel ? String(reply.chapterLabel) : "").trim(); %>
+                          <% if (replyChapterNumberText) { %>
                             <a
                               class="comment-chapter-tag"
-                              href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(reply.chapterNumberText) %>"
+                              href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(replyChapterNumberText) %>"
                             >
-                              Chương <%= reply.chapterNumberText %>
+                              Chương <%= replyChapterNumberText %>
                             </a>
+                          <% } else if (replyChapterLabelText) { %>
+                            <span class="comment-chapter-tag"><%= replyChapterLabelText %></span>
                           <% } %>
                         </div>
                         <p

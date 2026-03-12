@@ -890,19 +890,29 @@ const formatChapterNumberValue = (value) => {
 
 const buildCommentChapterContext = ({ chapterNumber, chapterTitle, chapterIsOneshot }) => {
   const chapterValue = chapterNumber == null ? NaN : Number(chapterNumber);
+  const title = (chapterTitle || "").toString().replace(/\s+/g, " ").trim();
+  const isOneshot = toBooleanFlag(chapterIsOneshot);
   if (!Number.isFinite(chapterValue)) {
+    if (isOneshot) {
+      const oneshotLabel = title ? `Oneshot - ${title}` : "Oneshot";
+      return {
+        chapterNumber: null,
+        chapterNumberText: "",
+        chapterTitle: title,
+        chapterIsOneshot: true,
+        chapterLabel: oneshotLabel
+      };
+    }
     return {
       chapterNumber: null,
       chapterNumberText: "",
-      chapterTitle: "",
+      chapterTitle: title,
       chapterIsOneshot: false,
       chapterLabel: ""
     };
   }
 
   const chapterNumberText = formatChapterNumberValue(chapterValue);
-  const title = (chapterTitle || "").toString().replace(/\s+/g, " ").trim();
-  const isOneshot = toBooleanFlag(chapterIsOneshot);
   const baseLabel = isOneshot ? "Oneshot" : chapterNumberText ? `Chương ${chapterNumberText}` : "Chương";
 
   return {
@@ -2549,7 +2559,11 @@ const getPaginatedCommentTree = async ({ mangaId, chapterNumber, page, perPage, 
         COALESCE(ch.title, '') as chapter_title,
         COALESCE(ch.is_oneshot, false) as chapter_is_oneshot
       FROM comments c
-      LEFT JOIN chapters ch ON ch.manga_id = c.manga_id AND ch.number = c.chapter_number
+      LEFT JOIN chapters ch ON ch.manga_id = c.manga_id
+        AND (
+          ch.number = c.chapter_number
+          OR (c.chapter_number IS NULL AND COALESCE(ch.is_oneshot, false) = true)
+        )
       WHERE c.id IN (${placeholders})
       UNION ALL
       SELECT
@@ -2566,7 +2580,11 @@ const getPaginatedCommentTree = async ({ mangaId, chapterNumber, page, perPage, 
         COALESCE(ch_child.title, '') as chapter_title,
         COALESCE(ch_child.is_oneshot, false) as chapter_is_oneshot
       FROM comments child
-      LEFT JOIN chapters ch_child ON ch_child.manga_id = child.manga_id AND ch_child.number = child.chapter_number
+      LEFT JOIN chapters ch_child ON ch_child.manga_id = child.manga_id
+        AND (
+          ch_child.number = child.chapter_number
+          OR (child.chapter_number IS NULL AND COALESCE(ch_child.is_oneshot, false) = true)
+        )
       JOIN branch b ON child.parent_id = b.id
       WHERE child.status = 'visible'
         AND COALESCE(child.client_request_id, '') NOT ILIKE ?

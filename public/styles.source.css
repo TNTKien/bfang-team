@@ -15021,7 +15021,31 @@ body.admin-page .panel > .note {
 }
 
 #comments .comment-chapter-tag {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.08rem 0.34rem;
+  border-radius: 0.32rem;
+  border: 0;
+  background: rgba(248, 248, 242, 0.14);
+  color: rgba(248, 248, 242, 0.84);
+  font-size: 0.62rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0.88;
+  text-decoration: none;
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+
+#comments a.comment-chapter-tag:hover,
+#comments a.comment-chapter-tag:focus-visible {
+  background: rgba(248, 248, 242, 0.24);
+  color: rgba(248, 248, 242, 0.98);
+  opacity: 1;
+}
+
+#comments a.comment-chapter-tag:active {
+  background: rgba(248, 248, 242, 0.3);
 }
 
 #comments .comment-time {
