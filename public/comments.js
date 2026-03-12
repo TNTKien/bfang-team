@@ -22,10 +22,27 @@ const commentToolIcons = {
     "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 3h12a3 3 0 0 1 3 3v7a8 8 0 0 1-8 8H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z' /><path d='M14 21v-5a3 3 0 0 1 3-3h4' /></svg>"
 };
 
-const buildAvatar = (avatarUrl) => {
+const buildAvatar = (avatarUrl, options) => {
+  const settings = options && typeof options === "object" ? options : {};
+  const userId = settings.userId == null ? "" : String(settings.userId).trim();
+  const username = settings.username == null ? "" : String(settings.username).trim().toLowerCase();
+  const authorName = settings.authorName == null ? "" : String(settings.authorName).trim();
   const avatar = document.createElement("div");
   avatar.className = "comment-avatar";
-  avatar.setAttribute("aria-hidden", "true");
+
+  if (userId) {
+    avatar.classList.add("comment-avatar--interactive");
+    avatar.setAttribute("role", "link");
+    avatar.setAttribute("tabindex", "0");
+    avatar.setAttribute("data-comment-author-trigger", "");
+    avatar.dataset.commentUserId = userId;
+    if (commentProfileUsernamePattern.test(username)) {
+      avatar.dataset.commentUsername = username;
+    }
+    avatar.setAttribute("aria-label", `Xem trang cá nhân của ${authorName || "người dùng"}`);
+  } else {
+    avatar.setAttribute("aria-hidden", "true");
+  }
 
   const raw = avatarUrl == null ? "" : String(avatarUrl).trim();
   const ok =
@@ -3101,7 +3118,11 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
   item.dataset.commentAuthorId = authorUserId;
   item.dataset.commentParentAuthorId = parentAuthorUserId;
 
-  const avatar = buildAvatar(comment.avatarUrl);
+  const avatar = buildAvatar(comment.avatarUrl, {
+    userId: authorUserId,
+    username: authorUsername,
+    authorName: authorNameText
+  });
   const body = document.createElement("div");
   body.className = "comment-body";
   const bubble = document.createElement("div");

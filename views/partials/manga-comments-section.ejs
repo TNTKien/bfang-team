@@ -95,7 +95,19 @@
           data-comment-author-id="<%= comment.authorUserId || "" %>"
           data-comment-parent-author-id=""
         >
-          <div class="comment-avatar" aria-hidden="true">
+          <div
+            class="comment-avatar <%= comment.authorUserId ? "comment-avatar--interactive" : "" %>"
+            <% if (comment.authorUserId) { %>
+              role="link"
+              tabindex="0"
+              data-comment-author-trigger
+              data-comment-user-id="<%= comment.authorUserId %>"
+              <% if (comment.authorUsername) { %>data-comment-username="<%= comment.authorUsername %>"<% } %>
+              aria-label="Xem trang cá nhân của <%= comment.author %>"
+            <% } else { %>
+              aria-hidden="true"
+            <% } %>
+          >
             <% if (comment.avatarUrl) { %>
               <img
                 class="comment-avatar__img"
@@ -236,7 +248,19 @@
                     data-comment-author-id="<%= reply.authorUserId || "" %>"
                     data-comment-parent-author-id="<%= comment.authorUserId || "" %>"
                   >
-                    <div class="comment-avatar" aria-hidden="true">
+                    <div
+                      class="comment-avatar <%= reply.authorUserId ? "comment-avatar--interactive" : "" %>"
+                      <% if (reply.authorUserId) { %>
+                        role="link"
+                        tabindex="0"
+                        data-comment-author-trigger
+                        data-comment-user-id="<%= reply.authorUserId %>"
+                        <% if (reply.authorUsername) { %>data-comment-username="<%= reply.authorUsername %>"<% } %>
+                        aria-label="Xem trang cá nhân của <%= reply.author %>"
+                      <% } else { %>
+                        aria-hidden="true"
+                      <% } %>
+                    >
                       <% if (reply.avatarUrl) { %>
                         <img
                           class="comment-avatar__img"

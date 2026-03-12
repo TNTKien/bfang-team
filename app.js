@@ -101,7 +101,7 @@ const SEO_DEFAULT_KEYWORDS = [
 const SEO_ROBOTS_INDEX = "index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1";
 const SEO_ROBOTS_NOINDEX =
   "noindex,nofollow,noarchive,nosnippet,noimageindex,max-snippet:0,max-image-preview:none,max-video-preview:0";
-const FORUM_DEFAULT_SOCIAL_IMAGE_PATH = "/og-forum.png";
+const FORUM_DEFAULT_SOCIAL_IMAGE_PATH = "/logobfang.svg";
 const sitemapCacheTtlMs = 10 * 60 * 1000;
 const sitemapCacheByOrigin = new Map();
 
@@ -2236,7 +2236,9 @@ const deleteCommentCascade = async (commentId, options = {}) => {
       chapterPrefix: b2Config && b2Config.chapterPrefix,
       forumPrefix: b2Config && b2Config.forumPrefix,
     });
-    prefixes.forEach((prefix) => candidatePrefixes.add(prefix));
+    prefixes.forEach((prefix) => {
+      candidatePrefixes.add(prefix);
+    });
   });
 
   for (const prefix of candidatePrefixes) {
