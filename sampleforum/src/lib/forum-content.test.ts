@@ -152,4 +152,13 @@ describe("normalizeForumContentHtml", () => {
     expect(paragraph?.querySelectorAll("br").length).toBe(0);
     expect(paragraph?.querySelector("strong")?.textContent).toBe("chao");
   });
+
+  it("keeps whitespace-only paragraphs as explicit blank lines", () => {
+    const html = normalizeForumContentHtml("<p>A</p><p> </p><p>B</p>", []);
+    const body = getBody(html);
+    const paragraphs = body.querySelectorAll("p");
+
+    expect(paragraphs.length).toBe(3);
+    expect(paragraphs[1]?.textContent || "").toBe("");
+  });
 });

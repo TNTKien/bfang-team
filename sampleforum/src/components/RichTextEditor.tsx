@@ -396,14 +396,6 @@ export const RichTextEditor = memo(function RichTextEditor({
   const ensureTrailingParagraph = useCallback((editorInstance: Editor | null) => {
     if (!editorInstance) return;
     const editorState = editorInstance.state;
-    const editorDom =
-      editorInstance.view && editorInstance.view.dom && editorInstance.view.dom instanceof HTMLElement
-        ? editorInstance.view.dom
-        : null;
-    const previousScrollTop = editorDom ? editorDom.scrollTop : 0;
-    const previousBottomGap = editorDom
-      ? Math.max(0, editorDom.scrollHeight - editorDom.clientHeight - editorDom.scrollTop)
-      : 0;
     const doc = editorState.doc;
     if (!doc.childCount) {
       return;
@@ -429,7 +421,7 @@ export const RichTextEditor = memo(function RichTextEditor({
             previousNode.firstChild?.type?.name === "image"))
     );
 
-    if (!previousIsImage || trailingEmptyParagraphCount === 1) {
+    if (!previousIsImage || trailingEmptyParagraphCount > 0) {
       return;
     }
 
@@ -443,32 +435,7 @@ export const RichTextEditor = memo(function RichTextEditor({
       return;
     }
 
-    const getChildOffset = (childIndex: number): number => {
-      let offset = 0;
-      for (let index = 0; index < childIndex; index += 1) {
-        offset += doc.child(index).nodeSize;
-      }
-      return offset;
-    };
-
-    let transaction = editorState.tr;
-    if (trailingEmptyParagraphCount === 0) {
-      transaction = transaction.insert(doc.content.size, paragraphNode);
-    } else {
-      const deleteFrom = getChildOffset(trailingStartIndex);
-      transaction = transaction.delete(deleteFrom, doc.content.size).insert(deleteFrom, paragraphNode);
-    }
-    editorInstance.view.dispatch(transaction);
-
-    if (editorDom) {
-      window.requestAnimationFrame(() => {
-        if (previousBottomGap <= 96) {
-          editorDom.scrollTop = editorDom.scrollHeight;
-          return;
-        }
-        editorDom.scrollTop = previousScrollTop;
-      });
-    }
+    editorInstance.view.dispatch(editorState.tr.insert(doc.content.size, paragraphNode));
   }, []);
 
   const initialContent = draftStorageKey

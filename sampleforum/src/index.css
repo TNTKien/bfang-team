@@ -122,6 +122,13 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.forum-rich-content p {
+  margin: 0.15rem 0;
+  line-height: 1.6;
+}
+.forum-rich-content p:empty {
+  min-height: 1.25rem;
+}
 .forum-rich-content p,
 .forum-rich-content li,
 .forum-rich-content h1,

@@ -275,6 +275,13 @@ const sanitizeForumHtml = (value: string): string => {
         element.setAttribute("style", `text-align: ${String(textAlignMatch[1]).toLowerCase()};`);
       }
     }
+
+    if (tagName === "p" && element.childElementCount === 0) {
+      const paragraphText = String(element.textContent || "").replace(/\u00a0/g, " ");
+      if (!paragraphText.trim()) {
+        element.textContent = "";
+      }
+    }
   });
 
   Array.from(body.querySelectorAll("p, div, li, h1, h2, h3, h4, h5, h6, blockquote")).forEach((element) => {
