@@ -1076,6 +1076,7 @@ const initDb = async () => {
       author_avatar_url TEXT,
       client_request_id TEXT,
       content TEXT NOT NULL,
+      image_url TEXT,
       status TEXT NOT NULL DEFAULT 'visible',
       like_count INTEGER NOT NULL DEFAULT 0,
       report_count INTEGER NOT NULL DEFAULT 0,
@@ -1097,6 +1098,7 @@ const initDb = async () => {
       author_avatar_url TEXT,
       client_request_id TEXT,
       content TEXT NOT NULL,
+      image_url TEXT,
       status TEXT NOT NULL DEFAULT 'visible',
       like_count INTEGER NOT NULL DEFAULT 0,
       report_count INTEGER NOT NULL DEFAULT 0,
@@ -1114,6 +1116,7 @@ const initDb = async () => {
   await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS author_email TEXT");
   await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS author_avatar_url TEXT");
   await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS client_request_id TEXT");
+  await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS image_url TEXT");
   await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS forum_post_locked BOOLEAN NOT NULL DEFAULT false");
   await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS forum_post_pinned BOOLEAN NOT NULL DEFAULT false");
   await dbRun("UPDATE comments SET forum_post_locked = false WHERE forum_post_locked IS NULL");
@@ -1141,6 +1144,7 @@ const initDb = async () => {
   await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS author_email TEXT");
   await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS author_avatar_url TEXT");
   await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS client_request_id TEXT");
+  await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS image_url TEXT");
   await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS forum_post_locked BOOLEAN NOT NULL DEFAULT false");
   await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS forum_post_pinned BOOLEAN NOT NULL DEFAULT false");
   await dbRun("ALTER TABLE forum_posts DROP COLUMN IF EXISTS manga_id");
@@ -1390,12 +1394,14 @@ const initDb = async () => {
       thread_id INTEGER NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
       sender_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       content TEXT NOT NULL,
+      image_url TEXT,
       client_request_id TEXT,
       created_at BIGINT NOT NULL
     )
   `
   );
   await dbRun("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_request_id TEXT");
+  await dbRun("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS image_url TEXT");
   await dbRun("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS created_at BIGINT");
   await dbRun("UPDATE chat_messages SET created_at = ? WHERE created_at IS NULL", [Date.now()]);
   await dbRun("CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_created ON chat_messages(thread_id, id DESC)");

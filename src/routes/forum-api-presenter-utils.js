@@ -8,6 +8,7 @@ const createForumApiPresenterUtils = ({
   formatTimeAgo,
   normalizeAvatarUrl,
   normalizeForumSectionSlug,
+  normalizeUploadedImageUrl,
   toIso,
   toText
 }) => {
@@ -29,6 +30,15 @@ const createForumApiPresenterUtils = ({
 
   const buildTimeAgoText = (value) =>
     typeof formatTimeAgo === "function" ? formatTimeAgo(value) : readText(value);
+
+  const normalizeReplyImageUrl = (value) => {
+    const raw = readText(value);
+    if (!raw) return "";
+    if (typeof normalizeUploadedImageUrl === "function") {
+      return readText(normalizeUploadedImageUrl(raw));
+    }
+    return raw;
+  };
 
   const normalizeAuthorAvatar = (row) => {
     const userAvatar = readText(row && row.user_avatar_url);
@@ -263,6 +273,7 @@ const createForumApiPresenterUtils = ({
     return {
       id: mappedId,
       content: readText(row && row.content),
+      imageUrl: normalizeReplyImageUrl(row && row.image_url),
       createdAt: toIsoValue(createdAtRaw),
       timeAgo: buildTimeAgoText(createdAtRaw),
       likeCount: Number(row && row.like_count) || 0,

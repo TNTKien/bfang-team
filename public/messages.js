@@ -10,6 +10,11 @@
   const messageList = root.querySelector("[data-chat-message-list]");
   const composeForm = root.querySelector("[data-chat-compose]");
   const input = root.querySelector("[data-chat-input]");
+  const imageInput = root.querySelector("[data-chat-image-input]");
+  const imagePreview = root.querySelector("[data-chat-image-preview]");
+  const imagePreviewThumb = root.querySelector("[data-chat-image-thumb]");
+  const imageClearButton = root.querySelector("[data-chat-image-clear]");
+  const sendButtonMain = root.querySelector("[data-chat-send-main]");
   const counter = root.querySelector("[data-chat-counter]");
   const status = root.querySelector("[data-chat-status]");
   const peerName = root.querySelector("[data-chat-peer-name]");
@@ -30,12 +35,21 @@
     ? chatBootstrap.initialMessages
     : [];
   const bootstrapInitialMessagesHasMore = Boolean(chatBootstrap && chatBootstrap.initialMessagesHasMore);
+  const messageImageUploadsEnabled = Boolean(chatBootstrap && chatBootstrap.messageImageUploadsEnabled);
 
   const mobileLayoutMedia =
     typeof window.matchMedia === "function" ? window.matchMedia("(max-width: 900px)") : null;
   const SIDEBAR_COLLAPSED_STORAGE_KEY = "bfang:chat:sidebarCollapsed";
 
   const CHAT_LIMIT = 300;
+const CHAT_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+const CHAT_IMAGE_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif"
+]);
+  const CHAT_IMAGE_PREVIEW_TEXT = "Đã gửi ảnh";
   const CHAT_USER_SEARCH_RESULT_LIMIT = 5;
   const INITIAL_MESSAGES_LIMIT = 10;
   const OLDER_MESSAGES_LIMIT = 25;
@@ -119,6 +133,11 @@
   let chatViewportSyncTimer = null;
   let chatViewportLateSyncTimer = null;
   let lastObservedMessageScrollTop = 0;
+  let pendingUploadedImageUrl = "";
+  let pendingImageObjectUrl = "";
+  let pendingImageFile = null;
+  let uploadingImage = false;
+  let activeImageUploadToken = 0;
 
   const threadViewStateCache = new Map();
 
@@ -220,6 +239,172 @@
     status.classList.remove("is-error", "is-success");
     if (tone === "error") status.classList.add("is-error");
     if (tone === "success") status.classList.add("is-success");
+  };
+
+  const resetPendingImageState = () => {
+    activeImageUploadToken += 1;
+    uploadingImage = false;
+    setImageUploadingState(false);
+    pendingUploadedImageUrl = "";
+    if (pendingImageObjectUrl) {
+      try {
+        URL.revokeObjectURL(pendingImageObjectUrl);
+      } catch (_err) {
+        // ignore
+      }
+    }
+    pendingImageObjectUrl = "";
+    pendingImageFile = null;
+    if (imageInput) {
+      imageInput.value = "";
+    }
+    if (imagePreview) {
+      imagePreview.hidden = true;
+    }
+    if (imagePreviewThumb) {
+      imagePreviewThumb.removeAttribute("src");
+    }
+    if (composeForm) {
+      composeForm.classList.remove("chat-compose--has-preview");
+    }
+    if (sendButtonMain) {
+      sendButtonMain.hidden = false;
+    }
+  };
+
+  const setImageUploadingState = (isUploading) => {
+    const busy = Boolean(isUploading);
+    if (composeForm) {
+      composeForm.classList.toggle("chat-compose--uploading-image", busy);
+      const submitButtons = Array.from(composeForm.querySelectorAll("button[type='submit']"));
+      submitButtons.forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        button.disabled = busy;
+      });
+    }
+    if (imageInput) {
+      imageInput.disabled = busy;
+      const trigger = imageInput.closest ? imageInput.closest("label") : null;
+      if (trigger) {
+        trigger.classList.toggle("is-disabled", busy);
+        trigger.setAttribute("aria-disabled", busy ? "true" : "false");
+        trigger.tabIndex = busy ? -1 : 0;
+      }
+    }
+    if (imageClearButton) {
+      imageClearButton.disabled = busy;
+    }
+  };
+
+  const syncComposeImageUi = () => {
+    const previewVisible = Boolean(imagePreview && imagePreview.hidden === false);
+    const thumbSrc = imagePreviewThumb ? toSafeText(imagePreviewThumb.getAttribute("src"), 500) : "";
+    const hasPreview = Boolean(previewVisible && thumbSrc);
+
+    if (composeForm) {
+      composeForm.classList.toggle("chat-compose--has-preview", hasPreview);
+    }
+
+    if (sendButtonMain) {
+      sendButtonMain.hidden = false;
+    }
+  };
+
+  const setPendingImagePreview = ({ imageUrl = "", objectUrl = "", file = null } = {}) => {
+    const safeImageUrl = toSafeText(imageUrl, 500);
+    const safeObjectUrl = toSafeText(objectUrl, 500);
+    const safeFile = file instanceof File ? file : null;
+    if (!safeImageUrl && !safeObjectUrl && !safeFile) {
+      resetPendingImageState();
+      return;
+    }
+
+    if (pendingImageObjectUrl && pendingImageObjectUrl !== safeObjectUrl) {
+      try {
+        URL.revokeObjectURL(pendingImageObjectUrl);
+      } catch (_err) {
+        // ignore
+      }
+    }
+
+    pendingUploadedImageUrl = safeImageUrl;
+    pendingImageObjectUrl = safeObjectUrl;
+    pendingImageFile = safeFile;
+    if (imagePreviewThumb) {
+      imagePreviewThumb.src = safeObjectUrl || safeImageUrl;
+    }
+    if (imagePreview) {
+      imagePreview.hidden = false;
+    }
+    syncComposeImageUi();
+  };
+
+  const uploadMessageImage = async (file) => {
+    if (!messageImageUploadsEnabled) {
+      throw new Error("Tính năng gửi ảnh trong tin nhắn hiện đang tắt.");
+    }
+    if (!file) {
+      throw new Error("Không tìm thấy ảnh để tải lên.");
+    }
+
+    const mimeType = (file.type || "").toString().trim().toLowerCase();
+    if (!CHAT_IMAGE_ALLOWED_MIME_TYPES.has(mimeType)) {
+      throw new Error("Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.");
+    }
+
+    const fileSize = Number(file.size);
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+      throw new Error("Tệp ảnh không hợp lệ.");
+    }
+    if (fileSize > CHAT_IMAGE_MAX_BYTES) {
+      throw new Error("Ảnh vượt quá giới hạn 3MB.");
+    }
+
+    const body = new FormData();
+    body.append("image", file);
+
+    const response = await fetch("/messages/upload-image?format=json", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json"
+      },
+      body
+    });
+
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result || result.ok !== true) {
+      throw new Error((result && result.error) || "Không thể tải ảnh lên.");
+    }
+
+    const uploadedImageUrl = toSafeText(result.imageUrl, 500);
+    if (!uploadedImageUrl) {
+      throw new Error("Không thể đọc URL ảnh sau khi tải lên.");
+    }
+
+    return uploadedImageUrl;
+  };
+
+  const validateMessageImageFile = (file) => {
+    if (!messageImageUploadsEnabled) {
+      throw new Error("Tính năng gửi ảnh trong tin nhắn hiện đang tắt.");
+    }
+    if (!file) {
+      throw new Error("Không tìm thấy ảnh để tải lên.");
+    }
+
+    const mimeType = (file.type || "").toString().trim().toLowerCase();
+    if (!CHAT_IMAGE_ALLOWED_MIME_TYPES.has(mimeType)) {
+      throw new Error("Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.");
+    }
+
+    const fileSize = Number(file.size);
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+      throw new Error("Tệp ảnh không hợp lệ.");
+    }
+    if (fileSize > CHAT_IMAGE_MAX_BYTES) {
+    throw new Error("Ảnh vượt quá giới hạn 3MB.");
+    }
   };
 
   const shouldPausePolling = () => {
@@ -1120,6 +1305,7 @@
       threadId: Number(row.threadId) || 0,
       senderUserId: row.senderUserId ? String(row.senderUserId) : "",
       content: row.content != null ? String(row.content) : "",
+      imageUrl: toSafeText(row.imageUrl, 500),
       createdAt: Number.isFinite(createdAt) && createdAt > 0 ? Math.floor(createdAt) : Date.now(),
       pending: false,
       localRequestId: ""
@@ -1147,12 +1333,13 @@
       lastMessageAt: Number.isFinite(lastMessageAt) && lastMessageAt > 0 ? Math.floor(lastMessageAt) : 0,
       lastMessageId: Number.isFinite(lastMessageId) && lastMessageId > 0 ? Math.floor(lastMessageId) : 0,
       lastMessageContent: row.lastMessageContent != null ? String(row.lastMessageContent) : "",
+      lastMessageHasImage: Boolean(row.lastMessageHasImage),
       lastMessageSenderUserId: row.lastMessageSenderUserId ? String(row.lastMessageSenderUserId) : "",
       otherUser: normalizeThreadUser(row.otherUser)
     };
   };
 
-  const createPendingMessage = ({ content, requestId, createdAt }) => {
+  const createPendingMessage = ({ content, imageUrl, requestId, createdAt }) => {
     const createdValue = Number(createdAt);
     pendingSequence += 1;
     return {
@@ -1160,6 +1347,7 @@
       threadId: Number(selectedThreadId) || 0,
       senderUserId: currentUserId,
       content: content != null ? String(content) : "",
+      imageUrl: toSafeText(imageUrl, 500),
       createdAt:
         Number.isFinite(createdValue) && createdValue > 0
           ? Math.floor(createdValue)
@@ -1217,6 +1405,7 @@
             threadId: Number(item.threadId) || 0,
             senderUserId: item.senderUserId ? String(item.senderUserId) : "",
             content: item.content != null ? String(item.content) : "",
+            imageUrl: toSafeText(item.imageUrl, 500),
             createdAt: Number.isFinite(createdAt) && createdAt > 0 ? Math.floor(createdAt) : Date.now(),
             pending: true,
             localRequestId: item.localRequestId ? String(item.localRequestId) : ""
@@ -1296,6 +1485,7 @@
     pendingMessages = pendingMessages.filter((pending) => {
       if (!pending || !pending.pending) return false;
       const pendingContent = pending.content != null ? String(pending.content) : "";
+      const pendingImageUrl = toSafeText(pending.imageUrl, 500);
       const pendingCreatedAt = Number(pending.createdAt) || 0;
 
       const matchIndex = messageItems.findIndex((serverItem, index) => {
@@ -1303,6 +1493,7 @@
         if (!serverItem || serverItem.pending) return false;
         if (String(serverItem.senderUserId || "") !== String(currentUserId)) return false;
         if ((serverItem.content != null ? String(serverItem.content) : "") !== pendingContent) return false;
+        if (toSafeText(serverItem.imageUrl, 500) !== pendingImageUrl) return false;
         const serverCreatedAt = Number(serverItem.createdAt) || 0;
         return Math.abs(serverCreatedAt - pendingCreatedAt) <= 25 * 1000;
       });
@@ -1479,7 +1670,29 @@
 
       const bubble = document.createElement("div");
       bubble.className = "chat-message__bubble";
-      renderMessageTextWithStickers(bubble, item.content || "");
+      const safeMessageContent = item && item.content != null ? String(item.content) : "";
+      const safeMessageImageUrl = toSafeText(item && item.imageUrl ? item.imageUrl : "", 500);
+      if (safeMessageContent) {
+        renderMessageTextWithStickers(bubble, safeMessageContent);
+      }
+      if (safeMessageImageUrl) {
+        const imageWrap = document.createElement("a");
+        imageWrap.className = "chat-message__image-link";
+        imageWrap.href = safeMessageImageUrl;
+        imageWrap.target = "_blank";
+        imageWrap.rel = "noopener noreferrer";
+
+        const image = document.createElement("img");
+        image.className = "chat-message__image";
+        image.src = safeMessageImageUrl;
+        image.alt = "Ảnh tin nhắn";
+        image.loading = "lazy";
+        image.decoding = "async";
+        image.referrerPolicy = "no-referrer";
+
+        imageWrap.appendChild(image);
+        bubble.appendChild(imageWrap);
+      }
       contentWrap.appendChild(bubble);
 
       if (item && item.pending) {
@@ -1789,7 +2002,7 @@
 
       const name = toName(thread.otherUser);
       const messagePreview = (thread.lastMessageContent || "").toString().trim();
-      const previewText = messagePreview || "Chưa có tin nhắn";
+      const previewText = messagePreview || (thread.lastMessageHasImage ? CHAT_IMAGE_PREVIEW_TEXT : "Chưa có tin nhắn");
       const timeText = formatRelativeTime(thread.lastMessageAt);
 
       button.innerHTML = `
@@ -1813,6 +2026,7 @@
 
         selectedThreadId = nextThreadId;
         selectedPeer = thread.otherUser || null;
+        resetPendingImageState();
         setPeerIdentity(selectedPeer);
 
         const restored = restoreThreadViewState(nextThreadId);
@@ -1865,6 +2079,7 @@
       if (!threads.length) {
         selectedThreadId = 0;
         selectedPeer = null;
+        resetPendingImageState();
         setPeerIdentity(null);
         resetMessageState();
         threadViewStateCache.clear();
@@ -1886,6 +2101,7 @@
       }
       selectedThreadId = Number(threads[0].id) || 0;
       selectedPeer = threads[0].otherUser || null;
+      resetPendingImageState();
       setPeerIdentity(selectedPeer);
       const restored = restoreThreadViewState(selectedThreadId);
       if (!restored) {
@@ -1919,6 +2135,7 @@
 
     selectedThreadId = Number(initialThread.id) || 0;
     selectedPeer = initialThread.otherUser || null;
+    resetPendingImageState();
     setPeerIdentity(selectedPeer);
 
     const initialMessages = bootstrapMessagesRaw
@@ -2082,6 +2299,7 @@
 
             selectedThreadId = Number(created.threadId) || 0;
             selectedPeer = user;
+            resetPendingImageState();
             setPeerIdentity(selectedPeer);
             const restored = restoreThreadViewState(selectedThreadId);
             if (!restored) {
@@ -2135,78 +2353,135 @@
 
   const sendMessage = async ({ keepComposerFocus = false } = {}) => {
     if (!selectedThreadId || !input) return;
+    if (uploadingImage) {
+      setStatus("Ảnh đang được tải lên, vui lòng đợi hoàn tất.", "error");
+      return;
+    }
     const content = String(input.value || "").trim();
-    if (!content) return;
-    if (content.length > CHAT_LIMIT) {
+    const imageFile = pendingImageFile instanceof File ? pendingImageFile : null;
+    let imageUrl = toSafeText(pendingUploadedImageUrl, 500);
+    if (!content && !imageUrl && !imageFile) return;
+    if (content && content.length > CHAT_LIMIT) {
       setStatus(`Tin nhắn tối đa ${CHAT_LIMIT} ký tự.`, "error");
       return;
     }
 
-    const requestId =
-      window.crypto && typeof window.crypto.randomUUID === "function"
-        ? window.crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-
-    const pendingMessage = createPendingMessage({
-      content,
-      requestId,
-      createdAt: Date.now()
-    });
-
-    pendingMessages = [...pendingMessages, pendingMessage];
-    renderMessages({ stickBottom: true });
-
-    const shouldRefocusComposer = Boolean(keepComposerFocus);
-    input.value = "";
-    updateCounter();
-    setStatus("");
-    if (shouldRefocusComposer) {
-      focusChatInput();
-      scheduleChatViewportSync({ revealComposer: true });
+    const hasImageToSend = Boolean(imageFile || imageUrl);
+    if (hasImageToSend) {
+      uploadingImage = true;
+      setImageUploadingState(true);
     }
 
-    const submit = composeForm && composeForm.querySelector("button[type='submit']");
-    if (submit) submit.disabled = true;
-
     try {
-      const data = await fetchJson(
-        `/messages/threads/${encodeURIComponent(String(selectedThreadId))}/messages?format=json`,
-        {
-          method: "POST",
-          body: JSON.stringify({ content, requestId })
+      if (imageFile && !imageUrl) {
+        setStatus("Đang tải ảnh lên...", "");
+        try {
+          imageUrl = await uploadMessageImage(imageFile);
+          pendingUploadedImageUrl = imageUrl;
+          setPendingImagePreview({ imageUrl, objectUrl: pendingImageObjectUrl, file: imageFile });
+        } catch (error) {
+          setStatus(error && error.message ? error.message : "Không thể tải ảnh lên.", "error");
+          return;
         }
-      );
-
-      pendingMessages = pendingMessages.filter((item) => item.localRequestId !== requestId);
-
-      const sentMessage = normalizeMessageRow(data && data.message ? data.message : null);
-      if (sentMessage) {
-        messageItems = mergeMessageItems(messageItems, [sentMessage]);
-        oldestLoadedMessageId = messageItems.length ? Number(messageItems[0].id) : 0;
-        renderMessages({ stickBottom: true });
-      } else {
-        renderMessages({ stickBottom: true });
       }
+      if (!content && !imageUrl) return;
 
-      dispatchViewedEvent();
-      loadThreadList().catch(() => null);
-    } catch (error) {
-      pendingMessages = pendingMessages.filter((item) => item.localRequestId !== requestId);
-      const previousScrollTop = messageList ? messageList.scrollTop : 0;
-      renderMessages({ preserveScrollTop: true, previousScrollTop });
+      const requestId =
+        window.crypto && typeof window.crypto.randomUUID === "function"
+          ? window.crypto.randomUUID()
+          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const threadIdAtSend = Number(selectedThreadId) || 0;
 
-      if (error && error.retryAfter) {
-        setStatus(`Bạn gửi tin nhắn quá nhanh. Chờ ${error.retryAfter} giây.`, "error");
-      } else {
-        setStatus(error && error.message ? error.message : "Không thể gửi tin nhắn.", "error");
+      const pendingMessage = createPendingMessage({
+        content,
+        imageUrl,
+        requestId,
+        createdAt: Date.now()
+      });
+
+      pendingMessages = [...pendingMessages, pendingMessage];
+      renderMessages({ stickBottom: true });
+
+      const shouldRefocusComposer = Boolean(keepComposerFocus);
+      setStatus("");
+
+      const submitButtons = composeForm
+        ? Array.from(composeForm.querySelectorAll("button[type='submit']"))
+        : [];
+      submitButtons.forEach((button) => {
+        if (button instanceof HTMLButtonElement) {
+          button.disabled = true;
+        }
+      });
+
+      try {
+        const data = await fetchJson(
+          `/messages/threads/${encodeURIComponent(String(threadIdAtSend))}/messages?format=json`,
+          {
+            method: "POST",
+            body: JSON.stringify({ content, imageUrl, requestId })
+          }
+        );
+
+        const isSameThread = Number(selectedThreadId) === threadIdAtSend;
+        if (isSameThread) {
+          pendingMessages = pendingMessages.filter((item) => item.localRequestId !== requestId);
+        } else {
+          threadViewStateCache.delete(threadIdAtSend);
+        }
+
+        const sentMessage = normalizeMessageRow(data && data.message ? data.message : null);
+        if (sentMessage && isSameThread) {
+          messageItems = mergeMessageItems(messageItems, [sentMessage]);
+          oldestLoadedMessageId = messageItems.length ? Number(messageItems[0].id) : 0;
+          renderMessages({ stickBottom: true });
+        } else if (isSameThread) {
+          renderMessages({ stickBottom: true });
+        }
+
+        if (isSameThread) {
+          dispatchViewedEvent();
+          input.value = "";
+          updateCounter();
+          resetPendingImageState();
+          if (shouldRefocusComposer) {
+            focusChatInput();
+            scheduleChatViewportSync({ revealComposer: true });
+          }
+        }
+        loadThreadList().catch(() => null);
+      } catch (error) {
+        const isSameThread = Number(selectedThreadId) === threadIdAtSend;
+        if (isSameThread) {
+          pendingMessages = pendingMessages.filter((item) => item.localRequestId !== requestId);
+          const previousScrollTop = messageList ? messageList.scrollTop : 0;
+          renderMessages({ preserveScrollTop: true, previousScrollTop });
+
+          if (error && error.retryAfter) {
+            setStatus(`Bạn gửi tin nhắn quá nhanh. Chờ ${error.retryAfter} giây.`, "error");
+          } else {
+            setStatus(error && error.message ? error.message : "Không thể gửi tin nhắn.", "error");
+          }
+        } else {
+          threadViewStateCache.delete(threadIdAtSend);
+        }
+      } finally {
+        submitButtons.forEach((button) => {
+          if (button instanceof HTMLButtonElement) {
+            button.disabled = false;
+          }
+        });
+        if (shouldRefocusComposer) {
+          window.requestAnimationFrame(() => {
+            focusChatInput();
+            scheduleChatViewportSync({ revealComposer: true });
+          });
+        }
       }
     } finally {
-      if (submit) submit.disabled = false;
-      if (shouldRefocusComposer) {
-        window.requestAnimationFrame(() => {
-          focusChatInput();
-          scheduleChatViewportSync({ revealComposer: true });
-        });
+      if (hasImageToSend) {
+        uploadingImage = false;
+        setImageUploadingState(false);
       }
     }
   };
@@ -2804,6 +3079,7 @@
     setPeerIdentity(null);
     setSearchMode(false);
     updateCounter();
+    resetPendingImageState();
 
     const bootstrapApplied = applyBootstrapSnapshot();
     if (!bootstrapApplied && threadList) {
@@ -2883,6 +3159,75 @@
       composeForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
   }
+
+  if (imageInput) {
+    if (!messageImageUploadsEnabled) {
+      const imageTrigger = imageInput.closest("label");
+      if (imageTrigger) {
+        imageTrigger.hidden = true;
+      } else {
+        imageInput.hidden = true;
+      }
+    } else {
+      const imageTrigger = imageInput.closest("label");
+      if (imageTrigger) {
+        imageTrigger.tabIndex = 0;
+        imageTrigger.setAttribute("role", "button");
+        imageTrigger.addEventListener("keydown", (event) => {
+          if (!event) return;
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          if (uploadingImage || imageInput.disabled) return;
+          imageInput.click();
+        });
+      }
+
+      imageInput.addEventListener("click", () => {
+        if (uploadingImage) return;
+        imageInput.value = "";
+      });
+
+      imageInput.addEventListener("change", async () => {
+        if (uploadingImage) {
+          setStatus("Ảnh đang tải lên, vui lòng đợi hoàn tất.", "error");
+          imageInput.value = "";
+          return;
+        }
+
+        const file = imageInput.files && imageInput.files[0] ? imageInput.files[0] : null;
+        if (!file) {
+          resetPendingImageState();
+          return;
+        }
+
+        try {
+          validateMessageImageFile(file);
+        } catch (error) {
+          resetPendingImageState();
+          setStatus(error && error.message ? error.message : "Không thể tải ảnh lên.", "error");
+          imageInput.value = "";
+          return;
+        }
+
+        const objectUrl = URL.createObjectURL(file);
+        setPendingImagePreview({ objectUrl, file });
+        imageInput.value = "";
+      });
+    }
+  }
+
+  if (imageClearButton) {
+    imageClearButton.addEventListener("click", () => {
+      if (uploadingImage) {
+        setStatus("Ảnh đang tải lên, vui lòng đợi hoàn tất.", "error");
+        return;
+      }
+      resetPendingImageState();
+      setStatus("");
+    });
+  }
+
+  syncComposeImageUi();
 
   const handleViewportGeometryChange = () => {
     scheduleChatViewportSync({ revealComposer: document.activeElement === input });

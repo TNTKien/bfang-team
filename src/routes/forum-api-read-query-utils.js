@@ -48,6 +48,7 @@ const createForumApiReadQueryUtils = ({ dbAll, dbGet }) => {
         SELECT
           r.id,
           r.content,
+          r.image_url,
           r.created_at,
           r.like_count,
           r.report_count,

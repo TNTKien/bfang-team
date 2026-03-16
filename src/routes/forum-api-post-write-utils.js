@@ -81,6 +81,7 @@ const createForumApiPostWriteUtils = ({
     parentId,
     authorIdentity,
     content,
+    imageUrl,
     createdAt,
     requestId,
   }) => {
@@ -92,11 +93,12 @@ const createForumApiPostWriteUtils = ({
           author_user_id,
           author_email,
           author_avatar_url,
+          image_url,
           client_request_id,
           content,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         parentId == null ? null : parentId,
@@ -104,6 +106,7 @@ const createForumApiPostWriteUtils = ({
         readText(authorIdentity && authorIdentity.authorUserId),
         readText(authorIdentity && authorIdentity.authorEmail),
         readText(authorIdentity && authorIdentity.authorAvatarUrl),
+        readText(imageUrl) || null,
         readText(requestId),
         readText(content),
         readText(createdAt),

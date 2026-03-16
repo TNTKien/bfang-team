@@ -425,6 +425,7 @@ export const submitForumReply = async (params: {
   postId: number;
   content: string;
   parentId: number;
+  imageUrl?: string;
 }) => {
   const postId = Number(params.postId);
   if (!Number.isFinite(postId) || postId <= 0) {
@@ -432,10 +433,12 @@ export const submitForumReply = async (params: {
   }
 
   const content = (params.content || "").toString().trim();
-  if (!content) {
+  const imageUrl = (params.imageUrl || "").toString().trim();
+
+  if (!content && !imageUrl) {
     throw new Error("Nội dung bình luận không được để trống.");
   }
-  if (measureForumTextLength(content) > FORUM_COMMENT_MAX_LENGTH) {
+  if (content && measureForumTextLength(content) > FORUM_COMMENT_MAX_LENGTH) {
     throw new Error(`Bình luận tối đa ${FORUM_COMMENT_MAX_LENGTH} ký tự.`);
   }
 
@@ -456,6 +459,7 @@ export const submitForumReply = async (params: {
     },
     body: JSON.stringify({
       content,
+      imageUrl,
       parentId,
       requestId,
     }),
@@ -469,6 +473,49 @@ export const submitForumReply = async (params: {
     };
     commentCount?: number;
   }>(response);
+};
+
+const FORUM_COMMENT_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+const FORUM_COMMENT_IMAGE_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
+export const uploadForumCommentImage = async (file: File): Promise<string> => {
+  if (!(file instanceof File)) {
+    throw new Error("Không tìm thấy ảnh để tải lên.");
+  }
+
+  const fileType = String(file.type || "").toLowerCase();
+  if (!FORUM_COMMENT_IMAGE_ALLOWED_MIME_TYPES.has(fileType)) {
+    throw new Error("Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.");
+  }
+
+  const fileSize = Number(file.size);
+  if (!Number.isFinite(fileSize) || fileSize <= 0 || fileSize > FORUM_COMMENT_IMAGE_MAX_BYTES) {
+    throw new Error("Ảnh vượt quá giới hạn 3MB.");
+  }
+
+  const formData = new FormData();
+  formData.append("image", file);
+
+  const response = await fetch("/forum/api/comments/upload-image", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/json",
+    },
+    body: formData,
+  });
+
+  const payload = await readJson<{ imageUrl?: string }>(response);
+  const imageUrl = payload && typeof payload.imageUrl === "string" ? payload.imageUrl.trim() : "";
+  if (!imageUrl) {
+    throw new Error("Không nhận được URL ảnh sau khi upload.");
+  }
+  return imageUrl;
 };
 
 export const fetchCommentReactions = async (ids: number[]): Promise<CommentReactionStateResponse> => {

@@ -48,6 +48,7 @@ export interface Post {
 export interface Comment {
   id: string;
   content: string;
+  imageUrl?: string;
   author: User;
   upvotes: number;
   downvotes: number;
@@ -132,6 +133,7 @@ export interface ForumSectionOption {
 export interface ForumApiComment {
   id: number;
   content: string;
+  imageUrl?: string;
   createdAt: string;
   timeAgo: string;
   likeCount: number;
@@ -217,6 +219,7 @@ export interface ForumPostDetailResponse {
     authenticated: boolean;
     userId: string;
     canComment: boolean;
+    commentImageUploadsEnabled?: boolean;
     canDeleteAnyComment: boolean;
     canAccessAdmin: boolean;
     canModerateForum?: boolean;

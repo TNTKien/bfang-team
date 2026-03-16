@@ -121,6 +121,16 @@ const COMMENT_MENTION_FETCH_LIMIT = 6;
 const COMMENT_FORM_NOTICE_AUTO_HIDE_MS = 5500;
 const COMMENT_LINK_LABEL_FETCH_LIMIT = 40;
 const COMMENT_FRESH_BYPASS_QUERY_PARAM = "__bfv";
+const COMMENT_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+const COMMENT_IMAGE_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif"
+]);
+const COMMENT_LH3_DISPLAY_SIZE = 450;
+const COMMENT_LH3_ORIGINAL_SIZE = 0;
+const LH3_IMAGE_MAX_SIZE = 4096;
 const commentLinkLabelApiPath = "/comments/link-labels";
 const commentTurnstileApiPath = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 const commentTurnstilePublicConfig =
@@ -304,6 +314,8 @@ const commentMentionStates = new Set();
 const commentFormNoticeTimerMap = new WeakMap();
 const commentTurnstileStateMap = new WeakMap();
 const commentRateLimitUntilMap = new WeakMap();
+const commentImagePreviewUrlMap = new WeakMap();
+const commentImageDraftFileMap = new WeakMap();
 let commentUserDialogState = null;
 let commentUserDialogRequestToken = 0;
 let emojiMartScriptPromise = null;
@@ -447,6 +459,55 @@ const loadEmojiMartI18n = () => {
 };
 
 const toSafeText = (value) => (value == null ? "" : String(value)).trim();
+
+const buildLh3SizedImageUrl = (value, sizeValue) => {
+  const raw = toSafeText(value);
+  if (!raw) return "";
+
+  let parsed = null;
+  try {
+    parsed = new URL(raw);
+  } catch (_err) {
+    return raw;
+  }
+
+  const protocol = (parsed.protocol || "").toLowerCase();
+  if (protocol !== "https:" && protocol !== "http:") return raw;
+  const host = (parsed.hostname || "").toLowerCase();
+  if (host !== "lh3.googleusercontent.com") return raw;
+
+  const path = parsed.pathname || "";
+  const match = path.match(/^\/d\/([A-Za-z0-9_-]+)=s([0-9]+)$/i);
+  if (!match) return raw;
+
+  const fileId = match[1];
+  const parsedSize = Number(sizeValue);
+  const safeSize =
+    Number.isFinite(parsedSize) && parsedSize >= 0
+      ? Math.min(Math.floor(parsedSize), LH3_IMAGE_MAX_SIZE)
+      : COMMENT_LH3_DISPLAY_SIZE;
+  return `https://lh3.googleusercontent.com/d/${fileId}=s${safeSize}`;
+};
+
+const applyCommentImageSizing = (scope) => {
+  const root = scope && scope.querySelectorAll ? scope : document;
+  root.querySelectorAll(".comment-image-link").forEach((link) => {
+    const rawHref = toSafeText(link.getAttribute("href"), 500);
+    const sizedHref = buildLh3SizedImageUrl(rawHref, COMMENT_LH3_ORIGINAL_SIZE) || rawHref;
+    if (sizedHref && sizedHref !== rawHref) {
+      link.setAttribute("href", sizedHref);
+    }
+
+    const image = link.querySelector(".comment-image");
+    if (!(image instanceof HTMLImageElement)) return;
+
+    const rawSrc = toSafeText(image.getAttribute("src"), 500) || rawHref;
+    const sizedSrc = buildLh3SizedImageUrl(rawSrc, COMMENT_LH3_DISPLAY_SIZE) || rawSrc;
+    if (sizedSrc && sizedSrc !== rawSrc) {
+      image.setAttribute("src", sizedSrc);
+    }
+  });
+};
 const commentProfileUsernamePattern = /^[a-z0-9_]{1,24}$/i;
 
 const normalizeCommentProfileUrl = ({ value, allowedHosts, canonicalHost, maxLength }) => {
@@ -2187,6 +2248,17 @@ const ensureCommentComposerTools = (textarea) => {
 
   ensureCommentComposeShell(textarea);
   ensureCommentMentionAutocomplete(textarea);
+  const composeShell = textarea.closest ? textarea.closest(".comment-compose-shell") : null;
+
+  const form = textarea.form || (textarea.closest ? textarea.closest("form") : null);
+  const section = form && form.closest ? form.closest(commentSelectors.section) : null;
+  const sectionScope = toSafeText(
+    section && section.getAttribute ? section.getAttribute("data-comment-scope") : ""
+  ).toLowerCase();
+  const inlineSubmitWithTools = sectionScope !== "chapter";
+  const imageConfig = getCommentImageUploadConfig(form);
+  const hiddenImageInput = form ? ensureCommentImageHiddenInput(form) : null;
+  syncCommentTextareaRequiredState(textarea, hiddenImageInput);
 
   const tools = document.createElement("div");
   tools.className = "comment-tools";
@@ -2216,6 +2288,40 @@ const ensureCommentComposerTools = (textarea) => {
   tools.appendChild(buildCommentEmojiPicker(textarea));
   tools.appendChild(buildCommentStickerPicker(textarea));
 
+  let imageFileInput = null;
+  let imagePreviewRow = null;
+  let imagePreviewWrap = null;
+  let imagePreviewImage = null;
+  let imageClearButton = null;
+  let imageTrigger = null;
+
+  if (imageConfig.enabled && form) {
+    imageTrigger = document.createElement("label");
+    imageTrigger.className = "comment-picker__toggle";
+    imageTrigger.title = "Gửi ảnh";
+    imageTrigger.setAttribute("aria-label", "Gửi ảnh");
+    imageTrigger.setAttribute("role", "button");
+    imageTrigger.setAttribute("data-comment-image-trigger", "");
+    imageTrigger.tabIndex = 0;
+    imageTrigger.setAttribute("aria-disabled", "false");
+    imageTrigger.innerHTML = "<i class='fa-regular fa-image' aria-hidden='true'></i>";
+
+    imageFileInput = document.createElement("input");
+    imageFileInput.type = "file";
+    imageFileInput.accept = "image/*";
+    imageFileInput.hidden = true;
+    imageFileInput.setAttribute("data-comment-image-input", "");
+    imageTrigger.addEventListener("keydown", (event) => {
+      if (!event) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (imageFileInput.disabled) return;
+      imageFileInput.click();
+    });
+    imageTrigger.appendChild(imageFileInput);
+    tools.appendChild(imageTrigger);
+  }
+
   const parent = textarea.parentElement;
   const counterId = (textarea.dataset.commentCounterId || "").trim();
   const counterEl = counterId ? document.getElementById(counterId) : null;
@@ -2242,6 +2348,54 @@ const ensureCommentComposerTools = (textarea) => {
     metaRow.appendChild(counterEl);
   }
 
+  if (imageConfig.enabled && form) {
+    imagePreviewRow = document.createElement("div");
+    imagePreviewRow.className = "comment-image-preview-row";
+    imagePreviewRow.hidden = true;
+
+    imagePreviewWrap = document.createElement("div");
+    imagePreviewWrap.className = "comment-image-preview";
+    imagePreviewWrap.hidden = true;
+
+    imagePreviewImage = document.createElement("img");
+    imagePreviewImage.className = "comment-image-preview__img";
+    imagePreviewImage.alt = "Ảnh chuẩn bị gửi";
+    imagePreviewImage.loading = "lazy";
+    imagePreviewImage.referrerPolicy = "no-referrer";
+
+    const imagePreviewMedia = document.createElement("span");
+    imagePreviewMedia.className = "comment-image-preview__media";
+
+    const imagePreviewLoading = document.createElement("span");
+    imagePreviewLoading.className = "comment-image-preview__loading";
+    imagePreviewLoading.innerHTML = "<i class='fa-solid fa-spinner' aria-hidden='true'></i>";
+
+    imageClearButton = document.createElement("button");
+    imageClearButton.type = "button";
+    imageClearButton.className = "comment-picker__toggle comment-picker__toggle--remove-image";
+    imageClearButton.innerHTML = "<i class='fa-solid fa-xmark' aria-hidden='true'></i>";
+    imageClearButton.setAttribute("aria-label", "Xóa ảnh");
+    imageClearButton.setAttribute("data-comment-image-clear", "");
+    imageClearButton.title = "Xóa ảnh";
+
+    imagePreviewMedia.appendChild(imagePreviewImage);
+    imagePreviewMedia.appendChild(imagePreviewLoading);
+    imagePreviewWrap.appendChild(imagePreviewMedia);
+    imagePreviewWrap.appendChild(imageClearButton);
+
+    imagePreviewRow.appendChild(imagePreviewWrap);
+
+    if (composeShell && metaRow && metaRow.parentElement === composeShell) {
+      metaRow.insertAdjacentElement("beforebegin", imagePreviewRow);
+    } else if (composeShell) {
+      composeShell.appendChild(imagePreviewRow);
+    } else if (metaRow && metaRow.parentElement) {
+      metaRow.insertAdjacentElement("beforebegin", imagePreviewRow);
+    } else {
+      form.appendChild(imagePreviewRow);
+    }
+  }
+
   if (metaRow.firstChild) {
     metaRow.insertBefore(tools, metaRow.firstChild);
   } else {
@@ -2251,6 +2405,80 @@ const ensureCommentComposerTools = (textarea) => {
   if (counterEl && counterEl.parentElement !== tools) {
     tools.appendChild(counterEl);
   }
+
+  const submitWrap = composeShell ? composeShell.querySelector(".comment-submit") : null;
+  if (inlineSubmitWithTools && submitWrap && submitWrap.parentElement !== metaRow) {
+    metaRow.appendChild(submitWrap);
+  }
+  if (form) {
+    form.classList.toggle("comment-form--inline-submit", inlineSubmitWithTools);
+    form.classList.toggle("comment-form--chapter", sectionScope === "chapter");
+  }
+
+  if (imageConfig.enabled && form && imageFileInput && imagePreviewWrap && imagePreviewImage && imageClearButton) {
+    imageFileInput.addEventListener("click", () => {
+      if (form.getAttribute(COMMENT_SUBMIT_BUSY_ATTR) === "1") return;
+      imageFileInput.value = "";
+    });
+
+    imageClearButton.addEventListener("click", () => {
+      clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
+      syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+      hideCommentFormNotice(form);
+    });
+
+    imageFileInput.addEventListener("change", async () => {
+      if (form.getAttribute(COMMENT_SUBMIT_BUSY_ATTR) === "1") {
+        showCommentFormNotice(form, "Ảnh đang tải lên, vui lòng đợi xong rồi chọn ảnh mới.", {
+          tone: "error",
+          autoHideMs: 2200
+        });
+        imageFileInput.value = "";
+        return;
+      }
+      const file = imageFileInput.files && imageFileInput.files[0] ? imageFileInput.files[0] : null;
+      if (!file) {
+        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
+        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+        return;
+      }
+
+      const mimeType = toSafeText(file.type).toLowerCase();
+      if (!COMMENT_IMAGE_ALLOWED_MIME_TYPES.has(mimeType)) {
+        showCommentFormNotice(form, "Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.", { tone: "error" });
+        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
+        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+        return;
+      }
+
+      const fileSize = Number(file.size);
+      if (!Number.isFinite(fileSize) || fileSize <= 0 || fileSize > COMMENT_IMAGE_MAX_BYTES) {
+        showCommentFormNotice(form, "Ảnh vượt quá giới hạn 3MB.", { tone: "error" });
+        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
+        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+        return;
+      }
+
+      const objectUrl = URL.createObjectURL(file);
+      revokeCommentImagePreviewObjectUrl(form);
+      commentImagePreviewUrlMap.set(form, objectUrl);
+      commentImageDraftFileMap.set(form, file);
+      imagePreviewImage.src = objectUrl;
+      imagePreviewWrap.hidden = false;
+      if (imagePreviewRow) {
+        imagePreviewRow.hidden = false;
+      }
+      if (hiddenImageInput) {
+        hiddenImageInput.value = "";
+      }
+      syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+      imageFileInput.value = "";
+    });
+  }
+
+  textarea.addEventListener("input", () => {
+    syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+  });
 
   textarea.dataset.commentToolsReady = "1";
 };
@@ -3097,6 +3325,146 @@ const buildReplyForm = (action, parentId) => {
   return wrapper;
 };
 
+const getCommentImageUploadConfig = (form) => {
+  const section = form && form.closest ? form.closest(commentSelectors.section) : null;
+  if (!section || !section.getAttribute) {
+    return {
+      enabled: false,
+      uploadUrl: ""
+    };
+  }
+
+  const uploadUrl = toSafeText(section.getAttribute("data-comment-image-upload-url"), 300);
+  const enabled = (section.getAttribute("data-comment-image-upload-enabled") || "") === "1";
+  return {
+    enabled: Boolean(enabled && uploadUrl),
+    uploadUrl
+  };
+};
+
+const ensureCommentImageHiddenInput = (form) => {
+  if (!form || !form.querySelector) return null;
+  let hiddenInput = form.querySelector("input[name='imageUrl']");
+  if (hiddenInput instanceof HTMLInputElement) {
+    return hiddenInput;
+  }
+
+  hiddenInput = document.createElement("input");
+  hiddenInput.type = "hidden";
+  hiddenInput.name = "imageUrl";
+  hiddenInput.value = "";
+  form.appendChild(hiddenInput);
+  return hiddenInput;
+};
+
+const revokeCommentImagePreviewObjectUrl = (form) => {
+  const activeUrl = toSafeText(commentImagePreviewUrlMap.get(form), 500);
+  if (!activeUrl) return;
+  try {
+    URL.revokeObjectURL(activeUrl);
+  } catch (_err) {
+    // ignore
+  }
+  commentImagePreviewUrlMap.delete(form);
+};
+
+const clearCommentImagePreview = (form, previewWrap, previewImage, fileInput, hiddenInput) => {
+  const previewRow =
+    previewWrap && previewWrap.closest
+      ? previewWrap.closest(".comment-image-preview-row")
+      : null;
+  revokeCommentImagePreviewObjectUrl(form);
+  commentImageDraftFileMap.delete(form);
+  if (fileInput) {
+    fileInput.value = "";
+  }
+  if (hiddenInput) {
+    hiddenInput.value = "";
+  }
+  if (previewImage) {
+    previewImage.removeAttribute("src");
+  }
+  if (previewWrap) {
+    previewWrap.hidden = true;
+  }
+  if (previewRow) {
+    previewRow.hidden = true;
+  }
+};
+
+const setCommentImageControlsBusy = (form, busy) => {
+  if (!form) return;
+  const nextBusy = Boolean(busy);
+  const trigger = form.querySelector("[data-comment-image-trigger]");
+  const fileInput = form.querySelector("input[data-comment-image-input]");
+  const clearButton = form.querySelector("[data-comment-image-clear]");
+
+  if (fileInput instanceof HTMLInputElement) {
+    fileInput.disabled = nextBusy;
+  }
+  if (clearButton instanceof HTMLButtonElement) {
+    clearButton.disabled = nextBusy;
+  }
+  if (trigger instanceof HTMLElement) {
+    trigger.classList.toggle("is-disabled", nextBusy);
+    trigger.setAttribute("aria-disabled", nextBusy ? "true" : "false");
+    trigger.tabIndex = nextBusy ? -1 : 0;
+  }
+};
+
+const syncCommentTextareaRequiredState = (textarea, hiddenInput) => {
+  if (!(textarea instanceof HTMLTextAreaElement)) return;
+  const contentValue = textarea.value == null ? "" : String(textarea.value).trim();
+  const imageValue = hiddenInput instanceof HTMLInputElement ? toSafeText(hiddenInput.value) : "";
+  textarea.required = !imageValue;
+  if (contentValue || imageValue) {
+    textarea.removeAttribute("aria-invalid");
+  }
+};
+
+const getCommentAccessToken = async () => {
+  let accessToken = "";
+  try {
+    if (window.BfangAuth && typeof window.BfangAuth.getAccessToken === "function") {
+      accessToken = await window.BfangAuth.getAccessToken();
+    }
+  } catch (_err) {
+    accessToken = "";
+  }
+  return toSafeText(accessToken);
+};
+
+const uploadCommentImageFile = async ({ uploadUrl, file, accessToken }) => {
+  const formData = new FormData();
+  formData.append("image", file);
+
+  const headers = {
+    Accept: "application/json"
+  };
+  const token = toSafeText(accessToken);
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    credentials: "same-origin",
+    headers,
+    body: formData
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error(readCommentErrorMessage(payload) || "Không thể tải ảnh lên.");
+  }
+
+  const imageUrl = toSafeText(payload.imageUrl, 500);
+  if (!imageUrl) {
+    throw new Error("Không thể đọc URL ảnh sau khi tải lên.");
+  }
+  return imageUrl;
+};
+
 const buildCommentItem = (comment, actionBase, isReply, options) => {
   const settings = options && typeof options === "object" ? options : {};
   const showChapterLabel = Boolean(settings.showChapterLabel);
@@ -3198,6 +3566,30 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
     mangaTitle
   });
 
+  const commentImageUrl = toSafeText(comment && comment.imageUrl ? comment.imageUrl : "", 500);
+  let imageLink = null;
+  if (commentImageUrl) {
+    const commentImageHref =
+      buildLh3SizedImageUrl(commentImageUrl, COMMENT_LH3_ORIGINAL_SIZE) || commentImageUrl;
+    const commentImageSrc =
+      buildLh3SizedImageUrl(commentImageUrl, COMMENT_LH3_DISPLAY_SIZE) || commentImageUrl;
+
+    imageLink = document.createElement("a");
+    imageLink.className = "comment-image-link";
+    imageLink.href = commentImageHref;
+    imageLink.target = "_blank";
+    imageLink.rel = "noopener noreferrer";
+
+    const image = document.createElement("img");
+    image.className = "comment-image";
+    image.src = commentImageSrc;
+    image.alt = "Ảnh bình luận";
+    image.loading = "lazy";
+    image.referrerPolicy = "no-referrer";
+
+    imageLink.appendChild(image);
+  }
+
   const actions = document.createElement("div");
   actions.className = "comment-actions";
 
@@ -3217,7 +3609,12 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
   meta.appendChild(actions);
 
   bubble.appendChild(header);
-  bubble.appendChild(text);
+  if (toSafeText(comment && comment.content ? comment.content : "")) {
+    bubble.appendChild(text);
+  }
+  if (imageLink) {
+    bubble.appendChild(imageLink);
+  }
   body.appendChild(bubble);
   body.appendChild(meta);
 
@@ -3729,6 +4126,7 @@ const replaceCommentsSectionFromPage = async (targetUrl, options) => {
 
     hideAllCommentMentionPanels();
     currentSection.replaceWith(nextSection);
+    applyCommentImageSizing(nextSection);
     initCommentRichText(nextSection);
     initCommentCharCounters(nextSection);
 
@@ -4003,7 +4401,10 @@ const handleCommentSubmit = async (form) => {
   const textarea = form.querySelector("textarea[name='content']");
   if (!textarea) return;
   const content = textarea.value.trim();
-  if (!content) {
+  const imageInput = form.querySelector("input[name='imageUrl']");
+  let imageUrl = imageInput instanceof HTMLInputElement ? toSafeText(imageInput.value, 500) : "";
+  const pendingImageFile = commentImageDraftFileMap.get(form);
+  if (!content && !imageUrl && !(pendingImageFile instanceof File)) {
     textarea.focus();
     return;
   }
@@ -4051,28 +4452,39 @@ const handleCommentSubmit = async (form) => {
     accessToken = "";
   }
 
-  if (!accessToken) {
-    const message = "Vui lòng đăng nhập bằng Google hoặc Discord để bình luận.";
-    try {
-      if (window.BfangAuth && typeof window.BfangAuth.signIn === "function") {
-        await window.BfangAuth.signIn();
-        return;
-      }
-      if (window.BfangAuth && typeof window.BfangAuth.signInWithGoogle === "function") {
-        await window.BfangAuth.signInWithGoogle();
-        return;
-      }
-    } catch (_err) {
-      // ignore
-    }
-    showCommentFormNotice(form, message, {
-      tone: "error"
-    });
-    return;
-  }
-
   setCommentSubmitBusy(form, true);
   try {
+    if (pendingImageFile instanceof File && !imageUrl) {
+      setCommentImageControlsBusy(form, true);
+      showCommentFormNotice(form, "Đang tải ảnh lên...", {
+        tone: "success",
+        autoHideMs: 2000
+      });
+      try {
+        imageUrl = await uploadCommentImageFile({
+          uploadUrl: getCommentImageUploadConfig(form).uploadUrl,
+          file: pendingImageFile,
+          accessToken
+        });
+        if (imageInput instanceof HTMLInputElement) {
+          imageInput.value = imageUrl;
+        }
+        commentImageDraftFileMap.delete(form);
+        hideCommentFormNotice(form);
+      } catch (error) {
+        showCommentFormNotice(form, error && error.message ? error.message : "Không thể tải ảnh lên.", {
+          tone: "error"
+        });
+        return;
+      } finally {
+        setCommentImageControlsBusy(form, false);
+      }
+    }
+
+    if (imageUrl) {
+      payload.imageUrl = imageUrl;
+    }
+
     const sendCommentRequest = async (turnstileToken) => {
       const requestPayload = { ...payload };
       const token = toSafeText(turnstileToken);
@@ -4080,14 +4492,19 @@ const handleCommentSubmit = async (form) => {
         requestPayload.turnstileToken = token;
       }
 
+      const headers = {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "Idempotency-Key": requestId
+      };
+      const authToken = toSafeText(accessToken);
+      if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
+      }
+
       return fetch(form.action, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "Idempotency-Key": requestId,
-          Authorization: `Bearer ${accessToken}`
-        },
+        headers,
         body: JSON.stringify(requestPayload)
       });
     };
@@ -4232,6 +4649,11 @@ const handleCommentSubmit = async (form) => {
     hydrateCommentInlineLinks(newItem).catch(() => null);
 
     textarea.value = "";
+    const previewWrap = form.querySelector(".comment-image-preview");
+    const previewImage = previewWrap ? previewWrap.querySelector(".comment-image-preview__img") : null;
+    const fileInput = form.querySelector("input[data-comment-image-input]");
+    clearCommentImagePreview(form, previewWrap, previewImage, fileInput, imageInput);
+    syncCommentTextareaRequiredState(textarea, imageInput);
     updateCommentCharCounter(textarea);
     hideAllCommentMentionPanels();
     const nextCount = result && result.commentCount != null ? Number(result.commentCount) : NaN;
@@ -4657,6 +5079,7 @@ const refreshCommentsPageUi = () => {
   refreshDeleteVisibility().catch(() => null);
   refreshCommentPermissionVisibility().catch(() => null);
   refreshReactionStates().catch(() => null);
+  applyCommentImageSizing();
   initCommentRichText();
   initCommentCharCounters();
   revealCommentTargetWithLazyHydration({ behavior: "auto", showFallback: true }).catch(() => null);

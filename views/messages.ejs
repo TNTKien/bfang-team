@@ -72,6 +72,17 @@
           </div>
           <div class="chat-message-list" data-chat-message-list></div>
           <form class="chat-compose" data-chat-compose>
+            <div class="chat-compose__preview" data-chat-image-preview hidden>
+              <span class="chat-compose__preview-media">
+                <img alt="Ảnh chuẩn bị gửi" loading="lazy" data-chat-image-thumb />
+                <span class="chat-compose__preview-loading" aria-hidden="true">
+                  <i class="fa-solid fa-spinner" aria-hidden="true"></i>
+                </span>
+              </span>
+              <button type="button" class="chat-icon-btn" data-chat-image-clear aria-label="Xóa ảnh">
+                <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+              </button>
+            </div>
             <div class="chat-compose__tools" data-chat-tools>
               <details class="chat-picker" data-chat-emoji-picker>
                 <summary class="chat-picker__trigger" title="Emoji">
@@ -85,11 +96,21 @@
                 </summary>
                 <div class="chat-picker__panel chat-picker__panel--sticker" data-chat-sticker-panel></div>
               </details>
+              <label class="chat-picker__trigger" title="Gửi ảnh" aria-label="Gửi ảnh">
+                <i class="fa-regular fa-image" aria-hidden="true"></i>
+                <input type="file" accept="image/*" hidden data-chat-image-input />
+              </label>
               <p class="note chat-compose__counter" data-chat-counter>0/300</p>
             </div>
             <div class="chat-compose__input-wrap">
               <textarea maxlength="300" rows="1" placeholder="Aa" data-chat-input></textarea>
-              <button class="chat-send-btn" type="submit" title="Gửi" aria-label="Gửi tin nhắn">
+              <button
+                class="chat-send-btn chat-send-btn--main"
+                type="submit"
+                title="Gửi"
+                aria-label="Gửi tin nhắn"
+                data-chat-send-main
+              >
                 <i class="fa-solid fa-paper-plane" aria-hidden="true"></i>
               </button>
             </div>
@@ -106,7 +127,8 @@
         initialThreads: <%- safeJsonForScript(Array.isArray(chatBootstrap && chatBootstrap.initialThreads) ? chatBootstrap.initialThreads : []) %>,
         initialThreadId: <%- safeJsonForScript(chatBootstrap && chatBootstrap.initialThreadId ? chatBootstrap.initialThreadId : 0) %>,
         initialMessages: <%- safeJsonForScript(Array.isArray(chatBootstrap && chatBootstrap.initialMessages) ? chatBootstrap.initialMessages : []) %>,
-        initialMessagesHasMore: <%- safeJsonForScript(Boolean(chatBootstrap && chatBootstrap.initialMessagesHasMore)) %>
+        initialMessagesHasMore: <%- safeJsonForScript(Boolean(chatBootstrap && chatBootstrap.initialMessagesHasMore)) %>,
+        messageImageUploadsEnabled: <%- safeJsonForScript(Boolean(chatBootstrap && chatBootstrap.messageImageUploadsEnabled)) %>
       };
     </script>
     <script src="<%= cacheBust('/messages.js', assetVersion) %>" defer></script>

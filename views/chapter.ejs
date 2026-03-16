@@ -16,7 +16,7 @@
   const chapterHeadScripts = {
     filters: false,
     admin: false,
-    comments: false,
+    comments: true,
     lazysizes: false,
     readingHistory: true
   };
@@ -178,6 +178,8 @@
           data-comment-manga-slug="<%= manga.slug %>"
           data-comment-manga-title="<%= manga.title %>"
           data-comment-scope="chapter"
+          data-comment-image-upload-url="/comments/upload-image"
+          data-comment-image-upload-enabled="<%= commentImageUploadsEnabled ? "1" : "0" %>"
           data-comment-script-src="<%= cacheBust('/comments.js', assetVersion) %>"
         >
           <% const commentPage = commentPagination && commentPagination.page ? Number(commentPagination.page) : 1; %>
@@ -187,6 +189,18 @@
             const safeTarget = Number.isFinite(targetPage) && targetPage > 0 ? Math.floor(targetPage) : 1;
             if (safeTarget <= 1) return `/manga/${manga.slug}/chapters/${chapter.number}#comments`;
             return `/manga/${manga.slug}/chapters/${chapter.number}?commentPage=${safeTarget}#comments`;
+          }; %>
+          <% const toLh3SizedImageUrl = (value, sizeValue) => {
+            const raw = String(value || "").trim();
+            if (!raw) return "";
+            const match = raw.match(/^https?:\/\/lh3\.googleusercontent\.com\/d\/([A-Za-z0-9_-]+)=s(\d+)$/i);
+            if (!match) return raw;
+            const imageId = match[1];
+            const parsedSize = Number(sizeValue);
+            const safeSize = Number.isFinite(parsedSize) && parsedSize >= 0
+              ? Math.min(Math.floor(parsedSize), 4096)
+              : 450;
+            return `https://lh3.googleusercontent.com/d/${imageId}=s${safeSize}`;
           }; %>
           <div class="section-header">
             <h2>Bình luận (<%= commentCount %>)</h2>
@@ -291,11 +305,27 @@
                       </span>
                       <span class="comment-time"><%= formatTimeAgo(comment.createdAt) %></span>
                     </div>
-                    <p
-                      class="comment-text"
-                      data-comment-raw="<%= comment.content %>"
-                      data-comment-mentions="<%= JSON.stringify(comment.mentions || []) %>"
-                    ><%= comment.content %></p>
+                    <% const commentContentText = String(comment.content || "").trim(); %>
+                    <% if (commentContentText) { %>
+                      <p
+                        class="comment-text"
+                        data-comment-raw="<%= comment.content %>"
+                        data-comment-mentions="<%= JSON.stringify(comment.mentions || []) %>"
+                      ><%= comment.content %></p>
+                    <% } %>
+                    <% if (comment.imageUrl) { %>
+                      <% const commentImageHref = toLh3SizedImageUrl(comment.imageUrl, 0); %>
+                      <% const commentImageSrc = toLh3SizedImageUrl(comment.imageUrl, 450); %>
+                      <a class="comment-image-link" href="<%= commentImageHref %>" target="_blank" rel="noopener noreferrer">
+                        <img
+                          class="comment-image"
+                          src="<%= commentImageSrc %>"
+                          alt="Ảnh bình luận"
+                          loading="lazy"
+                          referrerpolicy="no-referrer"
+                        />
+                      </a>
+                    <% } %>
                     <div class="comment-actions">
                       <form method="post" action="/comments/<%= comment.id %>/like">
                         <button
@@ -408,11 +438,27 @@
                                 </span>
                                 <span class="comment-time"><%= formatTimeAgo(reply.createdAt) %></span>
                               </div>
-                              <p
-                                class="comment-text"
-                                data-comment-raw="<%= reply.content %>"
-                                data-comment-mentions="<%= JSON.stringify(reply.mentions || []) %>"
-                              ><%= reply.content %></p>
+                              <% const replyContentText = String(reply.content || "").trim(); %>
+                              <% if (replyContentText) { %>
+                                <p
+                                  class="comment-text"
+                                  data-comment-raw="<%= reply.content %>"
+                                  data-comment-mentions="<%= JSON.stringify(reply.mentions || []) %>"
+                                ><%= reply.content %></p>
+                              <% } %>
+                              <% if (reply.imageUrl) { %>
+                                <% const replyImageHref = toLh3SizedImageUrl(reply.imageUrl, 0); %>
+                                <% const replyImageSrc = toLh3SizedImageUrl(reply.imageUrl, 450); %>
+                                <a class="comment-image-link" href="<%= replyImageHref %>" target="_blank" rel="noopener noreferrer">
+                                  <img
+                                    class="comment-image"
+                                    src="<%= replyImageSrc %>"
+                                    alt="Ảnh bình luận"
+                                    loading="lazy"
+                                    referrerpolicy="no-referrer"
+                                  />
+                                </a>
+                              <% } %>
                               <div class="comment-actions">
                                 <form method="post" action="/comments/<%= reply.id %>/like">
                                   <button

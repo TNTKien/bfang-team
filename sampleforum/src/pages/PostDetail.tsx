@@ -40,6 +40,7 @@ import {
   submitForumReply,
   toggleCommentLike,
   toggleForumPostBookmark,
+  uploadForumCommentImage,
 } from "@/lib/forum-api";
 import { openAuthProviderDialog } from "@/lib/auth-login";
 import { prepareForumPostContentForSubmit, type ForumLocalPostImage } from "@/lib/forum-local-post-images";
@@ -643,6 +644,7 @@ const PostDetail = () => {
 
   const isAuthenticated = Boolean(sessionUser && sessionUser.id);
   const canInteract = Boolean(isAuthenticated && (detail?.viewer?.canComment ?? true));
+  const forumCommentImageUploadsEnabled = Boolean(detail?.viewer?.commentImageUploadsEnabled);
   const postId = detail && detail.post && detail.post.id ? String(detail.post.id) : "";
   const canModerateForum = Boolean(detail?.viewer?.canModerateForum || detail?.viewer?.canDeleteAnyComment);
   const canCreateAnnouncement = Boolean(detail?.viewer?.canCreateAnnouncement);
@@ -808,6 +810,8 @@ const PostDetail = () => {
   }, [detail, optimisticComments, sortComments, tempPinnedRootCommentIds, tempPinnedReplyIds]);
 
   useEffect(() => {
+    void sortComments;
+    void detail?.post?.id;
     setVisibleRootCommentCount(ROOT_COMMENTS_PAGE_SIZE);
   }, [sortComments, detail?.post?.id]);
 
@@ -817,6 +821,7 @@ const PostDetail = () => {
   );
 
   const hashTargetCommentId = useMemo(() => {
+    void manualRevealToken;
     const currentHash = typeof window !== "undefined" ? window.location.hash : "";
     const rawHash = decodeURIComponent(String(currentHash || location.hash || "")).trim();
     const match = rawHash.match(/^#comment-([A-Za-z0-9_-]+)$/);
@@ -857,6 +862,9 @@ const PostDetail = () => {
   }, [hashTargetCommentId, sortedComments]);
 
   useEffect(() => {
+    void hashTargetCommentId;
+    void detail?.post?.id;
+    void manualRevealToken;
     hashScrollDoneRef.current = "";
   }, [hashTargetCommentId, detail?.post?.id, manualRevealToken]);
 
@@ -967,7 +975,9 @@ const PostDetail = () => {
 
     return () => {
       cancelled = true;
-      retryTimers.forEach((timer) => window.clearTimeout(timer));
+      retryTimers.forEach((timer) => {
+        window.clearTimeout(timer);
+      });
     };
   }, [
     detail?.post?.id,
@@ -1276,12 +1286,14 @@ const PostDetail = () => {
     content: string;
     parentId?: string;
     pendingText?: string;
+    imageUrl?: string;
   }): UiComment => {
     const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     return {
       id: pendingId,
       content: normalizeForumContentHtml(params.content),
+      imageUrl: String(params.imageUrl || "").trim(),
       author: {
         id: String(sessionUser && sessionUser.id ? sessionUser.id : "pending-user"),
         username: sessionUsername,
@@ -1621,7 +1633,7 @@ const PostDetail = () => {
     }
   };
 
-  const handleSubmitReply = async (content: string) => {
+  const handleSubmitReply = async (content: string, imageFile?: File | null) => {
     if (submitting) {
       return;
     }
@@ -1635,19 +1647,33 @@ const PostDetail = () => {
     }
     if (!detail?.post.id) return;
 
+    const safeContent = (content || "").toString().trim();
+    let pendingImagePreviewUrl = "";
+    if (imageFile instanceof File) {
+      pendingImagePreviewUrl = URL.createObjectURL(imageFile);
+    }
+
     const optimisticComment = buildOptimisticComment({
-      content,
+      content: safeContent,
       parentId: String(detail.post.id),
       pendingText: "Đang gửi bình luận...",
+      imageUrl: pendingImagePreviewUrl,
     });
 
     try {
       setSubmitting(true);
       pushOptimisticComment(optimisticComment);
+
+      let imageUrl = "";
+      if (imageFile instanceof File) {
+        imageUrl = await uploadForumCommentImage(imageFile);
+      }
+
       const payload = await submitForumReply({
         postId: detail.post.id,
-        content,
+        content: safeContent,
         parentId: detail.post.id,
+        imageUrl,
       });
 
       const persistedRootCommentId = Number(payload && payload.comment && payload.comment.id);
@@ -1672,11 +1698,14 @@ const PostDetail = () => {
       removeOptimisticComment(optimisticComment.id);
       notifyCommentRateLimit(err, "Không thể gửi bình luận.");
     } finally {
+      if (pendingImagePreviewUrl) {
+        URL.revokeObjectURL(pendingImagePreviewUrl);
+      }
       setSubmitting(false);
     }
   };
 
-  const handleReplyFromComment = async (commentId: string, content: string) => {
+  const handleReplyFromComment = async (commentId: string, content: string, imageFile?: File | null) => {
     if (submitting) {
       return;
     }
@@ -1704,19 +1733,31 @@ const PostDetail = () => {
     });
 
     const normalizedContent = (content || "").toString().trim();
+    let pendingImagePreviewUrl = "";
+    if (imageFile instanceof File) {
+      pendingImagePreviewUrl = URL.createObjectURL(imageFile);
+    }
     const optimisticComment = buildOptimisticComment({
       content: normalizedContent,
       parentId: safeParentCommentId,
       pendingText: "Đang gửi bình luận...",
+      imageUrl: pendingImagePreviewUrl,
     });
 
     try {
       setSubmitting(true);
       pushOptimisticComment(optimisticComment);
+
+      let imageUrl = "";
+      if (imageFile instanceof File) {
+        imageUrl = await uploadForumCommentImage(imageFile);
+      }
+
       const payload = await submitForumReply({
         postId: detail.post.id,
         content: normalizedContent,
         parentId: Math.floor(safeParentId),
+        imageUrl,
       });
 
       const persistedReplyId = Number(payload && payload.comment && payload.comment.id);
@@ -1739,6 +1780,9 @@ const PostDetail = () => {
       removeOptimisticComment(optimisticComment.id);
       notifyCommentRateLimit(err, "Không thể gửi phản hồi.");
     } finally {
+      if (pendingImagePreviewUrl) {
+        URL.revokeObjectURL(pendingImagePreviewUrl);
+      }
       setSubmitting(false);
     }
   };
@@ -1762,6 +1806,7 @@ const PostDetail = () => {
         <Navbar />
         <div className="mx-auto max-w-3xl px-4 py-8 space-y-3">
           <button
+            type="button"
             onClick={navigateBackToForum}
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
@@ -1793,6 +1838,7 @@ const PostDetail = () => {
       <Navbar />
       <div className="mx-auto max-w-3xl px-4 py-4">
         <button
+          type="button"
           onClick={navigateBackToForum}
           className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
         >
@@ -2037,6 +2083,7 @@ const PostDetail = () => {
               </button>
 
               <button
+                type="button"
                 onClick={handleToggleBookmark}
                 className={`flex items-center gap-1.5 text-xs transition-colors px-2 py-1.5 rounded-md hover:bg-accent ${
                   bookmarked ? "text-sticky" : "text-muted-foreground hover:text-foreground"
@@ -2059,6 +2106,7 @@ const PostDetail = () => {
                   placeholder={submitting ? "Đang gửi bình luận..." : "Viết bình luận..."}
                   mentionRootCommentId={Number(detail?.post.id) || undefined}
                   submitting={submitting}
+                  imageUploadsEnabled={forumCommentImageUploadsEnabled}
                 />
               </div>
             ) : isAuthenticated ? (
@@ -2088,6 +2136,7 @@ const PostDetail = () => {
             {(["best", "new", "old"] as const).map((s) => (
               <button
                 key={s}
+                type="button"
                 onClick={() => setSortComments(s)}
                 className={`text-xs px-2 py-1 rounded transition-colors ${
                   sortComments === s ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
@@ -2119,6 +2168,7 @@ const PostDetail = () => {
                     deletingCommentIds={deletingCommentIds}
                     mentionRootCommentId={Number(detail?.post.id) || undefined}
                     submitting={submitting}
+                    imageUploadsEnabled={forumCommentImageUploadsEnabled}
                     highlightedCommentId={highlightedCommentId}
                   />
                 ))}
@@ -2220,8 +2270,9 @@ const PostDetail = () => {
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Danh mục</label>
+                  <label htmlFor="forum-edit-category" className="text-xs font-medium text-muted-foreground mb-1.5 block">Danh mục</label>
                   <select
+                    id="forum-edit-category"
                     value={editDialogCategory}
                     onChange={(e) => setEditDialogCategory(e.target.value)}
                     className="w-full rounded-lg bg-secondary border border-border/70 text-sm text-foreground px-3 py-2.5 outline-none focus:border-border/70 focus:ring-0"

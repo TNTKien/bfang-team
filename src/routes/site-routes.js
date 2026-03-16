@@ -4,6 +4,8 @@ const registerSiteRoutes = (app, deps) => {
     AUTH_GOOGLE_STRATEGY,
     COMMENT_LINK_LABEL_FETCH_LIMIT,
     COMMENT_MAX_LENGTH,
+    commentImageUploadsEnabled,
+    messageImageUploadsEnabled,
     FORUM_COMMENT_MIN_LENGTH,
     FORUM_COMMENT_MAX_LENGTH,
     FORUM_POST_MIN_LENGTH,
@@ -72,6 +74,7 @@ const registerSiteRoutes = (app, deps) => {
     normalizeAvatarUrl,
     normalizeHomepageRow,
     normalizeNextPath,
+    normalizeUploadedImageUrl,
     normalizeProfileBio,
     normalizeProfileDiscord,
     normalizeProfileDisplayName,
@@ -105,6 +108,9 @@ const registerSiteRoutes = (app, deps) => {
     toBooleanFlag,
     toIsoDate,
     uploadAvatar,
+    uploadCommentImage,
+    uploadMessageImage,
+    uploadImageBufferToGoogleDrive,
     uploadTeamMedia,
     uploadCover,
     upsertUserProfileFromAuthUser,
@@ -124,6 +130,7 @@ const registerSiteRoutes = (app, deps) => {
   const TEAM_COMMUNITY_NAME_FAILURE_TTL_MS = 15 * 60 * 1000;
   const CHAT_MESSAGE_MAX_LENGTH = 300;
   const CHAT_POST_COOLDOWN_MS = 2000;
+  const CHAT_IMAGE_PREVIEW_TEXT = "Đã gửi ảnh";
   const TEAM_BADGE_LEADER_COLOR = "#ef4444";
   const TEAM_BADGE_MEMBER_COLOR = "#3b82f6";
   const TEAM_BADGE_LEADER_PRIORITY_FALLBACK = 55;
@@ -163,6 +170,13 @@ const registerSiteRoutes = (app, deps) => {
       .toString()
       .trim() || "chapter-view-fallback";
   let chapterViewSchemaReadyPromise = null;
+
+  const readSafeUploadedImageUrl = (value) => {
+    if (typeof normalizeUploadedImageUrl === "function") {
+      return normalizeUploadedImageUrl(value);
+    }
+    return "";
+  };
 
   const ensureChapterViewSchemaReady = async () => {
     if (chapterViewSchemaReadyPromise) {
@@ -3442,6 +3456,7 @@ app.get(
         other.avatar_url as other_avatar_url,
         msg.id as last_message_id,
         msg.content as last_message_content,
+        msg.image_url as last_message_image_url,
         msg.created_at as last_message_created_at,
         msg.sender_user_id as last_message_sender_user_id
       FROM chat_thread_members self_member
@@ -3449,7 +3464,7 @@ app.get(
       JOIN chat_thread_members other_member ON other_member.thread_id = t.id AND other_member.user_id <> self_member.user_id
       JOIN users other ON other.id = other_member.user_id
       LEFT JOIN LATERAL (
-        SELECT id, content, created_at, sender_user_id
+        SELECT id, content, image_url, created_at, sender_user_id
         FROM chat_messages m
         WHERE m.thread_id = t.id
         ORDER BY id DESC
@@ -3467,19 +3482,26 @@ app.get(
       )
       : [];
 
-    const mapThreadRow = (row) => ({
-      id: Number(row.id),
-      lastMessageAt: Number(row.last_message_created_at || row.last_message_at) || 0,
-      lastMessageId: Number(row.last_message_id) || 0,
-      lastMessageContent: (row.last_message_content || "").toString(),
-      lastMessageSenderUserId: row.last_message_sender_user_id || "",
-      otherUser: {
-        id: row.other_user_id,
-        username: row.other_username || "",
-        displayName: (row.other_display_name || "").toString().trim(),
-        avatarUrl: normalizeAvatarUrl(row.other_avatar_url || "")
-      }
-    });
+    const mapThreadRow = (row) => {
+      const safeImageUrl = readSafeUploadedImageUrl(row.last_message_image_url || "");
+      const safeContent = (row.last_message_content || "").toString();
+      const previewContent = safeContent.trim() || (safeImageUrl ? CHAT_IMAGE_PREVIEW_TEXT : "");
+      return {
+        id: Number(row.id),
+        lastMessageAt: Number(row.last_message_created_at || row.last_message_at) || 0,
+        lastMessageId: Number(row.last_message_id) || 0,
+        lastMessageContent: previewContent,
+        lastMessageImageUrl: safeImageUrl,
+        lastMessageHasImage: Boolean(safeImageUrl),
+        lastMessageSenderUserId: row.last_message_sender_user_id || "",
+        otherUser: {
+          id: row.other_user_id,
+          username: row.other_username || "",
+          displayName: (row.other_display_name || "").toString().trim(),
+          avatarUrl: normalizeAvatarUrl(row.other_avatar_url || "")
+        }
+      };
+    };
 
     let initialThreads = threadRows.map(mapThreadRow);
 
@@ -3506,7 +3528,7 @@ app.get(
     if (initialThreadId > 0) {
       const rows = await dbAll(
         `
-          SELECT id, thread_id, sender_user_id, content, created_at
+          SELECT id, thread_id, sender_user_id, content, image_url, created_at
           FROM chat_messages
           WHERE thread_id = ?
           ORDER BY id DESC
@@ -3522,6 +3544,7 @@ app.get(
           threadId: Number(row.thread_id),
           senderUserId: row.sender_user_id || "",
           content: (row.content || "").toString(),
+          imageUrl: readSafeUploadedImageUrl(row.image_url || ""),
           createdAt: Number(row.created_at) || 0
         }))
         .reverse();
@@ -3535,7 +3558,8 @@ app.get(
         initialThreads,
         initialThreadId,
         initialMessages,
-        initialMessagesHasMore
+        initialMessagesHasMore,
+        messageImageUploadsEnabled: Boolean(messageImageUploadsEnabled)
       },
       headScripts: {
         notifications: false,
@@ -5075,6 +5099,7 @@ app.get(
         other.avatar_url as other_avatar_url,
         msg.id as last_message_id,
         msg.content as last_message_content,
+        msg.image_url as last_message_image_url,
         msg.created_at as last_message_created_at,
         msg.sender_user_id as last_message_sender_user_id
       FROM chat_thread_members self_member
@@ -5082,7 +5107,7 @@ app.get(
       JOIN chat_thread_members other_member ON other_member.thread_id = t.id AND other_member.user_id <> self_member.user_id
       JOIN users other ON other.id = other_member.user_id
       LEFT JOIN LATERAL (
-        SELECT id, content, created_at, sender_user_id
+        SELECT id, content, image_url, created_at, sender_user_id
         FROM chat_messages m
         WHERE m.thread_id = t.id
         ORDER BY id DESC
@@ -5112,19 +5137,26 @@ app.get(
 
     const seenThreadIds = new Set();
     const threads = rows
-      .map((row) => ({
-        id: Number(row.id),
-        lastMessageAt: Number(row.last_message_created_at || row.last_message_at) || 0,
-        lastMessageId: Number(row.last_message_id) || 0,
-        lastMessageContent: (row.last_message_content || "").toString(),
-        lastMessageSenderUserId: row.last_message_sender_user_id || "",
-        otherUser: {
-          id: row.other_user_id,
-          username: row.other_username || "",
-          displayName: (row.other_display_name || "").toString().trim(),
-          avatarUrl: normalizeAvatarUrl(row.other_avatar_url || "")
-        }
-      }))
+      .map((row) => {
+        const safeImageUrl = readSafeUploadedImageUrl(row.last_message_image_url || "");
+        const safeContent = (row.last_message_content || "").toString();
+        const previewContent = safeContent.trim() || (safeImageUrl ? CHAT_IMAGE_PREVIEW_TEXT : "");
+        return {
+          id: Number(row.id),
+          lastMessageAt: Number(row.last_message_created_at || row.last_message_at) || 0,
+          lastMessageId: Number(row.last_message_id) || 0,
+          lastMessageContent: previewContent,
+          lastMessageImageUrl: safeImageUrl,
+          lastMessageHasImage: Boolean(safeImageUrl),
+          lastMessageSenderUserId: row.last_message_sender_user_id || "",
+          otherUser: {
+            id: row.other_user_id,
+            username: row.other_username || "",
+            displayName: (row.other_display_name || "").toString().trim(),
+            avatarUrl: normalizeAvatarUrl(row.other_avatar_url || "")
+          }
+        };
+      })
       .filter((thread) => {
         const threadId = Number(thread && thread.id);
         if (!Number.isFinite(threadId) || threadId <= 0) return false;
@@ -5173,7 +5205,7 @@ app.get(
 
     const rows = await dbAll(
       `
-        SELECT id, thread_id, sender_user_id, content, created_at
+        SELECT id, thread_id, sender_user_id, content, image_url, created_at
         FROM chat_messages
         WHERE thread_id = ?
           AND (? = 0 OR id < ?)
@@ -5192,6 +5224,7 @@ app.get(
         threadId: Number(row.thread_id),
         senderUserId: row.sender_user_id || "",
         content: (row.content || "").toString(),
+        imageUrl: readSafeUploadedImageUrl(row.image_url || ""),
         createdAt: Number(row.created_at) || 0
       }))
       .reverse();
@@ -5288,11 +5321,15 @@ app.post(
     const threadId = Number(req.params.id);
     const requestId = (req.body && req.body.requestId ? String(req.body.requestId) : "").trim().slice(0, 80);
     const content = (req.body && req.body.content ? String(req.body.content) : "").replace(/\r\n/g, "\n").trim();
+    const imageUrl = readSafeUploadedImageUrl(req.body && req.body.imageUrl ? req.body.imageUrl : "");
 
     if (!userId || !Number.isFinite(threadId) || threadId <= 0) {
       return res.status(400).json({ ok: false, error: "Yêu cầu không hợp lệ." });
     }
-    if (!content) {
+    if (imageUrl && !messageImageUploadsEnabled) {
+      return res.status(400).json({ ok: false, error: "Tính năng gửi ảnh trong tin nhắn hiện đang tắt." });
+    }
+    if (!content && !imageUrl) {
       return res.status(400).json({ ok: false, error: "Tin nhắn không được để trống." });
     }
     if (content.length > CHAT_MESSAGE_MAX_LENGTH) {
@@ -5336,10 +5373,10 @@ app.post(
 
         const inserted = await txRun(
           `
-            INSERT INTO chat_messages (thread_id, sender_user_id, content, client_request_id, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO chat_messages (thread_id, sender_user_id, content, image_url, client_request_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
           `,
-          [Math.floor(threadId), userId, content, requestId || null, now]
+          [Math.floor(threadId), userId, content, imageUrl || null, requestId || null, now]
         );
         const messageIdValue = inserted && inserted.lastID ? Number(inserted.lastID) : 0;
         if (!messageIdValue) throw new Error("Không thể gửi tin nhắn.");
@@ -5384,6 +5421,7 @@ app.post(
           threadId: Math.floor(threadId),
           messageId: Number(messageId),
           senderUserId: userId,
+          imageUrl,
           createdAt: now
         }
       });
@@ -5395,6 +5433,7 @@ app.post(
           threadId: Math.floor(threadId),
           senderUserId: userId,
           content,
+          imageUrl,
           createdAt: now
         }
       });
@@ -5414,7 +5453,7 @@ app.post(
       if (error && error.code === "23505") {
         const duplicated = await dbGet(
           `
-            SELECT id, thread_id, sender_user_id, content, created_at
+            SELECT id, thread_id, sender_user_id, content, image_url, created_at
             FROM chat_messages
             WHERE sender_user_id = ? AND client_request_id = ?
             LIMIT 1
@@ -5429,6 +5468,7 @@ app.post(
               threadId: Number(duplicated.thread_id),
               senderUserId: duplicated.sender_user_id || "",
               content: (duplicated.content || "").toString(),
+              imageUrl: readSafeUploadedImageUrl(duplicated.image_url || ""),
               createdAt: Number(duplicated.created_at) || now
             }
           });
@@ -7551,6 +7591,43 @@ app.get(
   })
 );
 
+app.post(
+  "/messages/upload-image",
+  uploadMessageImage,
+  asyncHandler(async (req, res) => {
+    const user = await requirePrivateFeatureAuthUser(req, res);
+    if (!user) return;
+
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    if (!messageImageUploadsEnabled) {
+      return res.status(503).json({
+        ok: false,
+        error: "Tính năng gửi ảnh trong tin nhắn hiện đang tắt."
+      });
+    }
+
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ ok: false, error: "Không tìm thấy ảnh để tải lên." });
+    }
+
+    const uploaded = await uploadImageBufferToGoogleDrive({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      originalName: req.file.originalname,
+      prefix: "messages"
+    });
+
+    return res.json({
+      ok: true,
+      imageUrl: uploaded.imageUrl,
+      fileId: uploaded.fileId || ""
+    });
+  })
+);
+
 app.get(
   "/manga",
   asyncHandler(async (req, res) => {
@@ -8752,6 +8829,55 @@ app.post(
 );
 
 app.post(
+  "/comments/upload-image",
+  uploadCommentImage,
+  asyncHandler(async (req, res) => {
+    const user = await requireAuthUserForComments(req, res);
+    if (!user) return;
+
+    const authorUserId = String(user.id || "").trim();
+    if (authorUserId) {
+      try {
+        const badgeContext = await getUserBadgeContext(authorUserId);
+        if (!badgeContext.permissions || badgeContext.permissions.canComment === false) {
+          return res.status(403).json({ ok: false, error: "Tài khoản của bạn hiện không có quyền tương tác." });
+        }
+      } catch (err) {
+        console.warn("Failed to load user badge context", err);
+      }
+    }
+
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    if (!commentImageUploadsEnabled) {
+      return res.status(503).json({
+        ok: false,
+        error: "Tính năng gửi ảnh trong bình luận hiện đang tắt."
+      });
+    }
+
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ ok: false, error: "Không tìm thấy ảnh để tải lên." });
+    }
+
+    const uploaded = await uploadImageBufferToGoogleDrive({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      originalName: req.file.originalname,
+      prefix: "comments"
+    });
+
+    return res.json({
+      ok: true,
+      imageUrl: uploaded.imageUrl,
+      fileId: uploaded.fileId || ""
+    });
+  })
+);
+
+app.post(
   "/manga/:slug/comments",
   asyncHandler(async (req, res) => {
     const mangaRow = await dbGet(
@@ -8810,6 +8936,7 @@ app.post(
     }
 
     const content = await censorCommentContentByForbiddenWords(req.body.content);
+    const imageUrl = readSafeUploadedImageUrl(req.body && req.body.imageUrl ? req.body.imageUrl : "");
     const mangaCommentContext = buildCommentChapterContext({
       chapterNumber: commentScope.chapterNumber,
       chapterTitle: "",
@@ -8837,7 +8964,15 @@ app.post(
       commentRequestId,
     });
 
-    if (!content) {
+    if (imageUrl && !commentImageUploadsEnabled) {
+      const message = "Tính năng gửi ảnh trong bình luận hiện đang tắt.";
+      if (wantsJson(req)) {
+        return res.status(503).json({ error: message });
+      }
+      return res.status(503).send(message);
+    }
+
+    if (!content && !imageUrl) {
       if (wantsJson(req)) {
         return res.status(400).json({ error: "Nội dung bình luận không được để trống." });
       }
@@ -8864,8 +8999,8 @@ app.post(
           return res.status(403).send(message);
         }
 
-        const plainLength = normalizeForumTextLength(content);
-        if (plainLength < FORUM_COMMENT_MIN_LENGTH) {
+        const plainLength = content ? normalizeForumTextLength(content) : 0;
+        if (content && plainLength < FORUM_COMMENT_MIN_LENGTH) {
           const message = `Bình luận cần ít nhất ${FORUM_COMMENT_MIN_LENGTH} ký tự.`;
           if (wantsJson(req)) {
             return res.status(400).json({ error: message });
@@ -8901,7 +9036,7 @@ app.post(
       }
     }
 
-    if (content.length > contentLimit.maxLength) {
+    if (content && content.length > contentLimit.maxLength) {
       const message = `${contentLimit.label} tối đa ${contentLimit.maxLength} ký tự.`;
       if (wantsJson(req)) {
         return res.status(400).json({ error: message });
@@ -8940,9 +9075,10 @@ app.post(
             : {})
         });
 
+        const duplicateSignalContent = content || `[image]${imageUrl}`;
         await ensureCommentNotDuplicateRecently({
           userId: authorUserId,
-          content,
+          content: duplicateSignalContent,
           nowMs,
           dbAll: txAll
         });
@@ -8960,11 +9096,12 @@ app.post(
               author_user_id,
               author_email,
               author_avatar_url,
+              image_url,
               client_request_id,
               content,
               created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
             [
               nextCommentId,
@@ -8975,6 +9112,7 @@ app.post(
               authorUserId,
               authorEmail,
               authorAvatarUrl,
+              imageUrl || null,
               commentRequestId,
               content,
               createdAt
@@ -8993,11 +9131,12 @@ app.post(
             author_user_id,
             author_email,
             author_avatar_url,
+            image_url,
             client_request_id,
             content,
             created_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
           [
             mangaRow.id,
@@ -9007,6 +9146,7 @@ app.post(
             authorUserId,
             authorEmail,
             authorAvatarUrl,
+            imageUrl || null,
             commentRequestId,
             content,
             createdAt
@@ -9094,6 +9234,7 @@ app.post(
           userColor: badgeContext.userColor,
           avatarUrl: authorAvatarUrl,
           content,
+          imageUrl,
           mentions: commentMentions,
           createdAt,
           timeAgo: formatTimeAgo(createdAt),
@@ -9207,6 +9348,7 @@ app.post(
     }
 
     const content = await censorCommentContentByForbiddenWords(req.body.content);
+    const imageUrl = readSafeUploadedImageUrl(req.body && req.body.imageUrl ? req.body.imageUrl : "");
     const commentRequestId = readCommentRequestId(req);
     if (!commentRequestId) {
       return sendCommentRequestIdInvalidResponse(req, res);
@@ -9228,7 +9370,15 @@ app.post(
       commentRequestId,
     });
 
-    if (!content) {
+    if (imageUrl && !commentImageUploadsEnabled) {
+      const message = "Tính năng gửi ảnh trong bình luận hiện đang tắt.";
+      if (wantsJson(req)) {
+        return res.status(503).json({ error: message });
+      }
+      return res.status(503).send(message);
+    }
+
+    if (!content && !imageUrl) {
       if (wantsJson(req)) {
         return res.status(400).json({ error: "Nội dung bình luận không được để trống." });
       }
@@ -9255,8 +9405,8 @@ app.post(
           return res.status(403).send(message);
         }
 
-        const plainLength = normalizeForumTextLength(content);
-        if (plainLength < FORUM_COMMENT_MIN_LENGTH) {
+        const plainLength = content ? normalizeForumTextLength(content) : 0;
+        if (content && plainLength < FORUM_COMMENT_MIN_LENGTH) {
           const message = `Bình luận cần ít nhất ${FORUM_COMMENT_MIN_LENGTH} ký tự.`;
           if (wantsJson(req)) {
             return res.status(400).json({ error: message });
@@ -9292,7 +9442,7 @@ app.post(
       }
     }
 
-    if (content.length > contentLimit.maxLength) {
+    if (content && content.length > contentLimit.maxLength) {
       const message = `${contentLimit.label} tối đa ${contentLimit.maxLength} ký tự.`;
       if (wantsJson(req)) {
         return res.status(400).json({ error: message });
@@ -9331,9 +9481,10 @@ app.post(
             : {})
         });
 
+        const duplicateSignalContent = content || `[image]${imageUrl}`;
         await ensureCommentNotDuplicateRecently({
           userId: authorUserId,
-          content,
+          content: duplicateSignalContent,
           nowMs,
           dbAll: txAll
         });
@@ -9351,11 +9502,12 @@ app.post(
               author_user_id,
               author_email,
               author_avatar_url,
+              image_url,
               client_request_id,
               content,
               created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
             [
               nextCommentId,
@@ -9366,6 +9518,7 @@ app.post(
               authorUserId,
               authorEmail,
               authorAvatarUrl,
+              imageUrl || null,
               commentRequestId,
               content,
               createdAt
@@ -9384,11 +9537,12 @@ app.post(
             author_user_id,
             author_email,
             author_avatar_url,
+            image_url,
             client_request_id,
             content,
             created_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
           [
             mangaRow.id,
@@ -9398,6 +9552,7 @@ app.post(
             authorUserId,
             authorEmail,
             authorAvatarUrl,
+            imageUrl || null,
             commentRequestId,
             content,
             createdAt
@@ -9485,6 +9640,7 @@ app.post(
           userColor: badgeContext.userColor,
           avatarUrl: authorAvatarUrl,
           content,
+          imageUrl,
           mentions: commentMentions,
           createdAt,
           timeAgo: formatTimeAgo(createdAt),

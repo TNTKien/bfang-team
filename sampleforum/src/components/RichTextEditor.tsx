@@ -342,6 +342,7 @@ interface RichTextEditorProps {
   draftKey?: string;
   clearDraftOnUnmount?: boolean;
   mentionRootCommentId?: number;
+  compactToolbarExtra?: React.ReactNode;
   footerContent?: React.ReactNode;
 }
 
@@ -350,6 +351,7 @@ const ToolBtn = memo(function ToolBtn({ active, onClick, children, title, disabl
 }) {
   return (
     <button
+      type="button"
       onMouseDown={(e) => { e.preventDefault(); if (!disabled) onClick(); }}
       className={`p-1 rounded transition-colors ${
         disabled
@@ -371,6 +373,7 @@ export const RichTextEditor = memo(function RichTextEditor({
   minHeight = "200px", maxHeight, compact = false, autoFocus = false, draftKey,
   clearDraftOnUnmount = false,
   mentionRootCommentId,
+  compactToolbarExtra,
   footerContent,
 }: RichTextEditorProps) {
   const [showEmoji, setShowEmoji] = useState(false);
@@ -791,7 +794,7 @@ export const RichTextEditor = memo(function RichTextEditor({
     const picker = fileInputRef.current;
     if (!picker) return;
     picker.click();
-  }, [editor, handleImageFile, isUploadingImage]);
+  }, [isUploadingImage]);
 
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -967,6 +970,13 @@ export const RichTextEditor = memo(function RichTextEditor({
           </>
         )}
 
+        {compact && compactToolbarExtra ? (
+          <>
+            <div className="w-px h-4 bg-border mx-0.5" />
+            {compactToolbarExtra}
+          </>
+        ) : null}
+
         <ToolBtn
           active={editor.isActive("spoiler")}
           onClick={toggleSpoiler}
@@ -986,6 +996,7 @@ export const RichTextEditor = memo(function RichTextEditor({
             <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-xl z-50 w-60 animate-scale-in overflow-hidden">
               <div className="flex border-b border-border">
                 <button
+                  type="button"
                   onClick={() => setEmojiTab("emoji")}
                   className={`flex-1 py-1.5 text-[11px] font-medium transition-colors ${
                     emojiTab === "emoji" ? "text-foreground border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"
@@ -994,6 +1005,7 @@ export const RichTextEditor = memo(function RichTextEditor({
                   Emoji
                 </button>
                 <button
+                  type="button"
                   onClick={() => setEmojiTab("sticker")}
                   className={`flex-1 py-1.5 text-[11px] font-medium transition-colors ${
                     emojiTab === "sticker" ? "text-foreground border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"
@@ -1006,7 +1018,7 @@ export const RichTextEditor = memo(function RichTextEditor({
               {emojiTab === "emoji" ? (
                 <div className="grid grid-cols-8 gap-0 p-1.5 max-h-36 overflow-y-auto">
                   {EMOJI_LIST.map((e) => (
-                    <button key={e} onClick={() => insertEmoji(e)} className="flex items-center justify-center w-7 h-7 hover:bg-accent rounded text-base transition-colors">
+                    <button type="button" key={e} onClick={() => insertEmoji(e)} className="flex items-center justify-center w-7 h-7 hover:bg-accent rounded text-base transition-colors">
                       {e}
                     </button>
                   ))}
@@ -1019,6 +1031,7 @@ export const RichTextEditor = memo(function RichTextEditor({
                       <div className="grid grid-cols-4 gap-1">
                         {stickerCatalog.map((sticker) => (
                           <button
+                            type="button"
                             key={sticker.code}
                             onClick={() => insertSticker(sticker.src)}
                             className="flex items-center justify-center p-1 hover:bg-accent rounded-md transition-colors"
@@ -1081,15 +1094,16 @@ export const RichTextEditor = memo(function RichTextEditor({
               }}
               placeholder="https://example.com"
               className="flex-1 rounded-md bg-secondary border border-border text-xs px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-              autoFocus
             />
             <button
+              type="button"
               onClick={submitLink}
               className="text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
             >
               Áp dụng
             </button>
             <button
+              type="button"
               onClick={clearLink}
               className="text-xs px-2 py-1 rounded-md bg-secondary text-muted-foreground hover:text-foreground transition-colors"
             >
@@ -1118,6 +1132,7 @@ export const RichTextEditor = memo(function RichTextEditor({
         <div className="absolute left-4 bottom-full mb-1 bg-card border border-border rounded-lg shadow-xl z-50 min-w-[180px] py-1 animate-scale-in">
           {filteredUsers.map((u) => (
             <button
+              type="button"
               key={u.id}
               onClick={() => insertMention(u.username)}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent transition-colors"

@@ -391,6 +391,7 @@ export const mapApiCommentToUiComment = (comment: ForumApiComment): Comment => (
     comment.content,
     Array.isArray(comment.mentions) ? comment.mentions : []
   ),
+  imageUrl: String(comment && comment.imageUrl ? comment.imageUrl : "").trim(),
   author: (() => {
     const authorBadges = dedupeBadges(Array.isArray(comment.author.badges) ? comment.author.badges : []);
     return {

@@ -2,7 +2,9 @@ const createForumApiAdminUtils = ({
   dbAll,
   dbGet,
   dbRun,
+  deleteGoogleDriveImageByFileId,
   deleteForumImageKeys,
+  extractGoogleDriveFileIdFromImageUrl,
   forumRequestIdLike,
   getB2Config,
   isForumManagedImageKey,
@@ -314,7 +316,7 @@ const createForumApiAdminUtils = ({
           FROM forum_posts c
           JOIN subtree s ON c.parent_id = s.id
         )
-        SELECT p.id, p.content
+        SELECT p.id, p.content, p.image_url
         FROM subtree
         JOIN forum_posts p ON p.id = subtree.id
       `,
@@ -364,6 +366,33 @@ const createForumApiAdminUtils = ({
     );
 
     const deletedCount = toChangedCount(result);
+
+    if (
+      deletedCount > 0 &&
+      typeof extractGoogleDriveFileIdFromImageUrl === "function" &&
+      typeof deleteGoogleDriveImageByFileId === "function"
+    ) {
+      const driveFileIds = Array.from(
+        new Set(
+          (Array.isArray(subtreeRows) ? subtreeRows : [])
+            .map((row) =>
+              extractGoogleDriveFileIdFromImageUrl(row && row.image_url ? row.image_url : "")
+            )
+            .filter(Boolean)
+        )
+      );
+
+      for (const fileId of driveFileIds) {
+        try {
+          await deleteGoogleDriveImageByFileId(fileId);
+        } catch (err) {
+          console.warn("forum admin delete drive image cleanup failed", {
+            fileId,
+            message: err && err.message ? err.message : "",
+          });
+        }
+      }
+    }
 
     if (deletedCount > 0 && removedImageKeys.length > 0 && typeof deleteForumImageKeys === "function") {
       try {

@@ -35,6 +35,8 @@ const registerForumApiRoutes = (app, deps) => {
     dbAll: baseDbAll,
     dbGet: baseDbGet,
     dbRun: baseDbRun,
+    deleteGoogleDriveImageByFileId,
+    extractGoogleDriveFileIdFromImageUrl,
     extractMentionUsernamesFromContent,
     formatTimeAgo,
     getB2Config,
@@ -42,9 +44,13 @@ const registerForumApiRoutes = (app, deps) => {
     isB2Ready,
     loadSessionUserById,
     normalizeAvatarUrl,
+    normalizeUploadedImageUrl,
     publishNotificationStreamUpdate,
     requireAdmin,
     sharp,
+    uploadCommentImage,
+    uploadImageBufferToGoogleDrive,
+    commentImageUploadsEnabled,
     withTransaction: baseWithTransaction,
   } = deps;
 
@@ -89,6 +95,13 @@ const registerForumApiRoutes = (app, deps) => {
       : null;
 
   const toText = (value) => (value == null ? "" : String(value)).trim();
+  const readSafeUploadedImageUrl = (value) => {
+    const normalized =
+      typeof normalizeUploadedImageUrl === "function"
+        ? normalizeUploadedImageUrl(value)
+        : toText(value);
+    return toText(normalized).slice(0, 500);
+  };
 
   const createCommentInteractionNotifications = async ({
     postId,
@@ -266,6 +279,7 @@ const registerForumApiRoutes = (app, deps) => {
     formatTimeAgo,
     normalizeAvatarUrl,
     normalizeForumSectionSlug,
+    normalizeUploadedImageUrl,
     toIso,
     toText
   });
@@ -285,7 +299,9 @@ const registerForumApiRoutes = (app, deps) => {
     dbAll,
     dbGet,
     dbRun,
+    deleteGoogleDriveImageByFileId,
     forumRequestIdLike: FORUM_REQUEST_ID_LIKE,
+    extractGoogleDriveFileIdFromImageUrl,
     getB2Config,
     isForumManagedImageKey,
     listImageKeysFromContent,
@@ -619,7 +635,9 @@ const registerForumApiRoutes = (app, deps) => {
         usernamesByRootId.set(resolvedRootId, new Set());
       }
       const bucket = usernamesByRootId.get(resolvedRootId);
-      mentionUsernames.forEach((username) => bucket.add(username));
+      mentionUsernames.forEach((username) => {
+        bucket.add(username);
+      });
     });
 
     const mentionProfileMapByRootId = new Map();
@@ -763,6 +781,44 @@ const registerForumApiRoutes = (app, deps) => {
   );
 
   app.post(
+    "/forum/api/comments/upload-image",
+    uploadCommentImage,
+    asyncHandler(async (req, res) => {
+      const viewer = await buildViewerContext(req);
+      if (!viewer.authenticated || !viewer.userId) {
+        return res.status(401).json({ ok: false, error: "Bạn cần đăng nhập để gửi ảnh bình luận." });
+      }
+      if (!viewer.canComment) {
+        return res.status(403).json({ ok: false, error: "Tài khoản của bạn không có quyền bình luận." });
+      }
+
+      if (!commentImageUploadsEnabled) {
+        return res.status(503).json({
+          ok: false,
+          error: "Tính năng gửi ảnh trong bình luận hiện đang tắt.",
+        });
+      }
+
+      if (!req.file || !req.file.buffer) {
+        return res.status(400).json({ ok: false, error: "Không tìm thấy ảnh để tải lên." });
+      }
+
+      const uploaded = await uploadImageBufferToGoogleDrive({
+        buffer: req.file.buffer,
+        mimeType: req.file.mimetype,
+        originalName: req.file.originalname,
+        prefix: "forum-comments",
+      });
+
+      return res.json({
+        ok: true,
+        imageUrl: uploaded.imageUrl,
+        fileId: uploaded.fileId || "",
+      });
+    })
+  );
+
+  app.post(
     "/forum/api/posts",
     asyncHandler(async (req, res) => {
       const viewer = await buildViewerContext(req);
@@ -822,7 +878,11 @@ const registerForumApiRoutes = (app, deps) => {
       const postId = normalizePositiveInt(req.params.id, 0);
       const parentIdInput = normalizePositiveInt(req.body && req.body.parentId, 0);
       const content = toText(req.body && req.body.content);
-      if (!postId || !content) {
+      const imageUrl = readSafeUploadedImageUrl(req.body && req.body.imageUrl);
+      if (imageUrl && !commentImageUploadsEnabled) {
+        return res.status(503).json({ ok: false, error: "Tính năng gửi ảnh trong bình luận hiện đang tắt." });
+      }
+      if (!postId || (!content && !imageUrl)) {
         return res.status(400).json({ ok: false, error: "Nội dung bình luận không hợp lệ." });
       }
 
@@ -854,6 +914,7 @@ const registerForumApiRoutes = (app, deps) => {
         parentId,
         authorIdentity,
         content,
+        imageUrl,
         createdAt,
         requestId,
       });
@@ -1917,7 +1978,10 @@ const registerForumApiRoutes = (app, deps) => {
             likedIdSet,
           })
         ),
-        viewer,
+        viewer: {
+          ...viewer,
+          commentImageUploadsEnabled: Boolean(commentImageUploadsEnabled),
+        },
       });
     })
   );

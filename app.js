@@ -12,6 +12,8 @@ const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const OAuth2Strategy = require("passport-oauth2").Strategy;
 const multer = require("multer");
 const sharp = require("sharp");
+const { Readable } = require("stream");
+const { google } = require("googleapis");
 const {
   S3Client,
   PutObjectCommand,
@@ -44,6 +46,8 @@ app.locals.isNewsPageEnabled = false;
 app.locals.newsPageEnabled = false;
 app.locals.isForumPageEnabled = false;
 app.locals.forumPageEnabled = false;
+app.locals.commentImageUploadsEnabled = false;
+app.locals.messageImageUploadsEnabled = false;
 const PORT = process.env.PORT || 3000;
 const appEnv = (process.env.APP_ENV || process.env.NODE_ENV || "development")
   .toString()
@@ -63,12 +67,19 @@ const isJsMinifyEnabled = parseEnvBoolean(process.env.JS_MINIFY_ENABLED, true);
 const isNewsPageEnabled = parseEnvBoolean(process.env.NEWS_PAGE_ENABLED, true);
 const isForumPageEnabled = parseEnvBoolean(process.env.FORUM_PAGE_ENABLED, false);
 const isForumPageAvailable = isForumPageEnabled && isForumFrontendAvailable;
+const isGoogleDriveUploadEnabled = parseEnvBoolean(process.env.GOOGLE_DRIVE_UPLOAD_ENABLED, false);
+const commentImageUploadsEnabled =
+  isGoogleDriveUploadEnabled && parseEnvBoolean(process.env.COMMENT_IMAGE_UPLOAD_ENABLED, false);
+const messageImageUploadsEnabled =
+  isGoogleDriveUploadEnabled && parseEnvBoolean(process.env.MESSAGE_IMAGE_UPLOAD_ENABLED, false);
 const trustProxy = parseEnvBoolean(process.env.TRUST_PROXY, false);
 app.locals.isForumPageEnabled = isForumPageEnabled;
 app.locals.isForumPageAvailable = isForumPageAvailable;
 app.locals.isNewsPageEnabled = isNewsPageEnabled;
 app.locals.newsPageEnabled = isNewsPageEnabled;
 app.locals.forumPageEnabled = isForumPageAvailable;
+app.locals.commentImageUploadsEnabled = commentImageUploadsEnabled;
+app.locals.messageImageUploadsEnabled = messageImageUploadsEnabled;
 
 const isTruthyInput = (value) => {
   const raw = (value == null ? "" : String(value)).trim().toLowerCase();
@@ -648,6 +659,296 @@ const chapterPagesUpload = multer({
     }
     return cb(null, true);
   }
+});
+
+const DRIVE_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+const DRIVE_IMAGE_ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const GOOGLE_DRIVE_CLIENT_ID = (process.env.GOOGLE_DRIVE_CLIENT_ID || "").toString().trim();
+const GOOGLE_DRIVE_CLIENT_SECRET = (process.env.GOOGLE_DRIVE_CLIENT_SECRET || "").toString().trim();
+const GOOGLE_DRIVE_REFRESH_TOKEN = (process.env.GOOGLE_DRIVE_REFRESH_TOKEN || "").toString().trim();
+const GOOGLE_DRIVE_FOLDER_ID = (process.env.GOOGLE_DRIVE_FOLDER_ID || "").toString().trim();
+const GOOGLE_DRIVE_IMAGE_SIZE_RAW = Number((process.env.GOOGLE_DRIVE_IMAGE_SIZE || "").toString().trim());
+const GOOGLE_DRIVE_IMAGE_SIZE =
+  Number.isFinite(GOOGLE_DRIVE_IMAGE_SIZE_RAW) && GOOGLE_DRIVE_IMAGE_SIZE_RAW >= 0
+    ? Math.min(Math.floor(GOOGLE_DRIVE_IMAGE_SIZE_RAW), 4096)
+    : 1600;
+
+const mimeTypeToExt = (mimeType) => {
+  const safeMimeType = (mimeType || "").toString().trim().toLowerCase();
+  if (safeMimeType === "image/jpeg") return "jpg";
+  if (safeMimeType === "image/png") return "png";
+  if (safeMimeType === "image/webp") return "webp";
+  if (safeMimeType === "image/gif") return "gif";
+  return "bin";
+};
+
+const sanitizeDriveFileName = (name, mimeType) => {
+  const rawName = (name || "").toString().trim();
+  const ext = mimeTypeToExt(mimeType);
+  const baseName = rawName
+    ? rawName
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .replace(/\.[a-zA-Z0-9]+$/, "")
+      .replace(/[^a-zA-Z0-9-_ ]+/g, "-")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+    : "image";
+  const safeBase = baseName || "image";
+  return `${safeBase}.${ext}`;
+};
+
+const buildGoogleDriveImageUrl = (fileId, sizeValue = GOOGLE_DRIVE_IMAGE_SIZE) => {
+  const safeFileId = (fileId || "").toString().trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(safeFileId)) return "";
+
+  const parsedSize = Number(sizeValue);
+  const safeSize =
+    Number.isFinite(parsedSize) && parsedSize >= 0
+      ? Math.min(Math.floor(parsedSize), 4096)
+      : GOOGLE_DRIVE_IMAGE_SIZE;
+  return `https://lh3.googleusercontent.com/d/${safeFileId}=s${safeSize}`;
+};
+
+const normalizeUploadedImageUrl = (value) => {
+  const raw = (value || "").toString().trim();
+  if (!raw || raw.length > 512) return "";
+
+  try {
+    const parsed = new URL(raw);
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== "https:" && protocol !== "http:") return "";
+
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === "drive.google.com") {
+      const pathname = parsed.pathname || "";
+      const viewMatch = pathname.match(/^\/file\/d\/([A-Za-z0-9_-]+)\/view$/i);
+      if (viewMatch) {
+        return buildGoogleDriveImageUrl(viewMatch[1]);
+      }
+
+      if (/^\/uc$/i.test(pathname)) {
+        const id = (parsed.searchParams.get("id") || "").toString().trim();
+        const exportMode = (parsed.searchParams.get("export") || "").toString().trim().toLowerCase();
+        if (/^[A-Za-z0-9_-]+$/.test(id) && (exportMode === "view" || exportMode === "download")) {
+          return buildGoogleDriveImageUrl(id);
+        }
+      }
+    }
+
+    if (hostname === "lh3.googleusercontent.com") {
+      const pathname = parsed.pathname || "";
+      const lh3Match = pathname.match(/^\/d\/([A-Za-z0-9_-]+)=s([0-9]+)$/i);
+      if (lh3Match) {
+        return buildGoogleDriveImageUrl(lh3Match[1], lh3Match[2]);
+      }
+    }
+  } catch (_err) {
+    return "";
+  }
+
+  return "";
+};
+
+const extractGoogleDriveFileIdFromImageUrl = (value) => {
+  const normalized = normalizeUploadedImageUrl(value);
+  if (!normalized) return "";
+  const match = normalized.match(/^https?:\/\/lh3\.googleusercontent\.com\/d\/([A-Za-z0-9_-]+)=s[0-9]+$/i);
+  return match && match[1] ? String(match[1]).trim() : "";
+};
+
+const deleteGoogleDriveImageByFileId = async (fileId) => {
+  const safeFileId = (fileId || "").toString().trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(safeFileId)) return false;
+
+  const drive = getGoogleDriveApiClient();
+  try {
+    await drive.files.delete({
+      fileId: safeFileId,
+      supportsAllDrives: true
+    });
+    return true;
+  } catch (error) {
+    const statusCode = Number(
+      error &&
+      (error.statusCode ||
+        error.code ||
+        (error.response && error.response.status ? error.response.status : 0))
+    );
+    if (statusCode === 404) {
+      return false;
+    }
+    throw error;
+  }
+};
+
+let googleDriveApiClient = null;
+
+const getGoogleDriveApiClient = () => {
+  if (googleDriveApiClient) return googleDriveApiClient;
+
+  if (!GOOGLE_DRIVE_CLIENT_ID || !GOOGLE_DRIVE_CLIENT_SECRET || !GOOGLE_DRIVE_REFRESH_TOKEN) {
+    const error = new Error("Google Drive chưa được cấu hình đầy đủ.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const oauth2Client = new google.auth.OAuth2(GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET);
+  oauth2Client.setCredentials({
+    refresh_token: GOOGLE_DRIVE_REFRESH_TOKEN
+  });
+
+  googleDriveApiClient = google.drive({ version: "v3", auth: oauth2Client });
+  return googleDriveApiClient;
+};
+
+const uploadImageBufferToGoogleDrive = async ({ buffer, mimeType, originalName, prefix }) => {
+  if (!isGoogleDriveUploadEnabled) {
+    const error = new Error("Tính năng upload ảnh hiện đang tắt.");
+    error.statusCode = 503;
+    throw error;
+  }
+
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length <= 0) {
+    const error = new Error("File ảnh upload không hợp lệ.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const safeMimeType = (mimeType || "").toString().trim().toLowerCase();
+  if (!DRIVE_IMAGE_ALLOWED_MIME_TYPES.has(safeMimeType)) {
+    const error = new Error("Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const drive = getGoogleDriveApiClient();
+  const safePrefix = (prefix || "uploads")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "") || "uploads";
+  const fileName = `${Date.now()}-${safePrefix}-${sanitizeDriveFileName(originalName, safeMimeType)}`;
+
+  const requestBody = {
+    name: fileName
+  };
+  if (GOOGLE_DRIVE_FOLDER_ID) {
+    requestBody.parents = [GOOGLE_DRIVE_FOLDER_ID];
+  }
+
+  try {
+    const createResult = await drive.files.create({
+      requestBody,
+      media: {
+        mimeType: safeMimeType,
+        body: Readable.from(buffer)
+      },
+      fields: "id,name,mimeType",
+      supportsAllDrives: true
+    });
+
+    const fileId = createResult && createResult.data && createResult.data.id ? String(createResult.data.id).trim() : "";
+    if (!fileId) {
+      const error = new Error("Google Drive không trả về file id.");
+      error.statusCode = 500;
+      throw error;
+    }
+
+    await drive.permissions.create({
+      fileId,
+      requestBody: {
+        type: "anyone",
+        role: "reader"
+      },
+      supportsAllDrives: true
+    });
+
+    return {
+      fileId,
+      imageUrl: buildGoogleDriveImageUrl(fileId),
+      viewUrl: `https://drive.google.com/file/d/${fileId}/view`
+    };
+  } catch (error) {
+    const messageFromGoogle =
+      error && error.response && error.response.data && error.response.data.error && error.response.data.error.message
+        ? String(error.response.data.error.message)
+        : "";
+    const wrapped = new Error(
+      `Upload ảnh lên Google Drive thất bại${messageFromGoogle ? `: ${messageFromGoogle}` : "."}`
+    );
+    wrapped.statusCode = error && error.statusCode ? error.statusCode : 500;
+    throw wrapped;
+  }
+};
+
+const createImageUploadMiddleware = ({ uploader, fieldName, maxSizeLabel }) => {
+  return (req, res, next) => {
+    uploader.single(fieldName)(req, res, (err) => {
+      if (!err) return next();
+
+      const respondError = (statusCode, message) => {
+        if (typeof wantsJson === "function" && wantsJson(req)) {
+          return res.status(statusCode).json({ ok: false, error: message });
+        }
+        return res.status(statusCode).send(message);
+      };
+
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return respondError(400, `Ảnh tối đa ${maxSizeLabel}.`);
+        }
+        return respondError(400, "Upload ảnh thất bại.");
+      }
+
+      return respondError(400, err.message || "Upload ảnh thất bại.");
+    });
+  };
+};
+
+const commentImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: DRIVE_IMAGE_MAX_BYTES
+  },
+  fileFilter: (_req, file, cb) => {
+    const safeMimeType = (file && file.mimetype ? String(file.mimetype) : "").toLowerCase();
+    if (!DRIVE_IMAGE_ALLOWED_MIME_TYPES.has(safeMimeType)) {
+      return cb(new Error("Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP."));
+    }
+    return cb(null, true);
+  }
+});
+
+const messageImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: DRIVE_IMAGE_MAX_BYTES
+  },
+  fileFilter: (_req, file, cb) => {
+    const safeMimeType = (file && file.mimetype ? String(file.mimetype) : "").toLowerCase();
+    if (!DRIVE_IMAGE_ALLOWED_MIME_TYPES.has(safeMimeType)) {
+      return cb(new Error("Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP."));
+    }
+    return cb(null, true);
+  }
+});
+
+const uploadCommentImage = createImageUploadMiddleware({
+  uploader: commentImageUpload,
+  fieldName: "image",
+  maxSizeLabel: "3MB"
+});
+
+const uploadMessageImage = createImageUploadMiddleware({
+  uploader: messageImageUpload,
+  fieldName: "image",
+  maxSizeLabel: "3MB"
 });
 
 const uploadCover = (req, res, next) => {
@@ -2023,6 +2324,7 @@ const mapCommentRow = (row, session) => {
     userColor,
     avatarUrl,
     content: row.content,
+    imageUrl: normalizeUploadedImageUrl(row && row.image_url ? row.image_url : ""),
     mentions: safeMentions,
     createdAt: row.created_at,
     parentId: row.parent_id,
@@ -2169,7 +2471,7 @@ const deleteCommentCascade = async (commentId, options = {}) => {
           FROM ${tableName} c
           JOIN subtree s ON c.parent_id = s.id
         )
-        SELECT c.id, c.content
+        SELECT c.id, c.content, c.image_url
         FROM ${tableName} c
         JOIN subtree s ON c.id = s.id
       `,
@@ -2221,6 +2523,25 @@ const deleteCommentCascade = async (commentId, options = {}) => {
   const subtreeRows = deletionResult && Array.isArray(deletionResult.rows) ? deletionResult.rows : [];
 
   if (!deletedCount) return 0;
+
+  const driveFileIds = Array.from(
+    new Set(
+      subtreeRows
+        .map((row) => extractGoogleDriveFileIdFromImageUrl(row && row.image_url ? row.image_url : ""))
+        .filter(Boolean)
+    )
+  );
+
+  for (const fileId of driveFileIds) {
+    try {
+      await deleteGoogleDriveImageByFileId(fileId);
+    } catch (err) {
+      console.warn("Failed to cleanup Google Drive comment image", {
+        fileId,
+        message: err && err.message ? err.message : "",
+      });
+    }
+  }
 
   const b2Config = typeof getB2Config === "function" ? getB2Config() : null;
   const canCleanupForumStorage =
@@ -2553,6 +2874,7 @@ const getPaginatedCommentTree = async ({ mangaId, chapterNumber, page, perPage, 
         c.author_user_id,
         c.author_avatar_url,
         c.content,
+        c.image_url,
         c.created_at,
         c.parent_id,
         c.like_count,
@@ -2574,6 +2896,7 @@ const getPaginatedCommentTree = async ({ mangaId, chapterNumber, page, perPage, 
         child.author_user_id,
         child.author_avatar_url,
         child.content,
+        child.image_url,
         child.created_at,
         child.parent_id,
         child.like_count,
@@ -3526,6 +3849,8 @@ const appContainer = {
   getPublicOriginFromRequest,
   getUserBadgeContext,
   hasOwnObjectKey,
+  commentImageUploadsEnabled,
+  messageImageUploadsEnabled,
   isJsMinifyEnabled,
   isDuplicateCommentRequestError,
   isOauthProviderEnabled,
@@ -3544,6 +3869,8 @@ const appContainer = {
   normalizeAvatarUrl,
   normalizeHomepageRow,
   normalizeNextPath,
+  normalizeUploadedImageUrl,
+  extractGoogleDriveFileIdFromImageUrl,
   normalizeProfileBio,
   normalizeProfileDiscord,
   normalizeProfileDisplayName,
@@ -3577,7 +3904,11 @@ const appContainer = {
   toBooleanFlag,
   toIsoDate,
   uploadAvatar,
+  uploadCommentImage,
+  deleteGoogleDriveImageByFileId,
+  uploadMessageImage,
   uploadTeamMedia,
+  uploadImageBufferToGoogleDrive,
   upsertUserProfileFromAuthUser,
   wantsJson,
   withTransaction,

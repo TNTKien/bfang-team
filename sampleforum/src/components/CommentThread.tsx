@@ -1,6 +1,6 @@
 import { useEffect, useState, memo } from "react";
 import { Comment } from "@/types/forum";
-import { Flag, Trash2, Edit3 } from "lucide-react";
+import { Flag, Trash2, Edit3, Reply, ThumbsUp } from "lucide-react";
 import { CommentInput } from "@/components/CommentInput";
 import { ForumRichContent } from "@/components/ForumRichContent";
 import { RichTextEditor } from "@/components/RichTextEditor";
@@ -25,6 +25,23 @@ const buildReplyPreviewText = (value: string): string => {
   return text || "(Không có nội dung)";
 };
 
+const compactForumRelativeTime = (value: string): string => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const hourMatch = raw.match(/^(\d+)\s*giờ trước$/i);
+  if (hourMatch && hourMatch[1]) {
+    return `${hourMatch[1]}h`;
+  }
+
+  const minuteMatch = raw.match(/^(\d+)\s*phút trước$/i);
+  if (minuteMatch && minuteMatch[1]) {
+    return `${minuteMatch[1]}m`;
+  }
+
+  return raw;
+};
+
 interface CommentThreadProps {
   comment: Comment;
   depth?: number;
@@ -33,7 +50,7 @@ interface CommentThreadProps {
   highlightedCommentId?: string;
   forceExpandedParentIds?: Set<string>;
   forceVisibleReplyCountByParentId?: Record<string, number>;
-  onReplySubmit?: (commentId: string, content: string) => void;
+  onReplySubmit?: (commentId: string, content: string, imageFile?: File | null) => void;
   onToggleLike?: (commentId: string) => void;
   onEditSubmit?: (commentId: string, content: string) => Promise<boolean | void> | boolean | void;
   onDelete?: (commentId: string) => void;
@@ -43,6 +60,7 @@ interface CommentThreadProps {
   pendingActionIds?: Set<string>;
   deletingCommentIds?: Set<string>;
   mentionRootCommentId?: number;
+  imageUploadsEnabled?: boolean;
 }
 
 const SingleComment = memo(function SingleComment({
@@ -61,6 +79,7 @@ const SingleComment = memo(function SingleComment({
   pendingActionIds,
   deletingCommentIds,
   mentionRootCommentId,
+  imageUploadsEnabled,
   submitting,
   isTargeted,
 }: {
@@ -70,7 +89,7 @@ const SingleComment = memo(function SingleComment({
   showReply: boolean;
   canReply: boolean;
   submitting?: boolean;
-  onReplySubmit?: (commentId: string, content: string) => void;
+  onReplySubmit?: (commentId: string, content: string, imageFile?: File | null) => void;
   onToggleLike?: (commentId: string) => void;
   onEditSubmit?: (commentId: string, content: string) => Promise<boolean | void> | boolean | void;
   onDelete?: (commentId: string) => void;
@@ -80,6 +99,7 @@ const SingleComment = memo(function SingleComment({
   pendingActionIds?: Set<string>;
   deletingCommentIds?: Set<string>;
   mentionRootCommentId?: number;
+  imageUploadsEnabled?: boolean;
   isTargeted?: boolean;
 }) {
   const permissions = comment.permissions || {
@@ -111,6 +131,7 @@ const SingleComment = memo(function SingleComment({
       : comment.author.role === "moderator"
         ? !hasModBadge
         : false;
+  const compactCreatedAt = compactForumRelativeTime(comment.createdAt);
 
   useEffect(() => {
     setEditContent(comment.content || "");
@@ -265,6 +286,20 @@ const SingleComment = memo(function SingleComment({
               className="forum-rich-content text-[13px] text-foreground/90 mt-0.5 leading-relaxed"
             />
           )}
+
+          {comment.imageUrl ? (
+            <div className="mt-2">
+              <a href={comment.imageUrl} target="_blank" rel="noreferrer" className="inline-block max-w-[240px]">
+                <img
+                  src={comment.imageUrl}
+                  alt="Ảnh bình luận"
+                  className="h-auto w-full rounded-md border border-border/70 object-cover"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              </a>
+            </div>
+          ) : null}
         </div>
 
         <div className={`flex items-center gap-2 mt-0.5 px-1${isTargeted ? " forum-comment-meta-targeted" : ""}`}>
@@ -291,17 +326,23 @@ const SingleComment = memo(function SingleComment({
                   isLiked ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 }`}
                 disabled={isBusy}
+                aria-label="Thích"
+                title="Thích"
               >
-                Thích
+                <ThumbsUp className="h-3 w-3 sm:hidden" />
+                <span className="hidden sm:inline">Thích</span>
                 <span className="text-muted-foreground">{comment.upvotes || 0}</span>
               </button>
               {depth === 0 && canReplyHere && (
                 <button
                   onClick={onReplyToggle}
-                  className="text-[11px] text-muted-foreground hover:text-foreground font-medium transition-colors"
+                  className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground font-medium transition-colors"
                   type="button"
+                  aria-label="Trả lời"
+                  title="Trả lời"
                 >
-                  Trả lời
+                  <Reply className="h-3 w-3 sm:hidden" />
+                  <span className="hidden sm:inline">Trả lời</span>
                 </button>
               )}
               {permissions.canEdit && (
@@ -320,8 +361,11 @@ const SingleComment = memo(function SingleComment({
                   onClick={handleDelete}
                   type="button"
                   disabled={isBusy}
+                  aria-label="Xóa"
+                  title="Xóa"
                 >
-                  <Trash2 className="h-3 w-3" /> Xóa
+                  <Trash2 className="h-3 w-3" />
+                  <span className="hidden sm:inline">Xóa</span>
                 </button>
               )}
               {permissions.canReport && (
@@ -332,11 +376,14 @@ const SingleComment = memo(function SingleComment({
                   onClick={handleReport}
                   type="button"
                   disabled={isBusy || isReported}
+                  aria-label={isReported ? "Đã báo cáo" : "Báo cáo"}
+                  title={isReported ? "Đã báo cáo" : "Báo cáo"}
                 >
-                  <Flag className="h-3 w-3" /> {isReported ? "Đã báo cáo" : "Báo cáo"}
+                  <Flag className="h-3 w-3" />
+                  <span className="hidden sm:inline">{isReported ? "Đã báo cáo" : "Báo cáo"}</span>
                 </button>
               )}
-              <span className="text-[11px] text-muted-foreground">{comment.createdAt}</span>
+              <span className="text-[11px] text-muted-foreground">{compactCreatedAt}</span>
             </>
           )}
         </div>
@@ -345,9 +392,9 @@ const SingleComment = memo(function SingleComment({
           <div className="mt-1.5">
             <CommentInput
               placeholder={`Trả lời ${comment.author.displayName || comment.author.username}...`}
-              onSubmit={(content) => {
+              onSubmit={(content, imageFile) => {
                 if (typeof onReplySubmit === "function") {
-                  onReplySubmit(comment.id, content);
+                  onReplySubmit(comment.id, content, imageFile);
                 }
                 onReplyToggle();
               }}
@@ -355,6 +402,7 @@ const SingleComment = memo(function SingleComment({
               autoFocus
               mentionRootCommentId={mentionRootCommentId}
               submitting={Boolean(submitting)}
+              imageUploadsEnabled={Boolean(imageUploadsEnabled)}
             />
           </div>
         )}
@@ -380,6 +428,7 @@ export const CommentThread = memo(function CommentThread({
   pendingActionIds,
   deletingCommentIds,
   mentionRootCommentId,
+  imageUploadsEnabled,
   submitting,
 }: CommentThreadProps) {
   const [showReply, setShowReply] = useState(false);
@@ -439,6 +488,7 @@ export const CommentThread = memo(function CommentThread({
         deletingCommentIds={deletingCommentIds}
         mentionRootCommentId={mentionRootCommentId}
         submitting={submitting}
+        imageUploadsEnabled={imageUploadsEnabled}
         isTargeted={isTargeted}
       />
 
@@ -463,6 +513,7 @@ export const CommentThread = memo(function CommentThread({
                 pendingActionIds={pendingActionIds}
                 deletingCommentIds={deletingCommentIds}
                 mentionRootCommentId={mentionRootCommentId}
+                imageUploadsEnabled={imageUploadsEnabled}
                 submitting={submitting}
                 highlightedCommentId={highlightedCommentId}
               />
@@ -486,17 +537,10 @@ export const CommentThread = memo(function CommentThread({
           </div>
         ) : (
           <div className="ml-9 mt-1">
-            <div
-              role="button"
-              tabIndex={0}
+            <button
+              type="button"
               onClick={expandReplies}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  expandReplies();
-                }
-              }}
-              className="rounded-md border-l border-border/80 pl-3 pr-2 py-1.5 cursor-pointer hover:bg-secondary/40 transition-colors"
+              className="w-full text-left rounded-md border-l border-border/80 pl-3 pr-2 py-1.5 cursor-pointer hover:bg-secondary/40 transition-colors"
             >
               <div className="space-y-1.5">
                 {previewReplies.map((reply) => (
@@ -529,7 +573,7 @@ export const CommentThread = memo(function CommentThread({
                   ? `Xem thêm ${remainingPreviewReplies} phản hồi`
                   : `Xem ${replies.length} phản hồi`}
               </div>
-            </div>
+            </button>
           </div>
         )
       ) : null}

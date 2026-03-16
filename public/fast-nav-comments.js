@@ -18,6 +18,8 @@
       const scriptSrc =
         (commentsRoot.getAttribute("data-comment-script-src") || "").toString().trim() || "/comments.js";
       const isLazyCommentsSection = commentsRoot.getAttribute("data-comment-lazy") === "1";
+      const commentScope = (commentsRoot.getAttribute("data-comment-scope") || "").toString().trim().toLowerCase();
+      const imageUploadsEnabled = commentsRoot.getAttribute("data-comment-image-upload-enabled") === "1";
       const hasCommentTargetHash = () => /^#comment-\d+$/i.test((window.location.hash || "").toString().trim());
 
       let loaded = false;
@@ -67,6 +69,12 @@
       document.addEventListener("pointerdown", onIntent, true);
       document.addEventListener("keydown", onIntent, true);
       window.addEventListener("hashchange", onHashIntent);
+
+      const shouldEagerLoad = commentScope === "chapter" && imageUploadsEnabled;
+      if (shouldEagerLoad) {
+        loadCommentsScript();
+        return;
+      }
 
       if (hasCommentTargetHash()) {
         loadCommentsScript();
