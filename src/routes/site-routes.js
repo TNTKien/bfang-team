@@ -178,6 +178,12 @@ const registerSiteRoutes = (app, deps) => {
     return "";
   };
 
+  const hasInlineDataImage = (value) => {
+    const text = value == null ? "" : String(value);
+    if (!text) return false;
+    return /<img\b[^>]*\bsrc\s*=\s*["']\s*data:image\//i.test(text) || /data:image\/[a-z0-9.+-]+;base64,/i.test(text);
+  };
+
   const ensureChapterViewSchemaReady = async () => {
     if (chapterViewSchemaReadyPromise) {
       return chapterViewSchemaReadyPromise;
@@ -8948,6 +8954,13 @@ app.post(
       return sendCommentRequestIdInvalidResponse(req, res);
     }
     const isForumRequest = isForumCommentRequest(req, commentRequestId);
+    if (isForumRequest && hasInlineDataImage(content)) {
+      const message = "Ảnh dán trực tiếp không được hỗ trợ. Vui lòng tải ảnh lên.";
+      if (wantsJson(req)) {
+        return res.status(400).json({ error: message });
+      }
+      return res.status(400).send(message);
+    }
     const parentContext = await resolveCommentParentContext({
       parentIdInput: req.body.parent_id,
       commentScope,
@@ -9354,6 +9367,13 @@ app.post(
       return sendCommentRequestIdInvalidResponse(req, res);
     }
     const isForumRequest = isForumCommentRequest(req, commentRequestId);
+    if (isForumRequest && hasInlineDataImage(content)) {
+      const message = "Ảnh dán trực tiếp không được hỗ trợ. Vui lòng tải ảnh lên.";
+      if (wantsJson(req)) {
+        return res.status(400).json({ error: message });
+      }
+      return res.status(400).send(message);
+    }
     const parentContext = await resolveCommentParentContext({
       parentIdInput: req.body.parent_id,
       commentScope,

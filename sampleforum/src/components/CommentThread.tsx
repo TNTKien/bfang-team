@@ -293,7 +293,7 @@ const SingleComment = memo(function SingleComment({
                 <img
                   src={comment.imageUrl}
                   alt="Ảnh bình luận"
-                  className="h-auto w-full rounded-md border border-border/70 object-cover"
+                  className="h-auto w-full rounded-md object-contain bg-transparent"
                   loading="lazy"
                   referrerPolicy="no-referrer"
                 />

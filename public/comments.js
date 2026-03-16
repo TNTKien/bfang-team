@@ -2251,11 +2251,7 @@ const ensureCommentComposerTools = (textarea) => {
   const composeShell = textarea.closest ? textarea.closest(".comment-compose-shell") : null;
 
   const form = textarea.form || (textarea.closest ? textarea.closest("form") : null);
-  const section = form && form.closest ? form.closest(commentSelectors.section) : null;
-  const sectionScope = toSafeText(
-    section && section.getAttribute ? section.getAttribute("data-comment-scope") : ""
-  ).toLowerCase();
-  const inlineSubmitWithTools = sectionScope !== "chapter";
+  const inlineSubmitWithTools = true;
   const imageConfig = getCommentImageUploadConfig(form);
   const hiddenImageInput = form ? ensureCommentImageHiddenInput(form) : null;
   syncCommentTextareaRequiredState(textarea, hiddenImageInput);
@@ -2412,10 +2408,49 @@ const ensureCommentComposerTools = (textarea) => {
   }
   if (form) {
     form.classList.toggle("comment-form--inline-submit", inlineSubmitWithTools);
-    form.classList.toggle("comment-form--chapter", sectionScope === "chapter");
   }
 
   if (imageConfig.enabled && form && imageFileInput && imagePreviewWrap && imagePreviewImage && imageClearButton) {
+    const applySelectedCommentImageFile = (file) => {
+      if (!file) {
+        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
+        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+        return false;
+      }
+
+      const mimeType = toSafeText(file.type).toLowerCase();
+      if (!COMMENT_IMAGE_ALLOWED_MIME_TYPES.has(mimeType)) {
+        showCommentFormNotice(form, "Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.", { tone: "error" });
+        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
+        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+        return false;
+      }
+
+      const fileSize = Number(file.size);
+      if (!Number.isFinite(fileSize) || fileSize <= 0 || fileSize > COMMENT_IMAGE_MAX_BYTES) {
+        showCommentFormNotice(form, "Ảnh vượt quá giới hạn 3MB.", { tone: "error" });
+        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
+        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+        return false;
+      }
+
+      const objectUrl = URL.createObjectURL(file);
+      revokeCommentImagePreviewObjectUrl(form);
+      commentImagePreviewUrlMap.set(form, objectUrl);
+      commentImageDraftFileMap.set(form, file);
+      imagePreviewImage.src = objectUrl;
+      imagePreviewWrap.hidden = false;
+      if (imagePreviewRow) {
+        imagePreviewRow.hidden = false;
+      }
+      if (hiddenImageInput) {
+        hiddenImageInput.value = "";
+      }
+      syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+      hideCommentFormNotice(form);
+      return true;
+    };
+
     imageFileInput.addEventListener("click", () => {
       if (form.getAttribute(COMMENT_SUBMIT_BUSY_ATTR) === "1") return;
       imageFileInput.value = "";
@@ -2437,42 +2472,31 @@ const ensureCommentComposerTools = (textarea) => {
         return;
       }
       const file = imageFileInput.files && imageFileInput.files[0] ? imageFileInput.files[0] : null;
-      if (!file) {
-        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
-        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
-        return;
-      }
-
-      const mimeType = toSafeText(file.type).toLowerCase();
-      if (!COMMENT_IMAGE_ALLOWED_MIME_TYPES.has(mimeType)) {
-        showCommentFormNotice(form, "Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.", { tone: "error" });
-        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
-        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
-        return;
-      }
-
-      const fileSize = Number(file.size);
-      if (!Number.isFinite(fileSize) || fileSize <= 0 || fileSize > COMMENT_IMAGE_MAX_BYTES) {
-        showCommentFormNotice(form, "Ảnh vượt quá giới hạn 3MB.", { tone: "error" });
-        clearCommentImagePreview(form, imagePreviewWrap, imagePreviewImage, imageFileInput, hiddenImageInput);
-        syncCommentTextareaRequiredState(textarea, hiddenImageInput);
-        return;
-      }
-
-      const objectUrl = URL.createObjectURL(file);
-      revokeCommentImagePreviewObjectUrl(form);
-      commentImagePreviewUrlMap.set(form, objectUrl);
-      commentImageDraftFileMap.set(form, file);
-      imagePreviewImage.src = objectUrl;
-      imagePreviewWrap.hidden = false;
-      if (imagePreviewRow) {
-        imagePreviewRow.hidden = false;
-      }
-      if (hiddenImageInput) {
-        hiddenImageInput.value = "";
-      }
-      syncCommentTextareaRequiredState(textarea, hiddenImageInput);
+      applySelectedCommentImageFile(file);
       imageFileInput.value = "";
+    });
+
+    textarea.addEventListener("paste", (event) => {
+      if (!event || !event.clipboardData) return;
+      if (form.getAttribute(COMMENT_SUBMIT_BUSY_ATTR) === "1") {
+        showCommentFormNotice(form, "Ảnh đang tải lên, vui lòng đợi xong rồi thử lại.", {
+          tone: "error",
+          autoHideMs: 2200
+        });
+        return;
+      }
+
+      const clipboardItems = event.clipboardData.items
+        ? Array.from(event.clipboardData.items)
+        : [];
+      const imageItem = clipboardItems.find((item) => item && /^image\//i.test(String(item.type || "")));
+      if (!imageItem) return;
+
+      const file = imageItem.getAsFile();
+      if (!file) return;
+
+      event.preventDefault();
+      applySelectedCommentImageFile(file);
     });
   }
 
@@ -3823,11 +3847,8 @@ const applyDeleteVisibility = (userId, canDeleteAny) => {
   document.querySelectorAll("[data-comment-delete]").forEach((button) => {
     const item = button.closest(".comment-item");
     const authorId = item && item.dataset ? String(item.dataset.commentAuthorId || "").trim() : "";
-    const parentAuthorId =
-      item && item.dataset ? String(item.dataset.commentParentAuthorId || "").trim() : "";
     const canDeleteOwn = Boolean(id && authorId && id === authorId);
-    const canDeleteReplyToOwn = Boolean(id && parentAuthorId && id === parentAuthorId);
-    button.hidden = !(allowAny || canDeleteOwn || canDeleteReplyToOwn);
+    button.hidden = !(allowAny || canDeleteOwn);
   });
 };
 
@@ -3903,26 +3924,24 @@ const refreshReactionStates = async (session) => {
 
   let accessToken = "";
   if (nextSession && nextSession.access_token) {
-    accessToken = String(nextSession.access_token).trim();
+    accessToken = toSafeText(nextSession.access_token);
   }
   if (!accessToken) {
-    try {
-      if (window.BfangAuth && typeof window.BfangAuth.getAccessToken === "function") {
-        accessToken = await window.BfangAuth.getAccessToken();
-      }
-    } catch (_err) {
-      accessToken = "";
-    }
+    accessToken = await getAccessTokenForCommentAction();
   }
-  if (!accessToken) return;
+
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json"
+  };
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
 
   const response = await fetch("/comments/reactions", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers,
+    credentials: "same-origin",
     body: JSON.stringify({ ids })
   });
 
@@ -4250,7 +4269,7 @@ const setReportButtonState = (button, reported, reportCount) => {
   button.disabled = flagged;
 };
 
-const getAccessTokenForCommentAction = async (message) => {
+const getAccessTokenForCommentAction = async () => {
   let accessToken = "";
   try {
     if (window.BfangAuth && typeof window.BfangAuth.getAccessToken === "function") {
@@ -4260,32 +4279,7 @@ const getAccessTokenForCommentAction = async (message) => {
     accessToken = "";
   }
 
-  if (accessToken) return accessToken;
-
-  const text = (message || "Vui lòng đăng nhập bằng Google hoặc Discord để tiếp tục.").toString();
-
-  const startSignIn = async () => {
-    if (!window.BfangAuth) return false;
-    if (typeof window.BfangAuth.signIn === "function") {
-      await window.BfangAuth.signIn();
-      return true;
-    }
-    if (typeof window.BfangAuth.signInWithGoogle === "function") {
-      await window.BfangAuth.signInWithGoogle();
-      return true;
-    }
-    return false;
-  };
-
-  try {
-    if (await startSignIn()) {
-      return "";
-    }
-  } catch (_err) {
-    // ignore
-  }
-  window.alert(text);
-  return "";
+  return toSafeText(accessToken);
 };
 
 const handleReactionSubmit = async (form, reactionType) => {
@@ -4328,22 +4322,24 @@ const handleReactionSubmit = async (form, reactionType) => {
   }
 
   const actionLabel = reactionType === "like" ? "thích" : "báo cáo";
-  const accessToken = await getAccessTokenForCommentAction(
-    `Vui lòng đăng nhập bằng Google hoặc Discord để ${actionLabel} bình luận.`
-  );
-  if (!accessToken) return;
+  const accessToken = await getAccessTokenForCommentAction();
 
   button.disabled = true;
   let response = null;
   let result = null;
   try {
+    const headers = {
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    };
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
+    }
+
     response = await fetch(action.actionUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`
-      },
+      headers,
+      credentials: "same-origin",
       body: JSON.stringify({})
     });
     result = await response.json().catch(() => null);
@@ -4893,41 +4889,21 @@ document.addEventListener("click", async (event) => {
   }
   if (!ok) return;
 
-  let accessToken = "";
-  try {
-    if (window.BfangAuth && typeof window.BfangAuth.getAccessToken === "function") {
-      accessToken = await window.BfangAuth.getAccessToken();
-    }
-  } catch (_err) {
-    accessToken = "";
-  }
+  const accessToken = await getAccessTokenForCommentAction();
 
-  if (!accessToken) {
-    const message = "Vui lòng đăng nhập bằng Google hoặc Discord để xóa bình luận.";
-    try {
-      if (window.BfangAuth && typeof window.BfangAuth.signIn === "function") {
-        await window.BfangAuth.signIn();
-        return;
-      }
-      if (window.BfangAuth && typeof window.BfangAuth.signInWithGoogle === "function") {
-        await window.BfangAuth.signInWithGoogle();
-        return;
-      }
-    } catch (_err) {
-      // ignore
-    }
-    window.alert(message);
-    return;
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json"
+  };
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
   }
 
   deleteButton.disabled = true;
   const response = await fetch(`/comments/${id}/delete`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers,
+    credentials: "same-origin",
     body: JSON.stringify({})
   });
 

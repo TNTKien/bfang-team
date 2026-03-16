@@ -334,6 +334,7 @@ const convertHtmlToMarkdown = (html: string): string => {
 interface RichTextEditorProps {
   content?: string;
   onUpdate?: (html: string) => void;
+  onPasteImageFile?: (file: File) => boolean;
   placeholder?: string;
   minHeight?: string;
   maxHeight?: string;
@@ -370,6 +371,7 @@ const ToolBtn = memo(function ToolBtn({ active, onClick, children, title, disabl
 
 export const RichTextEditor = memo(function RichTextEditor({
   content = "", onUpdate, placeholder = "Viết nội dung...",
+  onPasteImageFile,
   minHeight = "200px", maxHeight, compact = false, autoFocus = false, draftKey,
   clearDraftOnUnmount = false,
   mentionRootCommentId,
@@ -620,6 +622,12 @@ export const RichTextEditor = memo(function RichTextEditor({
               event.preventDefault();
               const file = item.getAsFile();
               if (file) {
+                if (typeof onPasteImageFile === "function") {
+                  const handled = onPasteImageFile(file);
+                  if (handled) {
+                    return true;
+                  }
+                }
                 if (editor) {
                   void handleImageFile(file, editor);
                 }

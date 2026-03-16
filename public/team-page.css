@@ -446,16 +446,24 @@
 
 @media (max-width: 760px) {
   .team-page .team-tabs__list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.24rem;
-    overflow-x: hidden;
+    overflow: visible;
+    padding-bottom: 0;
+    min-width: 0;
   }
 
   .team-page .team-tab-trigger {
     min-width: 0;
-    flex: 1 1 0;
+    flex: 0 0 auto;
+    width: 100%;
     font-size: 0.64rem;
     padding: 0.22rem 0.3rem;
     letter-spacing: 0.035em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .team-page .team-recent-list {

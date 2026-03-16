@@ -103,6 +103,12 @@ const registerForumApiRoutes = (app, deps) => {
     return toText(normalized).slice(0, 500);
   };
 
+  const hasInlineDataImage = (value) => {
+    const text = value == null ? "" : String(value);
+    if (!text) return false;
+    return /<img\b[^>]*\bsrc\s*=\s*["']\s*data:image\//i.test(text) || /data:image\/[a-z0-9.+-]+;base64,/i.test(text);
+  };
+
   const createCommentInteractionNotifications = async ({
     postId,
     parentId,
@@ -881,6 +887,9 @@ const registerForumApiRoutes = (app, deps) => {
       const imageUrl = readSafeUploadedImageUrl(req.body && req.body.imageUrl);
       if (imageUrl && !commentImageUploadsEnabled) {
         return res.status(503).json({ ok: false, error: "Tính năng gửi ảnh trong bình luận hiện đang tắt." });
+      }
+      if (hasInlineDataImage(content)) {
+        return res.status(400).json({ ok: false, error: "Ảnh dán trực tiếp không được hỗ trợ. Vui lòng tải ảnh lên." });
       }
       if (!postId || (!content && !imageUrl)) {
         return res.status(400).json({ ok: false, error: "Nội dung bình luận không hợp lệ." });

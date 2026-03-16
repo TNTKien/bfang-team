@@ -117,23 +117,21 @@ export const CommentInput = memo(function CommentInput({
     }
   };
 
-  const handleSelectImage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
-    event.target.value = "";
-    if (!file) return;
+  const trySetPendingImage = (file: File): boolean => {
+    if (!(file instanceof File)) return false;
 
     const fileType = String(file.type || "").toLowerCase();
     if (!FORUM_COMMENT_IMAGE_ALLOWED_MIME_TYPES.has(fileType)) {
       clearPendingImage();
       setImageError("Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.");
-      return;
+      return false;
     }
 
     const fileSize = Number(file.size);
     if (!Number.isFinite(fileSize) || fileSize <= 0 || fileSize > FORUM_COMMENT_IMAGE_MAX_BYTES) {
       clearPendingImage();
       setImageError("Ảnh vượt quá giới hạn 3MB.");
-      return;
+      return false;
     }
 
     if (pendingImagePreviewUrl) {
@@ -142,6 +140,21 @@ export const CommentInput = memo(function CommentInput({
     setPendingImageFile(file);
     setPendingImagePreviewUrl(URL.createObjectURL(file));
     setImageError("");
+    return true;
+  };
+
+  const handleSelectImage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+    event.target.value = "";
+    if (!file) return;
+    trySetPendingImage(file);
+  };
+
+  const handlePasteImage = (file: File): boolean => {
+    if (!imageUploadsEnabled || submitting) {
+      return false;
+    }
+    return trySetPendingImage(file);
   };
 
   const handleSubmit = () => {
@@ -194,6 +207,7 @@ export const CommentInput = memo(function CommentInput({
             <RichTextEditor
               content={content}
               onUpdate={setContent}
+              onPasteImageFile={handlePasteImage}
               placeholder={placeholder}
               compact
               autoFocus={autoFocus}
@@ -234,8 +248,12 @@ export const CommentInput = memo(function CommentInput({
 
             {pendingImagePreviewUrl ? (
               <div className="flex items-start gap-2">
-                <div className="max-w-[220px] max-h-[320px] overflow-hidden rounded-md border border-border bg-background">
-                  <img src={pendingImagePreviewUrl} alt="Ảnh đính kèm" className="h-auto max-h-[320px] w-full object-cover" />
+                <div className="max-w-[220px] max-h-[320px] overflow-hidden rounded-md bg-transparent">
+                  <img
+                    src={pendingImagePreviewUrl}
+                    alt="Ảnh đính kèm"
+                    className="h-auto max-h-[320px] w-full object-contain bg-transparent"
+                  />
                 </div>
                 <button
                   type="button"
@@ -244,7 +262,7 @@ export const CommentInput = memo(function CommentInput({
                     if (submitting) return;
                     clearPendingImage();
                   }}
-                  className={`inline-flex h-6 w-6 items-center justify-center rounded-md border border-border bg-background transition-colors ${
+                  className={`inline-flex h-6 w-6 items-center justify-center rounded-md border border-border bg-transparent transition-colors ${
                     submitting
                       ? "text-muted-foreground/45 cursor-not-allowed"
                       : "text-muted-foreground hover:text-foreground hover:bg-accent"

@@ -403,8 +403,24 @@ const CHAT_IMAGE_ALLOWED_MIME_TYPES = new Set([
       throw new Error("Tệp ảnh không hợp lệ.");
     }
     if (fileSize > CHAT_IMAGE_MAX_BYTES) {
-    throw new Error("Ảnh vượt quá giới hạn 3MB.");
+      throw new Error("Ảnh vượt quá giới hạn 3MB.");
     }
+  };
+
+  const readClipboardImageFile = (event) => {
+    if (!event || !event.clipboardData) return null;
+    const clipboardItems = event.clipboardData.items
+      ? Array.from(event.clipboardData.items)
+      : [];
+    for (const item of clipboardItems) {
+      const mimeType = (item && item.type ? String(item.type) : "").toLowerCase();
+      if (!mimeType.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (file) {
+        return file;
+      }
+    }
+    return null;
   };
 
   const shouldPausePolling = () => {
@@ -1684,11 +1700,11 @@ const CHAT_IMAGE_ALLOWED_MIME_TYPES = new Set([
 
         const image = document.createElement("img");
         image.className = "chat-message__image";
-        image.src = safeMessageImageUrl;
         image.alt = "Ảnh tin nhắn";
         image.loading = "lazy";
         image.decoding = "async";
         image.referrerPolicy = "no-referrer";
+        image.src = safeMessageImageUrl;
 
         imageWrap.appendChild(image);
         bubble.appendChild(imageWrap);
@@ -3158,6 +3174,31 @@ const CHAT_IMAGE_ALLOWED_MIME_TYPES = new Set([
 
       composeForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
+
+    if (messageImageUploadsEnabled) {
+      input.addEventListener("paste", (event) => {
+        if (uploadingImage) {
+          setStatus("Ảnh đang tải lên, vui lòng đợi hoàn tất.", "error");
+          return;
+        }
+
+        const file = readClipboardImageFile(event);
+        if (!file) return;
+
+        event.preventDefault();
+        try {
+          validateMessageImageFile(file);
+        } catch (error) {
+          resetPendingImageState();
+          setStatus(error && error.message ? error.message : "Không thể tải ảnh lên.", "error");
+          return;
+        }
+
+        const objectUrl = URL.createObjectURL(file);
+        setPendingImagePreview({ objectUrl, file });
+        setStatus("");
+      });
+    }
   }
 
   if (imageInput) {

@@ -172,6 +172,7 @@
   width: auto;
   height: auto;
   object-fit: contain;
+  background-color: transparent;
   margin: 0.4rem 0;
 }
 .forum-rich-content img {
@@ -181,6 +182,7 @@
   width: auto;
   height: auto;
   object-fit: contain;
+  background-color: transparent;
   border-radius: 0.5rem;
   margin: 0.55rem 0;
 }

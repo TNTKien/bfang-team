@@ -43,6 +43,12 @@ const registerEngagementRoutes = (app, deps) => {
 
   const toText = (value) => (value == null ? "" : String(value)).trim();
 
+  const hasInlineDataImage = (value) => {
+    const text = value == null ? "" : String(value);
+    if (!text) return false;
+    return /<img\b[^>]*\bsrc\s*=\s*["']\s*data:image\//i.test(text) || /data:image\/[a-z0-9.+-]+;base64,/i.test(text);
+  };
+
   const escapeRegex = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   const safeDecodeUrlPath = (input) => {
@@ -670,6 +676,10 @@ const registerEngagementRoutes = (app, deps) => {
       const content = await censorCommentContentByForbiddenWords(req.body && req.body.content);
       if (!content) {
         return res.status(400).json({ ok: false, error: "Nội dung bình luận không được để trống." });
+      }
+
+      if (forumMode && hasInlineDataImage(content)) {
+        return res.status(400).json({ ok: false, error: "Ảnh dán trực tiếp không được hỗ trợ. Vui lòng tải ảnh lên." });
       }
 
       let maxLength = COMMENT_MAX_LENGTH;
