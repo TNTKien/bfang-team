@@ -61,6 +61,18 @@ const parseBoolean = (value, fallback = false) => {
   return Boolean(fallback);
 };
 
+const normalizeExistingDbAction = (value, fallback = "ask") => {
+  const text = String(value == null ? "" : value).trim().toLowerCase();
+  if (!text) return fallback;
+  if (["overwrite", "continue", "proceed", "go", "yes", "y", "1"].includes(text)) {
+    return "overwrite";
+  }
+  if (["stop", "abort", "cancel", "no", "n", "0"].includes(text)) {
+    return "stop";
+  }
+  return fallback;
+};
+
 const parsePort = (value, fallback) => {
   const parsed = Number.parseInt(String(value == null ? "" : value), 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -408,6 +420,37 @@ const collectInteractiveOptions = async (seedOptions) => {
   }
 };
 
+const promptExistingDbAction = async ({ tableCount }) => {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return "overwrite";
+  }
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  try {
+    console.log(`\n==> Database hiện đã có ${tableCount} bảng.`);
+    console.log("Chọn hướng xử lý:");
+    console.log("  1) Ghi đè setup (không xóa dữ liệu hiện có)");
+    console.log("  2) Dừng setup");
+
+    while (true) {
+      const answer = String(await askQuestion(rl, "Lựa chọn [1/2] (mặc định 1): ")).trim().toLowerCase();
+      if (!answer || answer === "1") {
+        return "overwrite";
+      }
+      if (answer === "2") {
+        return "stop";
+      }
+      console.log("  ! Vui lòng nhập 1 hoặc 2.");
+    }
+  } finally {
+    rl.close();
+  }
+};
+
 const runCommand = ({ title, command, args = [], cwd = projectRoot, extraEnv = null, capture = false, shell = false }) => {
   console.log(`\n==> ${title}`);
   const env = extraEnv ? { ...process.env, ...extraEnv } : process.env;
@@ -538,6 +581,55 @@ const testSqlConnectionWithPsql = ({ host, port, database, user, password, minMa
   };
 };
 
+const getSchemaTableCountWithPsql = ({ host, port, database, user, password }) => {
+  const baseArgs = [
+    "-h",
+    String(host || "").trim(),
+    "-p",
+    String(port || "").trim(),
+    "-U",
+    String(user || "").trim(),
+    "-d",
+    String(database || "").trim(),
+    "-v",
+    "ON_ERROR_STOP=1"
+  ];
+
+  const env = {
+    ...process.env,
+    PGPASSWORD: String(password == null ? "" : password)
+  };
+
+  const query = [
+    "SELECT COUNT(*)",
+    "FROM information_schema.tables",
+    "WHERE table_schema = current_schema()",
+    "  AND table_type = 'BASE TABLE';"
+  ].join(" ");
+
+  const result = spawnSync(psqlCommand, [...baseArgs, "-tAc", query], {
+    cwd: projectRoot,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+    env
+  });
+
+  if (result.error || result.status !== 0) {
+    const message = result.error
+      ? String(result.error.message || result.error)
+      : String(result.stderr || "").trim();
+    throw new Error(`Không đọc được số lượng bảng hiện tại của database: ${message || "unknown error"}`);
+  }
+
+  const tableCount = Number.parseInt(String(result.stdout || "").trim(), 10);
+  if (!Number.isFinite(tableCount) || tableCount < 0) {
+    throw new Error("Không đọc được số lượng bảng hiện tại của database.");
+  }
+
+  return Math.floor(tableCount);
+};
+
 const ensureFileFromTemplate = (targetPath, templatePath) => {
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Template file not found: ${templatePath}`);
@@ -648,6 +740,7 @@ const printHelp = () => {
     "  --with-api <true|false>          Install api_server deps (default: true)",
     "  --with-forum <true|false>        Install/build sampleforum (default: true)",
     "  --with-desktop <true|false>      Install app_desktop deps (default: false)",
+    "  --existing-db-action <mode>      Existing DB behavior: overwrite|stop|ask (default: ask)",
     "  --setup-s3 <true|false>          Setup S3 vars now",
     "  --s3-endpoint <url>              S3 endpoint (optional)",
     "  --s3-bucket <name>               S3 bucket",
@@ -670,6 +763,7 @@ const printHelp = () => {
     "Examples:",
     "  npm run setup:all",
     "  npm run setup:all -- --db-user=postgres --db-pass=12345",
+    "  npm run setup:all -- --existing-db-action=overwrite",
     "  npm run setup:all -- --non-interactive --setup-s3=true --setup-google=false --setup-discord=false",
     "  npm run setup:all -- --with-desktop=true",
     ""
@@ -782,6 +876,10 @@ const main = async () => {
       rootEnvMap.DISCORD_CLIENT_SECRET ||
       ""
     ).trim(),
+    existingDbAction: normalizeExistingDbAction(
+      args["existing-db-action"] || process.env.SETUP_EXISTING_DB_ACTION,
+      "ask"
+    ),
     startWeb: parseBoolean(args.start, false),
     nonInteractive: parseBoolean(args["non-interactive"], false)
   };
@@ -800,6 +898,34 @@ const main = async () => {
     minMajor: MIN_POSTGRES_MAJOR
   });
   console.log(`==> Kết nối SQL thành công (PostgreSQL ${sqlCheck.major}).`);
+
+  const existingTableCount = getSchemaTableCountWithPsql({
+    host: options.dbHost,
+    port: options.dbPort,
+    database: options.dbName,
+    user: options.dbUser,
+    password: options.dbPassword
+  });
+
+  let existingDbAction = normalizeExistingDbAction(
+    options.existingDbAction,
+    options.nonInteractive ? "overwrite" : "ask"
+  );
+
+  if (existingTableCount > 0) {
+    if (existingDbAction === "ask") {
+      existingDbAction = options.nonInteractive
+        ? "overwrite"
+        : await promptExistingDbAction({ tableCount: existingTableCount });
+    }
+
+    if (existingDbAction === "stop") {
+      console.log("\nSetup đã dừng theo lựa chọn của bạn vì database đã có dữ liệu.");
+      return;
+    }
+  } else {
+    existingDbAction = "overwrite";
+  }
 
   if (options.setupS3Now) {
     const requiredS3 = [
@@ -917,6 +1043,8 @@ const main = async () => {
   console.log(`- Setup Google OAuth now: ${options.setupGoogleNow ? "yes" : "no"}`);
   console.log(`- Setup Discord OAuth now: ${options.setupDiscordNow ? "yes" : "no"}`);
   console.log(`- Interactive mode: ${options.nonInteractive ? "off" : "on"}`);
+  console.log(`- Existing DB tables: ${existingTableCount}`);
+  console.log(`- Existing DB action: ${existingDbAction}`);
 
   runNpmCommand({
     title: "Install root dependencies",
@@ -944,10 +1072,26 @@ const main = async () => {
     });
   }
 
-  runNpmCommand({
-    title: "Bootstrap database schema",
-    args: ["run", "db:bootstrap"]
-  });
+  try {
+    runNpmCommand({
+      title: "Bootstrap database schema",
+      args: ["run", "db:bootstrap"]
+    });
+  } catch (error) {
+    if (existingTableCount === 0 || existingDbAction === "overwrite") {
+      console.log("\n==> Schema chưa khớp db.json. Đang thử tự đồng bộ snapshot rồi bootstrap lại...");
+      runNpmCommand({
+        title: "Sync db.json from current database",
+        args: ["run", "db:schema:json:sync"]
+      });
+      runNpmCommand({
+        title: "Bootstrap database schema (retry)",
+        args: ["run", "db:bootstrap"]
+      });
+    } else {
+      throw error;
+    }
+  }
 
   runNpmCommand({
     title: "Build web styles",
