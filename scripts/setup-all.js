@@ -14,6 +14,7 @@ const psqlCommand = process.platform === "win32" ? "psql.exe" : "psql";
 const MIN_NODE_MAJOR = 20;
 const MIN_POSTGRES_MAJOR = 16;
 const INSTALLER_UI_FLAG = "installer-ui";
+const INSTALLER_NEW_WINDOW_FLAG = "new-window";
 const INSTALLER_TUI_DEPENDENCIES = ["chalk", "ora", "listr2", "boxen", "inquirer"];
 
 const createTerminalUi = () => {
@@ -1022,9 +1023,13 @@ const launchInstallerUiWindow = ({ forwardArgs = [] }) => {
   return false;
 };
 
-const bootstrapInstallerUiWindow = async ({ rawArgv = [] }) => {
+const bootstrapInstallerUiWindow = async ({ rawArgv = [], openInNewWindow = false }) => {
   console.log("Đang khởi động trình cài đặt...");
   await runNpmInstallerDependenciesSilently();
+
+  if (!openInNewWindow) {
+    return false;
+  }
 
   const forwardArgs = [
     ...stripInstallerUiArgTokens(rawArgv),
@@ -1482,6 +1487,7 @@ const printHelp = () => {
     ["--setup-discord <true|false>", "Setup Discord OAuth vars now"],
     ["--discord-client-id <id>", "Discord OAuth client id"],
     ["--discord-client-secret <secret>", "Discord OAuth client secret"],
+    ["--new-window <true|false>", "Open installer in a new terminal window (default: false)"],
     ["--non-interactive", "Do not prompt; use args/env/defaults"],
     ["--start", "Start web server (`npm run dev`) after setup"],
     ["--help", "Show this help"]
@@ -1497,6 +1503,7 @@ const printHelp = () => {
     "npm run setup:all",
     "npm run setup:all -- --db-user=postgres --db-pass=12345",
     "npm run setup:all -- --existing-db-action=overwrite",
+    "npm run setup:all -- --new-window=true",
     "npm run setup:all -- --non-interactive --setup-s3=true --setup-google=false --setup-discord=false",
     "npm run setup:all -- --with-desktop=true"
   ];
@@ -1507,6 +1514,7 @@ const printHelp = () => {
     "",
     "Cross-platform project bootstrap for Windows and Ubuntu.",
     `Requirements: Node.js LTS ${MIN_NODE_MAJOR}+ and PostgreSQL ${MIN_POSTGRES_MAJOR}+.`,
+    "By default, the installer stays in the current terminal window.",
     "By default, setup runs in interactive wizard mode and asks each parameter.",
     "This script installs dependencies, creates env files, prepares DB,",
     "runs schema bootstrap, and builds required assets.",
@@ -1540,11 +1548,20 @@ const main = async () => {
   }
 
   let installerUiMode = parseBoolean(args[INSTALLER_UI_FLAG], false);
+  const openInNewWindow = parseBoolean(
+    args[INSTALLER_NEW_WINDOW_FLAG] || process.env.SETUP_NEW_WINDOW,
+    false
+  );
   if (!installerUiMode) {
-    const launched = await bootstrapInstallerUiWindow({ rawArgv });
+    const launched = await bootstrapInstallerUiWindow({ rawArgv, openInNewWindow });
     if (launched) {
       return;
     }
+
+    if (openInNewWindow) {
+      terminalUi.warn("Không thể mở cửa sổ terminal mới. Tiếp tục cài đặt ngay trong cửa sổ hiện tại.");
+    }
+
     installerUiMode = true;
   }
 
