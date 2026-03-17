@@ -385,7 +385,7 @@ const formatUnderlinedChoice = (value) => {
 const promptTextValue = async ({ rl, label, defaultValue = "", allowEmpty = false, secret = false }) => {
   while (true) {
     const fallback = String(defaultValue == null ? "" : defaultValue);
-    const suffix = fallback ? (secret ? " [đã đặt]" : ` [${fallback}]`) : "";
+    const suffix = fallback ? (secret ? "" : ` [${fallback}]`) : "";
     const clearHint = allowEmpty && fallback ? " (Enter để giữ, nhập - để xóa)" : "";
     const questionText = terminalUi.prompt(`${label}${suffix}${clearHint}`);
     const answer = secret
@@ -1573,18 +1573,6 @@ const main = async () => {
     : null;
 
   printSetupBanner();
-  if (installerUiMode && installerUiLibraries && installerUiLibraries.boxen && installerUiLibraries.chalk) {
-    const introBox = installerUiLibraries.boxen(
-      installerUiLibraries.chalk.cyan("Trình cài đặt đang chạy ở chế độ TUI hiện đại."),
-      {
-        padding: 0,
-        margin: { top: 0, right: 0, bottom: 1, left: 0 },
-        borderStyle: "round",
-        borderColor: "cyan"
-      }
-    );
-    console.log(introBox);
-  }
 
   const rootEnvTemplatePath = path.join(projectRoot, ".env.example");
   const rootEnvPath = path.join(projectRoot, ".env");
@@ -1876,7 +1864,7 @@ const main = async () => {
 
     try {
       if (preparationSpinner) {
-        preparationSpinner.success("Bắt đầu chạy tác vụ cài đặt.");
+        preparationSpinner.succeed("Bắt đầu chạy tác vụ cài đặt.");
       }
       await runSetupExecutionWithListr({
         options,
@@ -1886,7 +1874,7 @@ const main = async () => {
       });
     } catch (error) {
       if (preparationSpinner) {
-        preparationSpinner.error("Tác vụ cài đặt thất bại.");
+        preparationSpinner.fail("Tác vụ cài đặt thất bại.");
       }
       throw error;
     }
