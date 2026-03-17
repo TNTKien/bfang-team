@@ -1,11 +1,25 @@
 const { createApp, startServer } = require("./app");
 
+const isTruthyEnvValue = (value) => {
+  const text = String(value == null ? "" : value).trim().toLowerCase();
+  if (!text) return false;
+  return ["1", "true", "yes", "on"].includes(text);
+};
+
 const canInlineUpdate = Boolean(
   process.stdout
     && process.stdout.isTTY
     && typeof process.stdout.clearLine === "function"
     && typeof process.stdout.cursorTo === "function"
 );
+
+const forceStartupSpinner = isTruthyEnvValue(
+  process.env.FORCE_STARTUP_SPINNER || process.env.FORCE_ORA
+);
+const npmLifecycleEvent = String(process.env.npm_lifecycle_event || "").trim().toLowerCase();
+const forceSpinnerForLifecycle = npmLifecycleEvent === "dev" || npmLifecycleEvent === "start";
+
+const canUseOraSpinner = forceStartupSpinner || forceSpinnerForLifecycle || Boolean(process.stdout && process.stdout.isTTY);
 
 const formatMinifyProgressBar = (completed, total) => {
   const safeCompleted = Number.isFinite(completed) ? Math.max(0, Math.floor(completed)) : 0;
@@ -23,7 +37,11 @@ const formatMinifyProgressBar = (completed, total) => {
 const writeLoadingLine = (message, persist = false) => {
   const text = String(message == null ? "" : message);
   if (!canInlineUpdate) {
-    console.log(text);
+    if (persist) {
+      process.stdout.write(`${text}\n`);
+      return;
+    }
+    process.stdout.write(`${text}\r`);
     return;
   }
 
@@ -36,10 +54,51 @@ const writeLoadingLine = (message, persist = false) => {
 };
 
 const startupLoadingState = {
-  active: false
+  active: false,
+  spinner: null
+};
+
+const loadOraFactory = async () => {
+  try {
+    const oraModule = await import("ora");
+    return oraModule && typeof oraModule.default === "function"
+      ? oraModule.default
+      : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const initStartupSpinner = (oraFactory) => {
+  if (!canUseOraSpinner) {
+    startupLoadingState.spinner = null;
+    return;
+  }
+  if (!oraFactory || typeof oraFactory !== "function") {
+    startupLoadingState.spinner = null;
+    return;
+  }
+  startupLoadingState.spinner = oraFactory({
+    text: "",
+    color: "cyan",
+    spinner: "dots",
+    isEnabled: forceStartupSpinner || forceSpinnerForLifecycle ? true : undefined
+  });
 };
 
 const setStartupLoading = (message) => {
+  const spinner = startupLoadingState.spinner;
+  if (spinner) {
+    const text = String(message == null ? "" : message).trim();
+    startupLoadingState.active = true;
+    if (spinner.isSpinning) {
+      spinner.text = text;
+    } else {
+      spinner.start(text);
+    }
+    return;
+  }
+
   startupLoadingState.active = true;
   writeLoadingLine(`[LOADING] ${message}`, false);
 };
@@ -50,6 +109,20 @@ const finishStartupLoading = (message, success = true) => {
   }
   startupLoadingState.active = false;
   const prefix = success ? "[DONE]" : "[FAIL]";
+  const spinner = startupLoadingState.spinner;
+  if (spinner) {
+    const text = String(message == null ? "" : message).trim();
+    if (spinner.isSpinning) {
+      if (success) {
+        spinner.succeed(text);
+      } else {
+        spinner.fail(text);
+      }
+    } else {
+      console.log(`${prefix} ${text}`);
+    }
+    return;
+  }
   writeLoadingLine(`${prefix} ${message}`, true);
 };
 
@@ -71,7 +144,7 @@ const createServerStartupHooks = () => {
       }
 
       if (phase === "item:start") {
-        if (!canInlineUpdate) {
+        if (!startupLoadingState.spinner && !canInlineUpdate) {
           return;
         }
         const scriptName = String(payload.scriptName || "").trim();
@@ -86,7 +159,7 @@ const createServerStartupHooks = () => {
       }
 
       if (phase === "item:done" || phase === "item:fail") {
-        if (!canInlineUpdate) {
+        if (!startupLoadingState.spinner && !canInlineUpdate) {
           return;
         }
         const scriptName = String(payload.scriptName || "").trim();
@@ -111,18 +184,21 @@ const createServerStartupHooks = () => {
   };
 };
 
-const runtime = createApp({
-  hooks: createServerStartupHooks()
-});
+const bootServer = async () => {
+  const oraFactory = await loadOraFactory();
+  initStartupSpinner(oraFactory);
 
-setStartupLoading("MOETRUYEN server đang khởi tạo...");
-
-startServer(runtime)
-  .then(() => {
-    finishStartupLoading("MOETRUYEN server đã sẵn sàng.", true);
-  })
-  .catch((error) => {
-    finishStartupLoading("MOETRUYEN server khởi tạo thất bại.", false);
-    console.error("Failed to start MOETRUYEN server", error);
-    process.exit(1);
+  const runtime = createApp({
+    hooks: createServerStartupHooks()
   });
+
+  setStartupLoading("MOETRUYEN server đang khởi tạo...");
+  await startServer(runtime);
+  finishStartupLoading("MOETRUYEN server đã sẵn sàng.", true);
+};
+
+bootServer().catch((error) => {
+  finishStartupLoading("MOETRUYEN server khởi tạo thất bại.", false);
+  console.error("Failed to start MOETRUYEN server", error);
+  process.exit(1);
+});

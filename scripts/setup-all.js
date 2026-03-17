@@ -425,8 +425,30 @@ const promptPortValue = async ({ rl, label, defaultValue }) => {
   }
 };
 
-const promptBooleanValue = async ({ rl, label, defaultValue = false }) => {
+const promptBooleanValue = async ({ rl, label, defaultValue = false, inquirerPrompt = null }) => {
   const fallback = Boolean(defaultValue);
+
+  if (inquirerPrompt && typeof inquirerPrompt === "function" && process.stdin.isTTY && process.stdout.isTTY) {
+    if (rl && typeof rl.pause === "function") {
+      rl.pause();
+    }
+    try {
+      const response = await inquirerPrompt([
+        {
+          type: "confirm",
+          name: "value",
+          message: label,
+          default: fallback
+        }
+      ]);
+      return Boolean(response && response.value);
+    } finally {
+      if (rl && typeof rl.resume === "function") {
+        rl.resume();
+      }
+    }
+  }
+
   const hint = fallback
     ? `${formatUnderlinedChoice("Y")}/n`
     : `y/${formatUnderlinedChoice("N")}`;
@@ -441,7 +463,7 @@ const promptBooleanValue = async ({ rl, label, defaultValue = false }) => {
   }
 };
 
-const collectInteractiveOptions = async (seedOptions) => {
+const collectInteractiveOptions = async (seedOptions, { inquirerPrompt = null } = {}) => {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Chế độ tương tác cần terminal TTY. Dùng --non-interactive để chạy tự động.");
   }
@@ -513,7 +535,8 @@ const collectInteractiveOptions = async (seedOptions) => {
     const withApi = await promptBooleanValue({
       rl,
       label: "Cài và cấu hình API Server",
-      defaultValue: seedOptions.withApi
+      defaultValue: seedOptions.withApi,
+      inquirerPrompt
     });
 
     let apiPort = seedOptions.apiPort;
@@ -528,19 +551,22 @@ const collectInteractiveOptions = async (seedOptions) => {
     const withForum = await promptBooleanValue({
       rl,
       label: "Cài và build Forum frontend (sampleforum)",
-      defaultValue: seedOptions.withForum
+      defaultValue: seedOptions.withForum,
+      inquirerPrompt
     });
 
     const withDesktop = await promptBooleanValue({
       rl,
       label: "Cài dependencies app_desktop",
-      defaultValue: seedOptions.withDesktop
+      defaultValue: seedOptions.withDesktop,
+      inquirerPrompt
     });
 
     const setupS3Now = await promptBooleanValue({
       rl,
       label: "Setup S3 ngay bây giờ",
-      defaultValue: seedOptions.setupS3Now
+      defaultValue: seedOptions.setupS3Now,
+      inquirerPrompt
     });
 
     let s3Endpoint = seedOptions.s3Endpoint;
@@ -590,7 +616,8 @@ const collectInteractiveOptions = async (seedOptions) => {
       const forcePathStyleBool = await promptBooleanValue({
         rl,
         label: "Bật S3 force path style",
-        defaultValue: parseBoolean(seedOptions.s3ForcePathStyle, true)
+        defaultValue: parseBoolean(seedOptions.s3ForcePathStyle, true),
+        inquirerPrompt
       });
       s3ForcePathStyle = forcePathStyleBool ? "true" : "false";
 
@@ -613,7 +640,8 @@ const collectInteractiveOptions = async (seedOptions) => {
     const setupGoogleNow = await promptBooleanValue({
       rl,
       label: "Setup Google OAuth ngay bây giờ",
-      defaultValue: seedOptions.setupGoogleNow
+      defaultValue: seedOptions.setupGoogleNow,
+      inquirerPrompt
     });
 
     let googleClientId = seedOptions.googleClientId;
@@ -635,7 +663,8 @@ const collectInteractiveOptions = async (seedOptions) => {
     const setupDiscordNow = await promptBooleanValue({
       rl,
       label: "Setup Discord OAuth ngay bây giờ",
-      defaultValue: seedOptions.setupDiscordNow
+      defaultValue: seedOptions.setupDiscordNow,
+      inquirerPrompt
     });
 
     let discordClientId = seedOptions.discordClientId;
@@ -659,7 +688,8 @@ const collectInteractiveOptions = async (seedOptions) => {
     const startWeb = await promptBooleanValue({
       rl,
       label: "Start web server sau khi setup",
-      defaultValue: seedOptions.startWeb
+      defaultValue: seedOptions.startWeb,
+      inquirerPrompt
     });
 
     return {
@@ -1153,18 +1183,104 @@ const runSetupExecutionWithListr = async ({ options, existingTableCount, existin
   await runner.run();
 };
 
-const runNpmCommandWithWaiting = async ({ title, args = [], cwd = projectRoot, waitingMessage = "" }) => {
-  const invocation = resolveNpmInvocation({ args });
+const runNpmCommandWithWaiting = async ({
+  title,
+  args = [],
+  cwd = projectRoot,
+  waitingMessage = "",
+  displayCommand = "",
+  showStep = true,
+  showCommand = true,
+  oraFactory = null,
+  command = "",
+  commandArgs = [],
+  commandShell = null,
+  extraEnv = null,
+  inheritStdio = false,
+  showWaitingLine = true
+}) => {
+  const usingCustomCommand = Boolean(String(command || "").trim());
+  const invocation = usingCustomCommand
+    ? {
+      command: String(command || "").trim(),
+      args: Array.isArray(commandArgs) ? commandArgs : [],
+      shell: typeof commandShell === "boolean" ? commandShell : false
+    }
+    : resolveNpmInvocation({ args });
   const startedAt = Date.now();
-  const env = process.env;
+  const env = extraEnv ? { ...process.env, ...extraEnv } : process.env;
   const baseWaitingMessage = String(waitingMessage || "").trim() || "Đang chờ tiến trình khởi động...";
 
-  logStepStart(title);
-  const commandPreview = formatCommandPreview(invocation.command, invocation.args);
-  if (commandPreview) {
+  if (showStep) {
+    logStepStart(title);
+  }
+
+  const commandPreview = String(displayCommand || "").trim()
+    || formatCommandPreview(
+      usingCustomCommand ? invocation.command : npmCommand,
+      usingCustomCommand ? invocation.args : args
+    );
+  if (showCommand && commandPreview) {
     console.log(`  ${terminalUi.muted("$")} ${terminalUi.command(commandPreview)}`);
   }
-  terminalUi.wait(baseWaitingMessage);
+
+  if (inheritStdio) {
+    if (showWaitingLine) {
+      terminalUi.wait(baseWaitingMessage);
+    }
+
+    const child = spawn(invocation.command, invocation.args, {
+      cwd,
+      env,
+      shell: invocation.shell,
+      stdio: "inherit"
+    });
+
+    const forwardSigint = () => {
+      if (!child.killed) {
+        child.kill("SIGINT");
+      }
+    };
+
+    process.once("SIGINT", forwardSigint);
+
+    try {
+      await new Promise((resolve, reject) => {
+        child.on("error", (error) => {
+          reject(error);
+        });
+
+        child.on("close", (code, signal) => {
+          if (code === 0 || signal === "SIGINT" || signal === "SIGTERM") {
+            resolve();
+            return;
+          }
+          reject(new Error(`Command failed: ${formatCommandPreview(invocation.command, invocation.args)}`));
+        });
+      });
+
+      if (showStep) {
+        logStepDone(title, Date.now() - startedAt);
+      }
+    } catch (error) {
+      if (showStep) {
+        logStepFail(title, Date.now() - startedAt);
+      }
+      throw error;
+    } finally {
+      process.removeListener("SIGINT", forwardSigint);
+    }
+
+    return;
+  }
+
+  const waitingSpinner = typeof oraFactory === "function"
+    ? oraFactory(baseWaitingMessage).start()
+    : null;
+
+  if (!waitingSpinner) {
+    terminalUi.wait(baseWaitingMessage);
+  }
 
   const child = spawn(invocation.command, invocation.args, {
     cwd,
@@ -1187,12 +1303,20 @@ const runNpmCommandWithWaiting = async ({ title, args = [], cwd = projectRoot, w
     if (hasOutput) return;
     hasOutput = true;
     clearWaitingTimer();
+    if (waitingSpinner && waitingSpinner.isSpinning) {
+      waitingSpinner.succeed("Đã nhận log từ web server. Đang stream log realtime...");
+      return;
+    }
     terminalUi.info("Đã nhận log từ web server. Tiến trình đang tiếp tục...");
   };
 
   const waitingTimer = setInterval(() => {
     if (hasOutput) return;
     const waitedMs = Date.now() - waitingStartedAt;
+    if (waitingSpinner && waitingSpinner.isSpinning) {
+      waitingSpinner.text = `${baseWaitingMessage} (${formatDuration(waitedMs)})`;
+      return;
+    }
     terminalUi.wait(`${baseWaitingMessage} (${formatDuration(waitedMs)})`);
   }, waitingIntervalMs);
 
@@ -1225,16 +1349,31 @@ const runNpmCommandWithWaiting = async ({ title, args = [], cwd = projectRoot, w
           resolve();
           return;
         }
-        reject(new Error(`Command failed: ${invocation.command} ${invocation.args.join(" ")}`));
+        reject(new Error(`Command failed: ${formatCommandPreview(invocation.command, invocation.args)}`));
       });
     });
-    logStepDone(title, Date.now() - startedAt);
+
+    if (waitingSpinner && waitingSpinner.isSpinning) {
+      waitingSpinner.succeed("Web server đã khởi động.");
+    }
+
+    if (showStep) {
+      logStepDone(title, Date.now() - startedAt);
+    }
   } catch (error) {
-    logStepFail(title, Date.now() - startedAt);
+    if (waitingSpinner && waitingSpinner.isSpinning) {
+      waitingSpinner.fail("Khởi động web server thất bại.");
+    }
+    if (showStep) {
+      logStepFail(title, Date.now() - startedAt);
+    }
     throw error;
   } finally {
     clearWaitingTimer();
     process.removeListener("SIGINT", forwardSigint);
+    if (waitingSpinner && waitingSpinner.isSpinning) {
+      waitingSpinner.stop();
+    }
   }
 };
 
@@ -1676,7 +1815,7 @@ const main = async () => {
   const options = seedOptions.nonInteractive
     ? seedOptions
     : canRunInteractiveWizard
-      ? await collectInteractiveOptions(seedOptions)
+      ? await collectInteractiveOptions(seedOptions, { inquirerPrompt: installerInquirerPrompt })
       : {
         ...seedOptions,
         nonInteractive: true
@@ -1957,16 +2096,65 @@ const main = async () => {
   }
 
   terminalUi.section("Run services");
-  console.log(`  ${terminalUi.strong("1)")} Web: ${terminalUi.command(`${npmCommand} run dev`)}`);
+  const runServiceCommands = [`1) Web: ${npmCommand} run dev`];
   if (options.withApi) {
-    console.log(`  ${terminalUi.strong("2)")} API: ${terminalUi.command(`${npmCommand} --prefix api_server run start`)}`);
+    runServiceCommands.push(`2) API: ${npmCommand} --prefix api_server run start`);
+  }
+
+  const canRenderRunServicesBox = Boolean(
+    installerUiLibraries
+      && installerUiLibraries.boxen
+      && installerUiLibraries.chalk
+  );
+
+  if (canRenderRunServicesBox) {
+    const serviceLines = runServiceCommands.map((entry) => `  ${installerUiLibraries.chalk.cyan(entry)}`);
+    serviceLines.push("");
+    if (options.startWeb) {
+      serviceLines.push(installerUiLibraries.chalk.green("Auto start: ON - đang khởi động Web ngay bên dưới."));
+      serviceLines.push(installerUiLibraries.chalk.dim("Nhấn Ctrl+C để dừng web server."));
+    } else {
+      serviceLines.push(installerUiLibraries.chalk.dim("Auto start: OFF - thêm --start để tự khởi động web server."));
+    }
+
+    console.log(installerUiLibraries.boxen(serviceLines.join("\n"), {
+      padding: { top: 0, right: 1, bottom: 0, left: 1 },
+      margin: { top: 0, right: 0, bottom: 1, left: 0 },
+      borderStyle: "round",
+      borderColor: "cyan"
+    }));
+  } else {
+    runServiceCommands.forEach((entry) => {
+      const marker = entry.startsWith("2)") ? "2)" : "1)";
+      const commandText = entry.replace(/^\d\)\s*/, "");
+      console.log(`  ${terminalUi.strong(marker)} ${terminalUi.command(commandText)}`);
+    });
+    if (options.startWeb) {
+      terminalUi.info("Auto start đang bật. Đang khởi động web server ngay trong cửa sổ hiện tại...");
+      terminalUi.info("Nhấn Ctrl+C để dừng web server.");
+    } else {
+      terminalUi.info("Auto start đang tắt. Dùng --start nếu muốn script tự mở web server.");
+    }
   }
 
   if (options.startWeb) {
     await runNpmCommandWithWaiting({
       title: "Start web server",
-      args: ["run", "dev"],
-      waitingMessage: "Đang khởi động server (có thể mất 30-90s nếu đang minify JS lần đầu)"
+      command: process.execPath,
+      commandArgs: [path.join(projectRoot, "server.js")],
+      commandShell: false,
+      extraEnv: {
+        FORCE_STARTUP_SPINNER: "1"
+      },
+      waitingMessage: "Đang khởi động server (có thể mất 30-90s nếu đang minify JS lần đầu)",
+      displayCommand: "node server.js",
+      showStep: false,
+      showCommand: false,
+      inheritStdio: true,
+      showWaitingLine: false,
+      oraFactory: installerUiLibraries && typeof installerUiLibraries.ora === "function"
+        ? installerUiLibraries.ora
+        : null
     });
   }
 };
