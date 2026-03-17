@@ -14,6 +14,143 @@ const psqlCommand = process.platform === "win32" ? "psql.exe" : "psql";
 const MIN_NODE_MAJOR = 20;
 const MIN_POSTGRES_MAJOR = 16;
 
+const createTerminalUi = () => {
+  const term = String(process.env.TERM || "").trim().toLowerCase();
+  const isStdoutTty = Boolean(process.stdout && process.stdout.isTTY);
+
+  const colorEnabled = (() => {
+    const forced = process.env.FORCE_COLOR;
+    if (forced != null) {
+      const text = String(forced).trim().toLowerCase();
+      if (!text) return true;
+      return !["0", "false", "no", "off"].includes(text);
+    }
+    if (process.env.NO_COLOR != null) return false;
+    if (!isStdoutTty) return false;
+    if (term === "dumb") return false;
+    return true;
+  })();
+
+  const unicodeEnabled = isStdoutTty && term !== "dumb";
+
+  const ansi = {
+    reset: "\u001b[0m",
+    bold: "\u001b[1m",
+    dim: "\u001b[2m",
+    underline: "\u001b[4m",
+    noUnderline: "\u001b[24m",
+    red: "\u001b[31m",
+    green: "\u001b[32m",
+    yellow: "\u001b[33m",
+    blue: "\u001b[34m",
+    magenta: "\u001b[35m",
+    cyan: "\u001b[36m",
+    gray: "\u001b[90m"
+  };
+
+  const tones = {
+    step: ansi.blue,
+    info: ansi.cyan,
+    ok: ansi.green,
+    warn: ansi.yellow,
+    fail: ansi.red,
+    wait: ansi.magenta
+  };
+
+  const styleText = (text, codes = []) => {
+    const value = String(text == null ? "" : text);
+    if (!colorEnabled || !codes.length) return value;
+    return `${codes.join("")}${value}${ansi.reset}`;
+  };
+
+  const getLineWidth = () => {
+    const columns = Number(process.stdout && process.stdout.columns);
+    if (!Number.isFinite(columns) || columns <= 0) return 68;
+    return Math.max(12, Math.min(columns - 2, 88));
+  };
+
+  const rule = (char) => {
+    const token = String(char || (unicodeEnabled ? "─" : "-"));
+    return token.repeat(getLineWidth());
+  };
+
+  const badge = (label, tone) => styleText(`[${label}]`, [ansi.bold, tone]);
+  const symbol = (label, tone) => styleText(label, [ansi.bold, tone]);
+
+  const statusLine = ({ label, tone, message, stderr = false, blankLine = false }) => {
+    const output = stderr ? console.error : console.log;
+    if (blankLine) {
+      output("");
+    }
+    output(`${badge(label, tone)} ${message}`);
+  };
+
+  const printKeyValueBlock = (title, rows) => {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    console.log("");
+    console.log(styleText(title, [ansi.bold, tones.info]));
+    console.log(styleText(rule(), [ansi.dim]));
+    const keyWidth = safeRows.reduce((max, entry) => {
+      const key = Array.isArray(entry) ? entry[0] : "";
+      return Math.max(max, String(key || "").length);
+    }, 0);
+
+    safeRows.forEach((entry) => {
+      const key = Array.isArray(entry) ? entry[0] : "";
+      const value = Array.isArray(entry) ? entry[1] : "";
+      const padded = String(key || "").padEnd(keyWidth, " ");
+      console.log(`  ${styleText(padded, [ansi.dim])} : ${value}`);
+    });
+  };
+
+  return {
+    muted: (text) => styleText(text, [ansi.dim]),
+    strong: (text) => styleText(text, [ansi.bold]),
+    accent: (text) => styleText(text, [ansi.bold, tones.info]),
+    command: (text) => styleText(text, [ansi.bold, tones.step]),
+    yesNo: (value) => {
+      if (value) return styleText("yes", [ansi.bold, tones.ok]);
+      return styleText("no", [ansi.dim]);
+    },
+    underlineChoice: (text) => {
+      const value = String(text == null ? "" : text);
+      if (!colorEnabled) {
+        return `_${value}_`;
+      }
+      return `${ansi.underline}${value}${ansi.noUnderline}`;
+    },
+    prompt: (label) => `${symbol("?", tones.info)} ${label}: `,
+    validation: (message) => {
+      console.log(`  ${symbol("!", tones.warn)} ${message}`);
+    },
+    banner: (title, subtitle) => {
+      const border = styleText(rule(unicodeEnabled ? "═" : "="), [tones.step]);
+      console.log("");
+      console.log(border);
+      console.log(styleText(` ${title}`, [ansi.bold, tones.info]));
+      if (subtitle) {
+        console.log(styleText(` ${subtitle}`, [ansi.dim]));
+      }
+      console.log(border);
+    },
+    section: (title) => {
+      console.log("");
+      console.log(styleText(title, [ansi.bold, tones.info]));
+      console.log(styleText(rule(), [ansi.dim]));
+    },
+    status: statusLine,
+    step: (label, message, blankLine = false) => statusLine({ label, tone: tones.step, message, blankLine }),
+    info: (message) => statusLine({ label: "INFO", tone: tones.info, message }),
+    ok: (message) => statusLine({ label: " OK ", tone: tones.ok, message }),
+    warn: (message) => statusLine({ label: "WARN", tone: tones.warn, message }),
+    wait: (message) => statusLine({ label: "WAIT", tone: tones.wait, message }),
+    fail: (message) => statusLine({ label: "FAIL", tone: tones.fail, message, stderr: true }),
+    printKeyValueBlock
+  };
+};
+
+const terminalUi = createTerminalUi();
+
 const parseArgs = (argv) => {
   const options = {};
 
@@ -117,23 +254,72 @@ const askQuestion = (rl, promptText) => new Promise((resolve) => {
   });
 });
 
-const formatUnderlinedChoice = (value) => {
+const askSecretQuestion = (rl, promptText) => new Promise((resolve) => {
+  const originalWrite = rl._writeToOutput;
+  rl.stdoutMuted = true;
+  rl._writeToOutput = (stringToWrite) => {
+    const text = String(stringToWrite == null ? "" : stringToWrite);
+    if (rl.stdoutMuted) {
+      if (!text) {
+        return;
+      }
+      if (text === promptText) {
+        rl.output.write(text);
+        return;
+      }
+      if (text.includes("\n") || text.includes("\r")) {
+        rl.output.write(text);
+        return;
+      }
+      rl.output.write("*");
+      return;
+    }
+    if (typeof originalWrite === "function") {
+      originalWrite.call(rl, text);
+      return;
+    }
+    rl.output.write(text);
+  };
+
+  rl.question(promptText, (answer) => {
+    rl.stdoutMuted = false;
+    rl._writeToOutput = originalWrite;
+    rl.output.write("\n");
+    resolve(String(answer == null ? "" : answer));
+  });
+});
+
+const quoteArgForDisplay = (value) => {
   const text = String(value == null ? "" : value);
-  const canUseAnsi = Boolean(
-    process.stdout && process.stdout.isTTY && process.env.NO_COLOR == null && String(process.env.TERM || "") !== "dumb"
-  );
-  if (canUseAnsi) {
-    return `\u001b[4m${text}\u001b[24m`;
+  if (!text) return '""';
+  if (!/[\s"'`$\\]/.test(text)) {
+    return text;
   }
-  return `_${text}_`;
+  return JSON.stringify(text);
 };
 
-const promptTextValue = async ({ rl, label, defaultValue = "", allowEmpty = false }) => {
+const formatCommandPreview = (command, args = []) => {
+  return [command, ...args].map((part) => quoteArgForDisplay(part)).join(" ").trim();
+};
+
+const formatUnderlinedChoice = (value) => {
+  return terminalUi.underlineChoice(value);
+};
+
+const promptTextValue = async ({ rl, label, defaultValue = "", allowEmpty = false, secret = false }) => {
   while (true) {
     const fallback = String(defaultValue == null ? "" : defaultValue);
-    const suffix = fallback ? ` [${fallback}]` : "";
-    const answer = await askQuestion(rl, `${label}${suffix}: `);
+    const suffix = fallback ? (secret ? " [đã đặt]" : ` [${fallback}]`) : "";
+    const clearHint = allowEmpty && fallback ? " (Enter để giữ, nhập - để xóa)" : "";
+    const questionText = terminalUi.prompt(`${label}${suffix}${clearHint}`);
+    const answer = secret
+      ? await askSecretQuestion(rl, questionText)
+      : await askQuestion(rl, questionText);
     const value = String(answer || "").trim();
+
+    if (allowEmpty && value === "-") {
+      return "";
+    }
 
     if (!value) {
       if (fallback) {
@@ -142,7 +328,7 @@ const promptTextValue = async ({ rl, label, defaultValue = "", allowEmpty = fals
       if (allowEmpty) {
         return "";
       }
-      console.log("  ! Giá trị không được để trống.");
+      terminalUi.validation("Giá trị không được để trống.");
       continue;
     }
 
@@ -153,13 +339,13 @@ const promptTextValue = async ({ rl, label, defaultValue = "", allowEmpty = fals
 const promptPortValue = async ({ rl, label, defaultValue }) => {
   while (true) {
     const fallback = Number.isFinite(defaultValue) ? defaultValue : 0;
-    const answer = await askQuestion(rl, `${label} [${fallback}]: `);
+    const answer = await askQuestion(rl, terminalUi.prompt(`${label} [${fallback}]`));
     const raw = String(answer || "").trim();
     const candidate = raw ? Number.parseInt(raw, 10) : fallback;
     if (Number.isFinite(candidate) && candidate >= 1 && candidate <= 65535) {
       return Math.floor(candidate);
     }
-    console.log("  ! Port phải là số từ 1 đến 65535.");
+    terminalUi.validation("Port phải là số từ 1 đến 65535.");
   }
 };
 
@@ -170,12 +356,12 @@ const promptBooleanValue = async ({ rl, label, defaultValue = false }) => {
     : `y/${formatUnderlinedChoice("N")}`;
 
   while (true) {
-    const answer = await askQuestion(rl, `${label} (${hint}): `);
+    const answer = await askQuestion(rl, terminalUi.prompt(`${label} (${hint})`));
     const raw = String(answer || "").trim().toLowerCase();
     if (!raw) return fallback;
     if (["y", "yes", "1", "true", "on", "co", "c", "có", "ok"].includes(raw)) return true;
     if (["n", "no", "0", "false", "off", "khong", "không", "k"].includes(raw)) return false;
-    console.log("  ! Nhập y/yes hoặc n/no.");
+    terminalUi.validation("Nhập y/yes hoặc n/no.");
   }
 };
 
@@ -190,8 +376,11 @@ const collectInteractiveOptions = async (seedOptions) => {
   });
 
   try {
-    console.log("\n=== Setup Wizard ===");
-    console.log("Nhập từng thông số cấu hình. Nhấn Enter để dùng giá trị trong ngoặc [].\n");
+    terminalUi.section("Interactive Setup Wizard");
+    console.log(terminalUi.muted("Nhập từng thông số cấu hình. Nhấn Enter để dùng giá trị trong ngoặc []."));
+    console.log(terminalUi.muted("Mẹo: với các trường tùy chọn đã có giá trị, nhập '-' để xóa."));
+
+    terminalUi.section("Database và tài khoản admin");
 
     const dbHost = await promptTextValue({
       rl,
@@ -220,7 +409,8 @@ const collectInteractiveOptions = async (seedOptions) => {
     const dbPassword = await promptTextValue({
       rl,
       label: "Password database",
-      defaultValue: seedOptions.dbPassword
+      defaultValue: seedOptions.dbPassword,
+      secret: true
     });
 
     const webAdminUser = await promptTextValue({
@@ -232,8 +422,11 @@ const collectInteractiveOptions = async (seedOptions) => {
     const webAdminPass = await promptTextValue({
       rl,
       label: "Password admin web",
-      defaultValue: seedOptions.webAdminPass
+      defaultValue: seedOptions.webAdminPass,
+      secret: true
     });
+
+    terminalUi.section("Port ứng dụng và module tùy chọn");
 
     const appPort = await promptPortValue({
       rl,
@@ -284,6 +477,8 @@ const collectInteractiveOptions = async (seedOptions) => {
     let s3ChapterPrefix = seedOptions.s3ChapterPrefix;
 
     if (setupS3Now) {
+      terminalUi.section("Cấu hình S3");
+
       s3Endpoint = await promptTextValue({
         rl,
         label: "Endpoint S3 (để trống nếu dùng AWS)",
@@ -312,7 +507,8 @@ const collectInteractiveOptions = async (seedOptions) => {
       s3SecretAccessKey = await promptTextValue({
         rl,
         label: "S3 Secret Access Key",
-        defaultValue: seedOptions.s3SecretAccessKey
+        defaultValue: seedOptions.s3SecretAccessKey,
+        secret: true
       });
 
       const forcePathStyleBool = await promptBooleanValue({
@@ -336,6 +532,8 @@ const collectInteractiveOptions = async (seedOptions) => {
       });
     }
 
+    terminalUi.section("OAuth (Google / Discord)");
+
     const setupGoogleNow = await promptBooleanValue({
       rl,
       label: "Setup Google OAuth ngay bây giờ",
@@ -353,7 +551,8 @@ const collectInteractiveOptions = async (seedOptions) => {
       googleClientSecret = await promptTextValue({
         rl,
         label: "Google Client Secret",
-        defaultValue: seedOptions.googleClientSecret
+        defaultValue: seedOptions.googleClientSecret,
+        secret: true
       });
     }
 
@@ -374,9 +573,12 @@ const collectInteractiveOptions = async (seedOptions) => {
       discordClientSecret = await promptTextValue({
         rl,
         label: "Discord Client Secret",
-        defaultValue: seedOptions.discordClientSecret
+        defaultValue: seedOptions.discordClientSecret,
+        secret: true
       });
     }
+
+    terminalUi.section("Khởi động sau setup");
 
     const startWeb = await promptBooleanValue({
       rl,
@@ -431,20 +633,21 @@ const promptExistingDbAction = async ({ tableCount }) => {
   });
 
   try {
-    console.log(`\n==> Database hiện đã có ${tableCount} bảng.`);
-    console.log("Chọn hướng xử lý:");
-    console.log("  1) Ghi đè setup (không xóa dữ liệu hiện có)");
-    console.log("  2) Dừng setup");
+    terminalUi.section("Database đã có dữ liệu");
+    terminalUi.warn(`Database hiện đã có ${tableCount} bảng trong schema hiện tại.`);
+    console.log(terminalUi.muted("Chọn hướng xử lý:"));
+    console.log(`  ${terminalUi.strong("1)")} Ghi đè setup (không xóa dữ liệu hiện có)`);
+    console.log(`  ${terminalUi.strong("2)")} Dừng setup`);
 
     while (true) {
-      const answer = String(await askQuestion(rl, "Lựa chọn [1/2] (mặc định 1): ")).trim().toLowerCase();
+      const answer = String(await askQuestion(rl, terminalUi.prompt("Lựa chọn [1/2] (mặc định 1)"))).trim().toLowerCase();
       if (!answer || answer === "1") {
         return "overwrite";
       }
       if (answer === "2") {
         return "stop";
       }
-      console.log("  ! Vui lòng nhập 1 hoặc 2.");
+      terminalUi.validation("Vui lòng nhập 1 hoặc 2.");
     }
   } finally {
     rl.close();
@@ -461,27 +664,36 @@ const formatDuration = (ms) => {
   return `${minutes}m${String(remSeconds).padStart(2, "0")}s`;
 };
 
+let setupStepCounter = 0;
+
 const logStepStart = (title) => {
-  console.log(`\n[STEP] ${title}`);
+  setupStepCounter += 1;
+  const index = String(setupStepCounter).padStart(2, "0");
+  terminalUi.step(`STEP ${index}`, title, true);
 };
 
 const logStepDone = (title, elapsedMs) => {
-  console.log(`[ OK ] ${title} (${formatDuration(elapsedMs)})`);
+  terminalUi.ok(`${title} (${formatDuration(elapsedMs)})`);
 };
 
 const logStepFail = (title, elapsedMs) => {
-  console.log(`[FAIL] ${title} (${formatDuration(elapsedMs)})`);
+  terminalUi.fail(`${title} (${formatDuration(elapsedMs)})`);
 };
 
 const printSetupBanner = () => {
-  console.log("\n============================================================");
-  console.log(" BFANG Setup Wizard");
-  console.log("============================================================");
+  terminalUi.banner(
+    "BFANG Setup Wizard",
+    `Node.js ${MIN_NODE_MAJOR}+ | PostgreSQL ${MIN_POSTGRES_MAJOR}+ | Cross-platform setup`
+  );
 };
 
 const runCommand = ({ title, command, args = [], cwd = projectRoot, extraEnv = null, capture = false, shell = false }) => {
   const startedAt = Date.now();
   logStepStart(title);
+  const commandPreview = formatCommandPreview(command, args);
+  if (commandPreview) {
+    console.log(`  ${terminalUi.muted("$")} ${terminalUi.command(commandPreview)}`);
+  }
   const env = extraEnv ? { ...process.env, ...extraEnv } : process.env;
   const result = spawnSync(command, args, {
     cwd,
@@ -548,10 +760,14 @@ const runNpmCommandWithWaiting = async ({ title, args = [], cwd = projectRoot, w
   const invocation = resolveNpmInvocation({ args });
   const startedAt = Date.now();
   const env = process.env;
-  const baseWaitingMessage = String(waitingMessage || "").trim() || "Dang cho tien trinh khoi dong...";
+  const baseWaitingMessage = String(waitingMessage || "").trim() || "Đang chờ tiến trình khởi động...";
 
   logStepStart(title);
-  console.log(`[WAIT] ${baseWaitingMessage}`);
+  const commandPreview = formatCommandPreview(invocation.command, invocation.args);
+  if (commandPreview) {
+    console.log(`  ${terminalUi.muted("$")} ${terminalUi.command(commandPreview)}`);
+  }
+  terminalUi.wait(baseWaitingMessage);
 
   const child = spawn(invocation.command, invocation.args, {
     cwd,
@@ -574,13 +790,13 @@ const runNpmCommandWithWaiting = async ({ title, args = [], cwd = projectRoot, w
     if (hasOutput) return;
     hasOutput = true;
     clearWaitingTimer();
-    console.log("[INFO] Da nhan log tu web server. Tien trinh dang tiep tuc...");
+    terminalUi.info("Đã nhận log từ web server. Tiến trình đang tiếp tục...");
   };
 
   const waitingTimer = setInterval(() => {
     if (hasOutput) return;
     const waitedMs = Date.now() - waitingStartedAt;
-    console.log(`[WAIT] ${baseWaitingMessage} (${formatDuration(waitedMs)})`);
+    terminalUi.wait(`${baseWaitingMessage} (${formatDuration(waitedMs)})`);
   }, waitingIntervalMs);
 
   child.stdout.on("data", (chunk) => {
@@ -837,8 +1053,57 @@ const maskDatabaseUrl = (url) => {
 
 
 const printHelp = () => {
-  console.log([
-    "Usage: node scripts/setup-all.js [options]",
+  const optionRows = [
+    ["--db-host <host>", "PostgreSQL host (default: 127.0.0.1)"],
+    ["--db-port <port>", "PostgreSQL port (default: 5432)"],
+    ["--db-name <name>", "App database name (default: moetruyen)"],
+    ["--db-user <user>", "App database user (default: postgres)"],
+    ["--db-pass <pass>", "App database password (default: 12345)"],
+    ["--admin-user <user>", "Web admin username (default: admin)"],
+    ["--admin-pass <pass>", "Web admin password (default: 12345)"],
+    ["--app-port <port>", "Web port (default: 3000)"],
+    ["--api-port <port>", "API server port (default: 3001)"],
+    ["--with-api <true|false>", "Install api_server deps (default: true)"],
+    ["--with-forum <true|false>", "Install/build sampleforum (default: true)"],
+    ["--with-desktop <true|false>", "Install app_desktop deps (default: false)"],
+    ["--existing-db-action <mode>", "Existing DB behavior: overwrite|stop|ask (default: ask)"],
+    ["--setup-s3 <true|false>", "Setup S3 vars now"],
+    ["--s3-endpoint <url>", "S3 endpoint (optional)"],
+    ["--s3-bucket <name>", "S3 bucket"],
+    ["--s3-region <name>", "S3 region (default: us-east-1)"],
+    ["--s3-access-key-id <id>", "S3 access key id"],
+    ["--s3-secret-access-key <secret>", "S3 secret access key"],
+    ["--s3-force-path-style <bool>", "S3 force path style"],
+    ["--chapter-cdn-base-url <url>", "CDN base URL for chapter images"],
+    ["--s3-chapter-prefix <prefix>", "S3 chapter prefix (default: chapters)"],
+    ["--setup-google <true|false>", "Setup Google OAuth vars now"],
+    ["--google-client-id <id>", "Google OAuth client id"],
+    ["--google-client-secret <secret>", "Google OAuth client secret"],
+    ["--setup-discord <true|false>", "Setup Discord OAuth vars now"],
+    ["--discord-client-id <id>", "Discord OAuth client id"],
+    ["--discord-client-secret <secret>", "Discord OAuth client secret"],
+    ["--non-interactive", "Do not prompt; use args/env/defaults"],
+    ["--start", "Start web server (`npm run dev`) after setup"],
+    ["--help", "Show this help"]
+  ];
+
+  const optionWidth = optionRows.reduce((max, row) => Math.max(max, String(row[0]).length), 0);
+  const formatOption = (flag, description) => {
+    const padded = String(flag).padEnd(optionWidth, " ");
+    return `  ${terminalUi.command(padded)}  ${description}`;
+  };
+
+  const examples = [
+    "npm run setup:all",
+    "npm run setup:all -- --db-user=postgres --db-pass=12345",
+    "npm run setup:all -- --existing-db-action=overwrite",
+    "npm run setup:all -- --non-interactive --setup-s3=true --setup-google=false --setup-discord=false",
+    "npm run setup:all -- --with-desktop=true"
+  ];
+
+  const lines = [
+    terminalUi.accent("Usage"),
+    `  ${terminalUi.command("node scripts/setup-all.js [options]")}`,
     "",
     "Cross-platform project bootstrap for Windows and Ubuntu.",
     `Requirements: Node.js LTS ${MIN_NODE_MAJOR}+ and PostgreSQL ${MIN_POSTGRES_MAJOR}+.`,
@@ -846,47 +1111,15 @@ const printHelp = () => {
     "This script installs dependencies, creates env files, prepares DB,",
     "runs schema bootstrap, and builds required assets.",
     "",
-    "Options:",
-    "  --db-host <host>                 PostgreSQL host (default: 127.0.0.1)",
-    "  --db-port <port>                 PostgreSQL port (default: 5432)",
-    "  --db-name <name>                 App database name (default: moetruyen)",
-    "  --db-user <user>                 App database user (default: postgres)",
-    "  --db-pass <pass>                 App database password (default: 12345)",
-    "  --admin-user <user>              Web admin username (default: admin)",
-    "  --admin-pass <pass>              Web admin password (default: 12345)",
-    "  --app-port <port>                Web port (default: 3000)",
-    "  --api-port <port>                API server port (default: 3001)",
-    "  --with-api <true|false>          Install api_server deps (default: true)",
-    "  --with-forum <true|false>        Install/build sampleforum (default: true)",
-    "  --with-desktop <true|false>      Install app_desktop deps (default: false)",
-    "  --existing-db-action <mode>      Existing DB behavior: overwrite|stop|ask (default: ask)",
-    "  --setup-s3 <true|false>          Setup S3 vars now",
-    "  --s3-endpoint <url>              S3 endpoint (optional)",
-    "  --s3-bucket <name>               S3 bucket",
-    "  --s3-region <name>               S3 region (default: us-east-1)",
-    "  --s3-access-key-id <id>          S3 access key id",
-    "  --s3-secret-access-key <secret>  S3 secret access key",
-    "  --s3-force-path-style <bool>     S3 force path style",
-    "  --chapter-cdn-base-url <url>     CDN base URL for chapter images",
-    "  --s3-chapter-prefix <prefix>     S3 chapter prefix (default: chapters)",
-    "  --setup-google <true|false>      Setup Google OAuth vars now",
-    "  --google-client-id <id>          Google OAuth client id",
-    "  --google-client-secret <secret>  Google OAuth client secret",
-    "  --setup-discord <true|false>     Setup Discord OAuth vars now",
-    "  --discord-client-id <id>         Discord OAuth client id",
-    "  --discord-client-secret <secret> Discord OAuth client secret",
-    "  --non-interactive                Do not prompt; use args/env/defaults",
-    "  --start                          Start web server (`npm run dev`) after setup",
-    "  --help                           Show this help",
+    terminalUi.accent("Options"),
+    ...optionRows.map((row) => formatOption(row[0], row[1])),
     "",
-    "Examples:",
-    "  npm run setup:all",
-    "  npm run setup:all -- --db-user=postgres --db-pass=12345",
-    "  npm run setup:all -- --existing-db-action=overwrite",
-    "  npm run setup:all -- --non-interactive --setup-s3=true --setup-google=false --setup-discord=false",
-    "  npm run setup:all -- --with-desktop=true",
+    terminalUi.accent("Examples"),
+    ...examples.map((entry) => `  ${terminalUi.command(entry)}`),
     ""
-  ].join("\n"));
+  ];
+
+  console.log(lines.join("\n"));
 };
 
 const main = async () => {
@@ -1009,7 +1242,7 @@ const main = async () => {
     ? seedOptions
     : await collectInteractiveOptions(seedOptions);
 
-  console.log("\n==> Kiểm tra kết nối SQL với thông số bạn vừa nhập...");
+  terminalUi.info("Kiểm tra kết nối SQL với thông số bạn vừa nhập...");
   const sqlCheck = testSqlConnectionWithPsql({
     host: options.dbHost,
     port: options.dbPort,
@@ -1018,7 +1251,7 @@ const main = async () => {
     password: options.dbPassword,
     minMajor: MIN_POSTGRES_MAJOR
   });
-  console.log(`==> Kết nối SQL thành công (PostgreSQL ${sqlCheck.major}).`);
+  terminalUi.ok(`Kết nối SQL thành công (PostgreSQL ${sqlCheck.major}).`);
 
   const existingTableCount = getSchemaTableCountWithPsql({
     host: options.dbHost,
@@ -1041,7 +1274,7 @@ const main = async () => {
     }
 
     if (existingDbAction === "stop") {
-      console.log("\nSetup đã dừng theo lựa chọn của bạn vì database đã có dữ liệu.");
+      terminalUi.warn("Setup đã dừng theo lựa chọn của bạn vì database đã có dữ liệu.");
       return;
     }
   } else {
@@ -1153,19 +1386,23 @@ const main = async () => {
     writeTextFile(apiEnvPath, apiEnvNext);
   }
 
-  console.log("\nSetup configuration:");
-  console.log(`- Platform: ${process.platform}`);
-  console.log(`- Web database: ${maskDatabaseUrl(databaseUrl)}`);
-  console.log(`- Web port: ${options.appPort}`);
-  console.log(`- API enabled: ${options.withApi ? "yes" : "no"}`);
-  console.log(`- Forum enabled: ${options.withForum ? "yes" : "no"}`);
-  console.log(`- Desktop deps install: ${options.withDesktop ? "yes" : "no"}`);
-  console.log(`- Setup S3 now: ${options.setupS3Now ? "yes" : "no"}`);
-  console.log(`- Setup Google OAuth now: ${options.setupGoogleNow ? "yes" : "no"}`);
-  console.log(`- Setup Discord OAuth now: ${options.setupDiscordNow ? "yes" : "no"}`);
-  console.log(`- Interactive mode: ${options.nonInteractive ? "off" : "on"}`);
-  console.log(`- Existing DB tables: ${existingTableCount}`);
-  console.log(`- Existing DB action: ${existingDbAction}`);
+  terminalUi.printKeyValueBlock("Setup configuration", [
+    ["Platform", process.platform],
+    ["Web database", maskDatabaseUrl(databaseUrl)],
+    ["Web port", String(options.appPort)],
+    ["API enabled", terminalUi.yesNo(options.withApi)],
+    ["Forum enabled", terminalUi.yesNo(options.withForum)],
+    ["Desktop deps install", terminalUi.yesNo(options.withDesktop)],
+    ["Setup S3 now", terminalUi.yesNo(options.setupS3Now)],
+    ["Setup Google OAuth now", terminalUi.yesNo(options.setupGoogleNow)],
+    ["Setup Discord OAuth now", terminalUi.yesNo(options.setupDiscordNow)],
+    ["Interactive mode", options.nonInteractive ? terminalUi.muted("off") : terminalUi.strong("on")],
+    ["Existing DB tables", String(existingTableCount)],
+    ["Existing DB action", existingDbAction]
+  ]);
+
+  setupStepCounter = 0;
+  terminalUi.section("Thực thi setup");
 
   runNpmCommand({
     title: "Install root dependencies",
@@ -1200,7 +1437,7 @@ const main = async () => {
     });
   } catch (error) {
     if (existingTableCount === 0 || existingDbAction === "overwrite") {
-      console.log("\n==> Schema chưa khớp db.json. Đang thử tự đồng bộ snapshot rồi bootstrap lại...");
+      terminalUi.warn("Schema chưa khớp db.json. Đang thử tự đồng bộ snapshot rồi bootstrap lại...");
       runNpmCommand({
         title: "Sync db.json from current database",
         args: ["run", "db:schema:json:sync"]
@@ -1226,37 +1463,38 @@ const main = async () => {
     });
   }
 
-  console.log("\nSetup completed successfully.");
-  console.log(`- Root env: ${path.relative(projectRoot, rootEnvPath)}`);
+  terminalUi.section("Setup hoàn tất");
+  terminalUi.ok(`Root env: ${path.relative(projectRoot, rootEnvPath)}`);
   if (options.withApi) {
-    console.log(`- API env: ${path.relative(projectRoot, apiEnvPath)}`);
+    terminalUi.ok(`API env: ${path.relative(projectRoot, apiEnvPath)}`);
   }
   if (!options.setupS3Now) {
-    console.log("- S3 setup skipped: hãy cấu hình S3_* và CHAPTER_CDN_BASE_URL trong .env khi cần.");
+    terminalUi.warn("S3 setup skipped: hãy cấu hình S3_* và CHAPTER_CDN_BASE_URL trong .env khi cần.");
   }
   if (!options.setupGoogleNow) {
-    console.log("- Google OAuth skipped: hãy cập nhật GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET trong .env khi cần.");
+    terminalUi.warn("Google OAuth skipped: hãy cập nhật GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET trong .env khi cần.");
   }
   if (!options.setupDiscordNow) {
-    console.log("- Discord OAuth skipped: hãy cập nhật DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET trong .env khi cần.");
+    terminalUi.warn("Discord OAuth skipped: hãy cập nhật DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET trong .env khi cần.");
   }
-  console.log("\nRun services:");
-  console.log(`- Web: ${npmCommand} run dev`);
+
+  terminalUi.section("Run services");
+  console.log(`  ${terminalUi.strong("1)")} Web: ${terminalUi.command(`${npmCommand} run dev`)}`);
   if (options.withApi) {
-    console.log(`- API: ${npmCommand} --prefix api_server run start`);
+    console.log(`  ${terminalUi.strong("2)")} API: ${terminalUi.command(`${npmCommand} --prefix api_server run start`)}`);
   }
 
   if (options.startWeb) {
     await runNpmCommandWithWaiting({
       title: "Start web server",
       args: ["run", "dev"],
-      waitingMessage: "Dang khoi dong server (co the mat 30-90s neu dang minify JS lan dau)"
+      waitingMessage: "Đang khởi động server (có thể mất 30-90s nếu đang minify JS lần đầu)"
     });
   }
 };
 
 main().catch((error) => {
-  console.error("\nSetup failed.");
+  terminalUi.fail("Setup failed.");
   console.error(error && error.message ? error.message : error);
   process.exit(1);
 });
