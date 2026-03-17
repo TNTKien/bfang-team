@@ -2469,7 +2469,7 @@ const main = async () => {
       commandArgs: [path.join(projectRoot, "server.js")],
       commandShell: false,
       extraEnv: {
-        FORCE_STARTUP_SPINNER: "1"
+        DISABLE_STARTUP_PROGRESS: "1"
       },
       waitingMessage: "Đang khởi động server (có thể mất 30-90s nếu đang minify JS lần đầu)",
       displayCommand: "node server.js",

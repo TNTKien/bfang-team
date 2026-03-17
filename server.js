@@ -16,6 +16,9 @@ const canInlineUpdate = Boolean(
 const forceStartupSpinner = isTruthyEnvValue(
   process.env.FORCE_STARTUP_SPINNER || process.env.FORCE_ORA
 );
+const disableStartupProgress = isTruthyEnvValue(
+  process.env.DISABLE_STARTUP_PROGRESS || process.env.QUIET_STARTUP_PROGRESS
+);
 const npmLifecycleEvent = String(process.env.npm_lifecycle_event || "").trim().toLowerCase();
 const forceSpinnerForLifecycle = npmLifecycleEvent === "dev" || npmLifecycleEvent === "start";
 
@@ -87,6 +90,10 @@ const initStartupSpinner = (oraFactory) => {
 };
 
 const setStartupLoading = (message) => {
+  if (disableStartupProgress) {
+    return;
+  }
+
   const spinner = startupLoadingState.spinner;
   if (spinner) {
     const text = String(message == null ? "" : message).trim();
@@ -104,6 +111,10 @@ const setStartupLoading = (message) => {
 };
 
 const finishStartupLoading = (message, success = true) => {
+  if (disableStartupProgress) {
+    return;
+  }
+
   if (!startupLoadingState.active) {
     return;
   }
@@ -129,6 +140,10 @@ const finishStartupLoading = (message, success = true) => {
 const createServerStartupHooks = () => {
   return {
     onMinifyProgress: (payload) => {
+      if (disableStartupProgress) {
+        return;
+      }
+
       const phase = String(payload && payload.phase ? payload.phase : "").trim().toLowerCase();
       if (!phase) return;
 
