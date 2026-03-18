@@ -139,7 +139,7 @@ const registerSiteRoutes = (app, deps) => {
   const HOMEPAGE_RANDOM_SLICE_TTL_MS = 60 * 1000;
   const HOMEPAGE_FORUM_POST_LIMIT = 5;
   const HOMEPAGE_FORUM_REQUEST_ID_LIKE = "forum-%";
-  const HOMEPAGE_LATEST_LIMIT = 8;
+  const HOMEPAGE_LATEST_LIMIT = 18;
   const HOMEPAGE_RANDOM_SLICE_LIMIT = 16;
   const teamCommunityNameCache = new Map();
   let homepageRandomSliceCache = [];
@@ -785,6 +785,7 @@ const registerSiteRoutes = (app, deps) => {
   });
   let homepageCacheExpiresAt = 0;
   let homepageCachePayload = null;
+  let homepageCacheUpdatedAt = "";
   const SEO_TRENDING_KEYWORDS = Object.freeze([
     "đọc truyện tranh online",
     "manga tiếng Việt",
@@ -7343,11 +7344,21 @@ app.post(
       homepagePayload = null;
     }
 
+    if (homepagePayload && homepageCacheExpiresAt > now) {
+      const homepageMetaRow = await dbGet("SELECT updated_at FROM homepage WHERE id = 1");
+      const latestUpdatedAt = homepageMetaRow && homepageMetaRow.updated_at
+        ? String(homepageMetaRow.updated_at).trim()
+        : "";
+      if (latestUpdatedAt !== homepageCacheUpdatedAt) {
+        homepagePayload = null;
+      }
+    }
+
     if (!homepagePayload || homepageCacheExpiresAt <= now) {
       const homepageRow = await dbGet("SELECT * FROM homepage WHERE id = 1");
     const homepageData = normalizeHomepageRow(homepageRow);
     const notices = buildHomepageNotices(homepageData);
-    const featuredIds = homepageData.featuredIds;
+    const featuredIds = homepageData.featuredIds.slice(0, 4);
     let featuredRows = [];
 
     if (featuredIds.length > 0) {
@@ -7362,7 +7373,7 @@ app.post(
 
     if (featuredRows.length === 0) {
       featuredRows = await dbAll(
-        `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 ${listQueryOrder} LIMIT 3`
+        `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 ${listQueryOrder} LIMIT 4`
       );
     }
 
@@ -7479,6 +7490,9 @@ app.post(
       };
       homepageCachePayload = homepagePayload;
       homepageCacheExpiresAt = now + HOMEPAGE_CACHE_TTL_MS;
+      homepageCacheUpdatedAt = homepageRow && homepageRow.updated_at
+        ? String(homepageRow.updated_at).trim()
+        : "";
     }
 
     return homepagePayload;

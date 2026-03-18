@@ -113,6 +113,13 @@
     "https://discord.moetruyen.net/";
   const discordLabel =
     (contactConfig.discordLabel || "discord.moetruyen.net").toString().trim() || "discord.moetruyen.net";
+  const truncateDescription = (value, maxLength) => {
+    const normalized = (value == null ? "" : String(value)).replace(/\s+/g, " ").trim();
+    if (!normalized) return "Đang cập nhật mô tả truyện.";
+    const safeMax = Number.isFinite(Number(maxLength)) ? Math.max(40, Math.floor(Number(maxLength))) : 170;
+    if (normalized.length <= safeMax) return normalized;
+    return `${normalized.slice(0, safeMax - 3).trim()}...`;
+  };
   const safeJsonForScript = (value) => JSON.stringify(value)
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
@@ -236,13 +243,20 @@
         <% } %>
 
         <section id="featured" class="section container">
-          <div class="section-header">
-            <h2>Tựa nổi bật</h2>
-            <span class="section-line"></span>
+          <div class="section-header section-header--homepage-featured">
+            <h2>
+              Truyện nổi bật
+            </h2>
+            <a class="section-header__view-all" href="/manga">
+              <span>Xem tất cả</span>
+              <i class="fa-solid fa-arrow-right-long" aria-hidden="true"></i>
+            </a>
           </div>
-          <div class="manga-grid manga-grid--home">
+          <div class="manga-grid manga-grid--featured-showcase">
             <% featured.forEach((manga, index) => { %>
-              <article class="manga-card">
+              <% const featuredDescription = truncateDescription(manga.description, 190); %>
+              <% const featuredStatusClass = manga.status === "Hoàn thành" ? "is-complete" : manga.status === "Tạm dừng" ? "is-hiatus" : "is-ongoing"; %>
+              <article class="manga-card manga-card--featured">
                 <a href="/manga/<%= manga.slug %>">
                   <div class="cover">
                     <% if (manga.cover) { %>
@@ -267,20 +281,24 @@
                     <% } else { %>
                       <span class="cover__label">No Cover</span>
                     <% } %>
+                    <span class="manga-badge <%= featuredStatusClass %>">
+                      <%= manga.status || "Đang ra" %>
+                    </span>
                   </div>
                   <div class="manga-body">
                     <% const featuredCardTitle = truncateCardTitle(manga.title); %>
                     <h3 title="<%= manga.title %>"><%= featuredCardTitle %></h3>
-                    <p class="manga-author"><%= manga.groupName || manga.author %></p>
-                    <% const displayGenres = (manga.genres || []).slice(0, 3); %>
-                    <% const hasMoreGenres = (manga.genres || []).length > 3; %>
-                    <div class="chips chips--manga-genres">
-                      <% displayGenres.forEach((genre) => { %>
-                        <span class="chip"><%= genre %></span>
-                      <% }) %>
-                      <% if (hasMoreGenres) { %>
-                        <span class="chip" title="Xem chi tiết để xem đầy đủ thể loại" aria-label="Còn thêm thể loại">...</span>
-                      <% } %>
+                    <p class="manga-author"><%= manga.groupName || manga.author || "Đang cập nhật" %></p>
+                    <p class="manga-description-preview"><%= featuredDescription %></p>
+                    <div class="manga-featured-meta" aria-label="Thông tin truyện nổi bật">
+                      <span><i class="fa-regular fa-eye" aria-hidden="true"></i> <%= Number((manga.totalViews ?? manga.total_views) || 0).toLocaleString("vi-VN") %> lượt xem</span>
+                      <span><i class="fa-solid fa-book-open" aria-hidden="true"></i> <%= Number((manga.chapterCount ?? manga.chapter_count) || 0).toLocaleString("vi-VN") %> chương</span>
+                      <span><i class="fa-regular fa-comments" aria-hidden="true"></i> <%= Number((manga.commentCount ?? manga.comment_count) || 0).toLocaleString("vi-VN") %> bình luận</span>
+                    </div>
+                    <div class="manga-featured-footer">
+                      <span class="manga-status-pill <%= featuredStatusClass %>">
+                        <%= manga.status || "Đang ra" %>
+                      </span>
                     </div>
                   </div>
                 </a>
@@ -340,13 +358,20 @@
         <% } %>
 
         <section class="section container">
-          <div class="section-header">
-            <h2>Mới cập nhật</h2>
-            <span class="section-line"></span>
+          <div class="section-header section-header--homepage-list">
+            <h2>
+              Mới cập nhật
+            </h2>
+            <a class="section-header__view-all" href="/manga">
+              <span>Xem tất cả</span>
+              <i class="fa-solid fa-arrow-right-long" aria-hidden="true"></i>
+            </a>
           </div>
-          <div class="manga-grid manga-grid--home">
+          <div class="manga-grid manga-grid--home manga-grid--list-style">
             <% latest.forEach((manga, index) => { %>
-              <article class="manga-card">
+              <% const latestChapterLabel = manga.latestChapterIsOneshot ? "Oneshot" : `Ch. ${manga.latestChapterNumber || 0}`; %>
+              <% const latestStatusClass = manga.status === "Hoàn thành" ? "is-complete" : manga.status === "Tạm dừng" ? "is-hiatus" : "is-ongoing"; %>
+              <article class="manga-card manga-card--list">
                 <a href="/manga/<%= manga.slug %>">
                   <div class="cover">
                     <% if (manga.cover) { %>
@@ -371,14 +396,17 @@
                     <% } else { %>
                       <span class="cover__label">No Cover</span>
                     <% } %>
+                    <span class="manga-badge <%= latestStatusClass %>">
+                      <%= manga.status || "Đang ra" %>
+                    </span>
+                    <span class="manga-chapter-label"><%= latestChapterLabel %></span>
                   </div>
                   <div class="manga-body">
                     <% const latestCardTitle = truncateCardTitle(manga.title); %>
                     <h3 title="<%= manga.title %>"><%= latestCardTitle %></h3>
-                    <p class="manga-update">Cập nhật <%= formatDate(manga.updatedAt) %></p>
-                    <div class="meta-row">
-                      <span class="tag"><%= manga.status %></span>
-                      <span class="meta"><%= manga.latestChapterIsOneshot ? "Oneshot" : `Chương ${manga.latestChapterNumber || 0}` %></span>
+                    <div class="manga-list-meta" aria-label="Thông tin truyện mới cập nhật">
+                      <span><i class="fa-regular fa-eye" aria-hidden="true"></i> <%= Number((manga.totalViews ?? manga.total_views) || 0).toLocaleString("vi-VN") %> lượt xem</span>
+                      <span><i class="fa-regular fa-comments" aria-hidden="true"></i> <%= Number((manga.commentCount ?? manga.comment_count) || 0).toLocaleString("vi-VN") %> bình luận</span>
                     </div>
                   </div>
                 </a>

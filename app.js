@@ -3009,7 +3009,7 @@ const buildHomepageNotices = (homepageData) => {
 
 const getDefaultFeaturedIds = async () => {
   const rows = await dbAll(
-    "SELECT id FROM manga WHERE COALESCE(is_hidden, 0) = 0 ORDER BY updated_at DESC, id DESC LIMIT 3"
+    "SELECT id FROM manga WHERE COALESCE(is_hidden, 0) = 0 ORDER BY updated_at DESC, id DESC LIMIT 4"
   );
   return rows.map((row) => row.id);
 };
@@ -3093,7 +3093,9 @@ const mapMangaListRow = (row) => ({
   ...mapMangaRow(row),
   chapterCount: row.chapter_count || 0,
   latestChapterNumber: row.latest_chapter_number || 0,
-  latestChapterIsOneshot: toBooleanFlag(row.latest_chapter_is_oneshot)
+  latestChapterIsOneshot: toBooleanFlag(row.latest_chapter_is_oneshot),
+  totalViews: Number(row.total_views) || 0,
+  commentCount: Number(row.comment_count) || 0
 });
 
 const mapReadingHistoryRow = (row) => {
@@ -3180,6 +3182,8 @@ const listQueryBase = `
     m.updated_at,
     m.created_at,
     COALESCE(chapter_count_stats.chapter_count, 0) as chapter_count,
+    COALESCE(view_stats.total_views, 0) as total_views,
+    COALESCE(comment_count_stats.comment_count, 0) as comment_count,
     latest_chapter.latest_chapter_number,
     latest_chapter.latest_chapter_is_oneshot
   FROM manga m
@@ -3198,6 +3202,22 @@ const listQueryBase = `
     FROM chapters c
     GROUP BY c.manga_id
   ) chapter_count_stats ON chapter_count_stats.manga_id = m.id
+  LEFT JOIN (
+    SELECT
+      c.manga_id,
+      COALESCE(SUM(COALESCE(v.view_count, 0)), 0) as total_views
+    FROM chapters c
+    LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
+    GROUP BY c.manga_id
+  ) view_stats ON view_stats.manga_id = m.id
+  LEFT JOIN (
+    SELECT
+      c.manga_id,
+      COUNT(*) as comment_count
+    FROM comments c
+    WHERE c.status = 'visible'
+    GROUP BY c.manga_id
+  ) comment_count_stats ON comment_count_stats.manga_id = m.id
   LEFT JOIN (
     SELECT DISTINCT ON (c.manga_id)
       c.manga_id,

@@ -138,54 +138,43 @@
           <% if (mangaLibrary.length === 0) { %>
             <p class="note">Không có truyện phù hợp với bộ lọc hiện tại.</p>
           <% } else { %>
-            <div class="manga-grid manga-grid--catalog">
+            <div class="manga-grid manga-grid--catalog manga-grid--list-style">
               <% mangaLibrary.forEach((manga, index) => { %>
-                <article class="manga-card">
+                <% const latestChapterLabel = manga.latestChapterIsOneshot ? "Oneshot" : `Ch. ${manga.latestChapterNumber || 0}`; %>
+                <% const catalogStatusClass = manga.status === "Hoàn thành" ? "is-complete" : manga.status === "Tạm dừng" ? "is-hiatus" : "is-ongoing"; %>
+                <article class="manga-card manga-card--list">
                   <a href="/manga/<%= manga.slug %>">
                     <div class="cover">
                       <% if (manga.cover) { %>
                         <% const catalogCoverBaseUrl = cacheBust(manga.cover, manga.coverUpdatedAt); %>
-                        <% const catalogCover156 = appendCoverVariant(catalogCoverBaseUrl, 156, 208, 95); %>
-                        <% const catalogCover196 = appendCoverVariant(catalogCoverBaseUrl, 196, 262, 95); %>
-                        <% const catalogCover246 = appendCoverVariant(catalogCoverBaseUrl, 246, 328, 95); %>
-                        <% const catalogCover312 = appendCoverVariant(catalogCoverBaseUrl, 312, 416, 95); %>
-                        <% const catalogCover392 = appendCoverVariant(catalogCoverBaseUrl, 392, 523, 95); %>
-                        <% const catalogCover492 = appendCoverVariant(catalogCoverBaseUrl, 492, 656, 95); %>
-                        <picture>
-                          <source media="(max-width: 480px)" srcset="<%= `${catalogCover156} 1x, ${catalogCover312} 2x` %>" />
-                          <source media="(max-width: 1180px)" srcset="<%= `${catalogCover196} 1x, ${catalogCover392} 2x` %>" />
-                          <img
-                            src="<%= catalogCover246 %>"
-                            srcset="<%= `${catalogCover246} 1x, ${catalogCover492} 2x` %>"
-                            alt="Bìa <%= manga.title %>"
-                            loading="<%= index < 2 ? "eager" : "lazy" %>"
-                            decoding="async"
-                            fetchpriority="<%= index === 0 ? "high" : "low" %>"
-                            width="420"
-                            height="600"
-                          />
-                        </picture>
+                        <% const catalogCover172 = appendCoverVariant(catalogCoverBaseUrl, 172, 229, 95); %>
+                        <% const catalogCover262 = appendCoverVariant(catalogCoverBaseUrl, 262, 349, 95); %>
+                        <% const catalogCover358 = appendCoverVariant(catalogCoverBaseUrl, 358, 477, 95); %>
+                        <img
+                          src="<%= catalogCover262 %>"
+                          srcset="<%= `${catalogCover172} 172w, ${catalogCover262} 262w, ${catalogCover358} 358w` %>"
+                          sizes="(max-width: 760px) 47vw, (max-width: 1200px) 23vw, 263px"
+                          alt="Bìa <%= manga.title %>"
+                          loading="lazy"
+                          decoding="async"
+                          fetchpriority="low"
+                          width="420"
+                          height="600"
+                        />
                       <% } else { %>
                         <span class="cover__label">No Cover</span>
                       <% } %>
+                      <span class="manga-badge <%= catalogStatusClass %>">
+                        <%= manga.status || "Đang ra" %>
+                      </span>
+                      <span class="manga-chapter-label"><%= latestChapterLabel %></span>
                     </div>
                     <div class="manga-body">
                       <% const cardTitle = truncateCardTitle(manga.title); %>
                       <h3 title="<%= manga.title %>"><%= cardTitle %></h3>
-                      <p class="manga-author"><%= manga.groupName || manga.author %></p>
-                      <div class="meta-row">
-                        <span class="tag"><%= manga.status %></span>
-                        <span class="meta"><%= manga.latestChapterIsOneshot ? "Oneshot" : `Chương ${manga.latestChapterNumber || 0}` %></span>
-                      </div>
-                      <% const displayGenres = (manga.genres || []).slice(0, 3); %>
-                      <% const hasMoreGenres = (manga.genres || []).length > 3; %>
-                      <div class="chips chips--manga-genres">
-                        <% displayGenres.forEach((genre) => { %>
-                          <span class="chip"><%= genre %></span>
-                        <% }) %>
-                        <% if (hasMoreGenres) { %>
-                          <span class="chip" title="Xem chi tiết để xem đầy đủ thể loại" aria-label="Còn thêm thể loại">...</span>
-                        <% } %>
+                      <div class="manga-list-meta" aria-label="Thông tin truyện">
+                        <span><i class="fa-regular fa-eye" aria-hidden="true"></i> <%= Number((manga.totalViews ?? manga.total_views) || 0).toLocaleString("vi-VN") %> lượt xem</span>
+                        <span><i class="fa-regular fa-comments" aria-hidden="true"></i> <%= Number((manga.commentCount ?? manga.comment_count) || 0).toLocaleString("vi-VN") %> bình luận</span>
                       </div>
                     </div>
                   </a>
@@ -194,29 +183,46 @@
             </div>
 
             <% if (pageState.totalPages > 1) { %>
-              <nav class="comment-pagination" aria-label="Phân trang truyện">
+              <% const catalogVisiblePageNumbers = []; %>
+              <% if (pageState.totalPages <= 6) { %>
+                <% for (let i = 1; i <= pageState.totalPages; i += 1) { catalogVisiblePageNumbers.push(i); } %>
+              <% } else if (pageState.page <= 3) { %>
+                <% catalogVisiblePageNumbers.push(1, 2, 3, 4, "...", pageState.totalPages); %>
+              <% } else if (pageState.page >= pageState.totalPages - 2) { %>
+                <% catalogVisiblePageNumbers.push(1, "...", pageState.totalPages - 3, pageState.totalPages - 2, pageState.totalPages - 1, pageState.totalPages); %>
+              <% } else { %>
+                <% catalogVisiblePageNumbers.push(1, "...", pageState.page - 1, pageState.page, pageState.page + 1, "...", pageState.totalPages); %>
+              <% } %>
+
+              <nav class="admin-pagination" aria-label="Phân trang truyện">
                 <a
-                  class="button button--ghost comment-pagination__nav <%= pageState.hasPrev ? "" : "is-disabled" %>"
+                  class="button button--ghost <%= pageState.hasPrev ? "" : "is-disabled" %>"
                   href="<%= pageState.hasPrev ? buildCatalogPageHref(pageState.prevPage) : "#" %>"
                   aria-label="Trang trước"
                   <%= pageState.hasPrev ? "" : 'tabindex="-1" aria-disabled="true"' %>
                 >
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M15 18l-6-6 6-6" />
-                  </svg>
-                  <span class="sr-only">Trang trước</span>
+                  Trước
                 </a>
-                <span class="chip comment-pagination__meta">Trang <%= pageState.page %>/<%= pageState.totalPages %></span>
+
+                <div class="admin-pagination__numbers">
+                  <% catalogVisiblePageNumbers.forEach((num) => { %>
+                    <% if (num === "...") { %>
+                      <span class="admin-pagination__dots">...</span>
+                    <% } else if (num === pageState.page) { %>
+                      <span class="chip"><%= num %></span>
+                    <% } else { %>
+                      <a class="button button--ghost" href="<%= buildCatalogPageHref(num) %>"><%= num %></a>
+                    <% } %>
+                  <% }) %>
+                </div>
+
                 <a
-                  class="button button--ghost comment-pagination__nav <%= pageState.hasNext ? "" : "is-disabled" %>"
+                  class="button button--ghost <%= pageState.hasNext ? "" : "is-disabled" %>"
                   href="<%= pageState.hasNext ? buildCatalogPageHref(pageState.nextPage) : "#" %>"
                   aria-label="Trang sau"
                   <%= pageState.hasNext ? "" : 'tabindex="-1" aria-disabled="true"' %>
                 >
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                  <span class="sr-only">Trang sau</span>
+                  Sau
                 </a>
               </nav>
             <% } %>

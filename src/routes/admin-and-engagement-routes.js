@@ -1015,9 +1015,11 @@ app.get(
     const homepageRow = await dbGet("SELECT * FROM homepage WHERE id = 1");
     const homepageData = normalizeHomepageRow(homepageRow);
     const featuredIds = homepageData.featuredIds.length
-      ? homepageData.featuredIds
+      ? homepageData.featuredIds.slice(0, 4)
       : await getDefaultFeaturedIds();
-    const mangaRows = await dbAll(listQuery);
+    const mangaRows = await dbAll(
+      `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 ${listQueryOrder}`
+    );
 
     res.render("admin/homepage", {
       title: "Trang chủ",
@@ -1039,8 +1041,8 @@ app.post(
     const noticeBody1 = (req.body.notice_body_1 || "").trim();
     const noticeTitle2 = (req.body.notice_title_2 || "").trim();
     const noticeBody2 = (req.body.notice_body_2 || "").trim();
-    const rawFeatured = [req.body.featured_1, req.body.featured_2, req.body.featured_3];
-    const featuredIds = [];
+    const rawFeatured = [req.body.featured_1, req.body.featured_2, req.body.featured_3, req.body.featured_4];
+    let featuredIds = [];
     const seen = new Set();
 
     rawFeatured.forEach((value) => {
@@ -1050,6 +1052,20 @@ app.post(
         seen.add(id);
       }
     });
+
+    if (featuredIds.length > 0) {
+      const placeholders = featuredIds.map(() => "?").join(",");
+      const visibleRows = await dbAll(
+        `SELECT id FROM manga WHERE id IN (${placeholders}) AND COALESCE(is_hidden, 0) = 0`,
+        featuredIds
+      );
+      const visibleIdSet = new Set(
+        visibleRows
+          .map((row) => Number(row && row.id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      );
+      featuredIds = featuredIds.filter((id) => visibleIdSet.has(id));
+    }
 
     const now = new Date().toISOString();
     await dbRun(

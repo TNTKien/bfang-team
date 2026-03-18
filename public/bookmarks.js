@@ -17,6 +17,7 @@
 
   let detailBookmarkButton = null;
   let detailBookmarkLabel = null;
+  let detailBookmarkIcon = null;
   let detailBookmarked = false;
   let detailBookmarkPending = false;
   let detailFlashTimer = null;
@@ -72,6 +73,14 @@
       return String(Math.round(normalized));
     }
     return normalized.toFixed(3).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+  };
+
+  const truncateCardTitle = (value, maxLength = 36) => {
+    const text = (value == null ? "" : String(value)).replace(/\s+/g, " ").trim();
+    if (!text) return "Truyện";
+    const safeMax = Number.isFinite(Number(maxLength)) ? Math.max(18, Math.floor(Number(maxLength))) : 36;
+    if (text.length <= safeMax) return text;
+    return `${text.slice(0, safeMax - 3).trimEnd()}...`;
   };
 
   const getSessionSafe = async () => {
@@ -166,10 +175,17 @@
 
   const renderDetailBookmarkButton = () => {
     if (!detailBookmarkButton || !detailBookmarkLabel) return;
+    const labelText = detailBookmarked ? "Đã bookmark" : "Bookmark";
     detailBookmarkButton.classList.toggle("is-bookmarked", detailBookmarked);
     detailBookmarkButton.classList.toggle("is-pending", detailBookmarkPending);
+    if (detailBookmarkIcon) {
+      detailBookmarkIcon.classList.toggle("fa-solid", detailBookmarked);
+      detailBookmarkIcon.classList.toggle("fa-regular", !detailBookmarked);
+    }
     detailBookmarkButton.setAttribute("aria-pressed", detailBookmarked ? "true" : "false");
-    detailBookmarkLabel.textContent = detailBookmarked ? "Đã bookmark" : "Bookmark";
+    detailBookmarkButton.setAttribute("aria-label", labelText);
+    detailBookmarkButton.setAttribute("title", labelText);
+    detailBookmarkLabel.textContent = labelText;
   };
 
   const flashDetailBookmarkLabel = (text) => {
@@ -190,6 +206,9 @@
     detailBookmarkButton = document.querySelector("[data-manga-bookmark-button]");
     detailBookmarkLabel = detailBookmarkButton
       ? detailBookmarkButton.querySelector("[data-bookmark-label]")
+      : null;
+    detailBookmarkIcon = detailBookmarkButton
+      ? detailBookmarkButton.querySelector("[data-bookmark-icon]")
       : null;
     detailBookmarked =
       detailBookmarkButton && detailBookmarkButton.getAttribute("data-bookmarked") === "1";
@@ -272,6 +291,9 @@
     bookmarkEmptyEl = bookmarkPageRoot ? bookmarkPageRoot.querySelector("[data-bookmark-empty]") : null;
     bookmarkListEl = bookmarkPageRoot ? bookmarkPageRoot.querySelector("[data-bookmark-list]") : null;
     bookmarkPaginationEl = bookmarkPageRoot ? bookmarkPageRoot.querySelector("[data-bookmark-pagination]") : null;
+    if (bookmarkListEl) {
+      bookmarkListEl.classList.add("manga-grid", "manga-grid--catalog", "manga-grid--list-style");
+    }
   };
 
   const setBookmarkLocked = (locked) => {
@@ -404,6 +426,7 @@
         const mangaId = Number(item && item.mangaId) || 0;
         const mangaTitle = item && item.mangaTitle ? String(item.mangaTitle).trim() : "";
         const fullTitle = mangaTitle || "Truyện";
+        const cardTitle = truncateCardTitle(fullTitle);
         const mangaUrl = toSafePath(item && item.mangaUrl ? item.mangaUrl : "");
         const fallbackUrl = mangaUrl || "/manga";
         const authorText =
@@ -416,33 +439,43 @@
           item && item.mangaCover ? item.mangaCover : "",
           item && item.mangaCoverUpdatedAt != null ? item.mangaCoverUpdatedAt : 0
         );
-        const latestLabel = item && item.latestChapterLabel ? String(item.latestChapterLabel).trim() : "";
-        const chapterText = latestLabel || "Chưa có chương";
+        const status = item && item.mangaStatus ? String(item.mangaStatus).trim() : "";
+        const statusText = status || "Đang theo dõi";
+        const statusClass =
+          status === "Hoàn thành"
+            ? "is-complete"
+            : status === "Tạm dừng"
+            ? "is-hiatus"
+            : "is-ongoing";
+        const latestChapterLabel = item && item.latestChapterLabel ? String(item.latestChapterLabel).trim() : "";
+        const chapterBadgeLabel = latestChapterLabel || "Tiếp tục đọc";
 
         return `
-          <article class="manga-card manga-card--saved" data-bookmark-item data-bookmark-manga-id="${mangaId}">
+          <article class="manga-card manga-card--list manga-card--saved" data-bookmark-item data-bookmark-manga-id="${mangaId}">
             <a href="${escapeAttr(fallbackUrl)}">
               <div class="cover">
                 ${coverUrl
                   ? `<img src="${escapeAttr(coverUrl)}" alt="Bìa ${escapeAttr(fullTitle)}" />`
                   : '<span class="cover__label">No Cover</span>'}
+                <span class="manga-badge ${statusClass}">${escapeHtml(statusText)}</span>
+                <span class="manga-chapter-label">${escapeHtml(chapterBadgeLabel)}</span>
               </div>
               <div class="manga-body">
-                <h3 title="${escapeAttr(fullTitle)}">${escapeHtml(fullTitle)}</h3>
+                <h3 title="${escapeAttr(fullTitle)}">${escapeHtml(cardTitle)}</h3>
                 <p class="manga-author">${escapeHtml(authorText)}</p>
-                <p class="manga-update">Mới nhất: ${escapeHtml(chapterText)}</p>
               </div>
             </a>
-            <div class="manga-card__actions">
-              <button
-                class="button button--ghost button--compact"
-                type="button"
-                data-bookmark-remove
-                data-manga-id="${mangaId}"
-              >
-                Gỡ bookmark
-              </button>
-            </div>
+            <button
+              class="saved-remove-button"
+              type="button"
+              data-bookmark-remove
+              data-manga-id="${mangaId}"
+              title="Gỡ bookmark"
+              aria-label="Gỡ bookmark ${escapeAttr(fullTitle)}"
+            >
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+              <span class="sr-only">Gỡ bookmark</span>
+            </button>
           </article>
         `;
       })

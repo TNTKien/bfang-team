@@ -81,8 +81,19 @@
                     <% }) %>
                   </select>
                 </label>
+                <label class="admin-field">
+                  <span>Tựa nổi bật 4</span>
+                  <select name="featured_4">
+                    <option value="">-- Chọn truyện --</option>
+                    <% mangaLibrary.forEach((manga) => { %>
+                      <option value="<%= manga.id %>" <%= featuredIds[3] === manga.id ? "selected" : "" %>>
+                        <%= manga.title %>
+                      </option>
+                    <% }) %>
+                  </select>
+                </label>
               </div>
-              <p class="note">Chọn tối đa 3 tựa. Nếu bỏ trống, hệ thống sẽ lấy truyện mới cập nhật.</p>
+              <p class="note">Chọn tối đa 4 tựa. Nếu bỏ trống, hệ thống sẽ lấy truyện mới cập nhật.</p>
             </div>
 
             <div class="admin-actions">

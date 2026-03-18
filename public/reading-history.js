@@ -10,7 +10,7 @@
 
   const FALLBACK_AUTHOR_NAME = resolveSiteName();
 
-  let detailContinueEl = null;
+  let detailStartButtonEl = null;
   let readingProgressEl = null;
   let historyPage = null;
   let historyLockedEl = null;
@@ -20,7 +20,7 @@
   let historyListEl = null;
 
   const captureReadingHistoryNodes = () => {
-    detailContinueEl = document.querySelector("[data-reading-detail-continue]");
+    detailStartButtonEl = document.querySelector("[data-reading-detail-start]");
     readingProgressEl = document.querySelector("[data-reading-progress]");
     historyPage = document.querySelector("[data-reading-history-page]");
     historyLockedEl = historyPage ? historyPage.querySelector("[data-reading-history-locked]") : null;
@@ -114,10 +114,16 @@
     return "";
   };
 
-  const resetDetailContinueUi = () => {
-    if (!detailContinueEl) return;
-    detailContinueEl.hidden = true;
-    detailContinueEl.innerHTML = "";
+  const resetDetailStartButtonUi = () => {
+    if (!detailStartButtonEl) return;
+    const fallbackLabel = (detailStartButtonEl.dataset.startDefaultLabel || "").toString().trim() || "Đọc từ đầu";
+    const fallbackUrl =
+      toSafePath(detailStartButtonEl.dataset.startDefaultUrl || "") ||
+      toSafePath(detailStartButtonEl.getAttribute("href") || "");
+    detailStartButtonEl.textContent = fallbackLabel;
+    if (fallbackUrl) {
+      detailStartButtonEl.setAttribute("href", fallbackUrl);
+    }
   };
 
   const setHistoryStatus = (text, variant) => {
@@ -193,37 +199,37 @@
 
   const buildContinueText = (item) => {
     if (item && item.chapterIsOneshot) {
-      return "Đọc tiếp Oneshot";
+      return "Đọc Oneshot";
     }
     const chapterText =
       item && item.chapterNumberText
         ? String(item.chapterNumberText).trim()
         : formatChapterNumber(item && item.chapterNumber);
-    return chapterText ? `Đọc tiếp chương ${chapterText}` : "Đọc tiếp";
+    return chapterText ? `Đọc ch. ${chapterText}` : "Đọc từ đầu";
   };
 
-  const renderDetailContinueUi = () => {
-    if (!detailContinueEl) return;
-    resetDetailContinueUi();
+  const renderDetailStartButtonUi = () => {
+    if (!detailStartButtonEl) return;
+    resetDetailStartButtonUi();
 
-    const slug = (detailContinueEl.dataset.mangaSlug || "").toString().trim();
+    const slug = (detailStartButtonEl.dataset.mangaSlug || "").toString().trim();
     if (!slug) return;
-    const startChapterUrl = toSafePath(detailContinueEl.dataset.firstChapterUrl || "");
 
+    const fallbackUrl =
+      toSafePath(detailStartButtonEl.dataset.startDefaultUrl || "") ||
+      toSafePath(detailStartButtonEl.getAttribute("href") || "");
     const item = historyMapCache.get(slug);
     const historyChapterUrl = toSafePath(item && item.chapterUrl ? item.chapterUrl : "");
-    const chapterUrl = historyChapterUrl || startChapterUrl;
-    if (!chapterUrl) return;
 
-    const isStartCta = !historyChapterUrl;
-    const link = document.createElement("a");
-    link.className = `chip chip--link share-chip detail-continue-link${
-      isStartCta ? " detail-continue-link--start" : ""
-    }`;
-    link.href = chapterUrl;
-    link.textContent = isStartCta ? "Bắt đầu đọc" : buildContinueText(item);
-    detailContinueEl.appendChild(link);
-    detailContinueEl.hidden = false;
+    if (historyChapterUrl) {
+      detailStartButtonEl.setAttribute("href", historyChapterUrl);
+      detailStartButtonEl.textContent = buildContinueText(item);
+      return;
+    }
+
+    if (fallbackUrl) {
+      detailStartButtonEl.setAttribute("href", fallbackUrl);
+    }
   };
 
   const renderHistoryPageUi = () => {
@@ -248,32 +254,20 @@
         const authorText = mangaGroupName || mangaAuthor || FALLBACK_AUTHOR_NAME;
         const chapterUrl = toSafePath(item && item.chapterUrl ? item.chapterUrl : "");
         const chapterNumberText = item && item.chapterNumberText ? String(item.chapterNumberText).trim() : "";
-        const chapterTitle = item && item.chapterTitle ? String(item.chapterTitle).trim() : "";
         const cardHref = chapterUrl || mangaUrl || "/manga";
         const status = item && item.mangaStatus ? String(item.mangaStatus).trim() : "";
-        const genres = Array.isArray(item && item.mangaGenres)
-          ? item.mangaGenres
-              .map((genre) => (genre == null ? "" : String(genre)).trim())
-              .filter(Boolean)
-          : [];
-        const displayGenres = genres.slice(0, 3);
-        const hasMoreGenres = genres.length > 3;
-        const genresHtml = displayGenres
-          .map((genre) => `<span class="chip">${escapeHtml(genre)}</span>`)
-          .join("");
-        const genresSectionHtml = genresHtml || hasMoreGenres
-          ? `<div class="chips chips--manga-genres">${genresHtml}${hasMoreGenres ? '<span class="chip" title="Xem chi tiết để xem đầy đủ thể loại" aria-label="Còn thêm thể loại">...</span>' : ""}</div>`
-          : "";
-        const chapterDisplay = item && item.chapterIsOneshot
+        const statusText = status || "Đang theo dõi";
+        const statusClass =
+          status === "Hoàn thành"
+            ? "is-complete"
+            : status === "Tạm dừng"
+            ? "is-hiatus"
+            : "is-ongoing";
+        const chapterBadgeLabel = item && item.chapterIsOneshot
           ? "Oneshot"
           : chapterNumberText
-          ? `Chương ${chapterNumberText}`
-          : "";
-        const chapterText = chapterTitle
-          ? chapterDisplay
-            ? `${chapterDisplay} - ${chapterTitle}`
-            : chapterTitle
-          : chapterDisplay || "Chưa có tiến độ";
+          ? `Ch. ${chapterNumberText}`
+          : "Tiếp tục đọc";
 
         const coverUrl = cacheBust(
           item && item.mangaCover ? item.mangaCover : "",
@@ -281,21 +275,18 @@
         );
 
         return `
-          <article class="manga-card">
+          <article class="manga-card manga-card--list">
             <a href="${escapeAttr(cardHref)}">
               <div class="cover">
                 ${coverUrl
                   ? `<img src="${escapeAttr(coverUrl)}" alt="Bìa ${escapeAttr(mangaTitle || "truyện")}" />`
                   : '<span class="cover__label">No Cover</span>'}
+                <span class="manga-badge ${statusClass}">${escapeHtml(statusText)}</span>
+                <span class="manga-chapter-label">${escapeHtml(chapterBadgeLabel)}</span>
               </div>
               <div class="manga-body">
                 <h3 title="${escapeAttr(fullTitle)}">${escapeHtml(cardTitle)}</h3>
                 <p class="manga-author">${escapeHtml(authorText)}</p>
-                <p class="manga-update">${escapeHtml(chapterText)}</p>
-                <div class="meta-row">
-                  <span class="tag">${escapeHtml(status || "Đang theo dõi")}</span>
-                </div>
-                ${genresSectionHtml}
               </div>
             </a>
           </article>
@@ -345,7 +336,7 @@
   const handleSignedOutUi = () => {
     historyCache = [];
     historyMapCache = new Map();
-    renderDetailContinueUi();
+    renderDetailStartButtonUi();
     if (historyPage) {
       setHistoryLocked(true);
       setHistoryStatus("");
@@ -374,7 +365,7 @@
 
     await saveCurrentReadingProgress(resolvedSession);
 
-    const shouldLoadHistory = Boolean(detailContinueEl || historyPage);
+    const shouldLoadHistory = Boolean(detailStartButtonEl || historyPage);
     if (!shouldLoadHistory) {
       return;
     }
@@ -387,7 +378,7 @@
       return;
     }
 
-    renderDetailContinueUi();
+    renderDetailStartButtonUi();
     renderHistoryPageUi();
   };
 
