@@ -348,7 +348,9 @@
 
     const syncSpeculationRules = (nextDocument) => {
       const mounted = Array.from(document.querySelectorAll("script[data-fast-nav-speculation='1']"));
-      mounted.forEach((script) => script.remove());
+      mounted.forEach((script) => {
+        script.remove();
+      });
 
       if (!nextDocument) return;
 
@@ -397,9 +399,21 @@
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     };
 
+    const dispatchPageChange = (targetUrl) => {
+      window.dispatchEvent(
+        new CustomEvent("bfang:pagechange", {
+          detail: {
+            url: targetUrl.toString(),
+            pathname: targetUrl.pathname,
+            search: targetUrl.search,
+            hash: targetUrl.hash
+          }
+        })
+      );
+    };
+
     const runPostNavigationHooks = async (targetUrl) => {
-      await ensurePageStyles(targetUrl.pathname);
-      await ensurePageScripts(targetUrl.pathname);
+      dispatchPageChange(targetUrl);
 
       if (window.BfangFilters && typeof window.BfangFilters.init === "function") {
         window.BfangFilters.init(document);
@@ -417,17 +431,6 @@
         setupCommentsScriptLoader();
       }
       observePrefetchableAnchors();
-
-      window.dispatchEvent(
-        new CustomEvent("bfang:pagechange", {
-          detail: {
-            url: targetUrl.toString(),
-            pathname: targetUrl.pathname,
-            search: targetUrl.search,
-            hash: targetUrl.hash
-          }
-        })
-      );
     };
 
     const applyNavigationPayload = async (targetUrl, payload, options) => {
@@ -523,7 +526,14 @@
         const previousRenderedPageKey = renderedPageKey;
         const nextRenderedPageKey = toCacheKey(effectiveUrl) || previousRenderedPageKey;
         effectiveUrl.hash = targetUrl.hash || "";
+
+        await ensurePageStyles(effectiveUrl.pathname);
+        await ensurePageScripts(effectiveUrl.pathname);
+
+        if (localToken !== navigationToken) return false;
+
         renderedPageKey = nextRenderedPageKey;
+
         const applied = await applyNavigationPayload(effectiveUrl, payload, settings);
         if (!applied) {
           renderedPageKey = previousRenderedPageKey;
