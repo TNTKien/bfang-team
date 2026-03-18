@@ -1,5 +1,7 @@
 (() => {
   const BOUND_SHARE_ATTR = "data-manga-share-bound";
+  const BOUND_SHARE_KEY = "__bfangShareBound";
+  const SHARE_REBIND_PENDING_ATTR = "data-share-rebind-pending";
   const BOUND_DESC_ATTR = "data-description-bound";
   const descriptionControllers = [];
   let resizeTimer = null;
@@ -47,7 +49,12 @@
     const shareButtons = Array.from(scope.querySelectorAll("[data-share-button]"));
 
     shareButtons.forEach((button) => {
+      if (button[BOUND_SHARE_KEY] === true) {
+        button.setAttribute(BOUND_SHARE_ATTR, "1");
+        return;
+      }
       if (button.getAttribute(BOUND_SHARE_ATTR) === "1") return;
+      button[BOUND_SHARE_KEY] = true;
       button.setAttribute(BOUND_SHARE_ATTR, "1");
 
       const label = button.querySelector("[data-share-label]");
@@ -206,6 +213,22 @@
     initDescription(root);
   };
 
+  const rebindShareButtonOnDemand = (button) => {
+    if (!(button instanceof HTMLElement)) return;
+    if (button.getAttribute(BOUND_SHARE_ATTR) === "1") return;
+    if (button.getAttribute(SHARE_REBIND_PENDING_ATTR) === "1") return;
+
+    button.setAttribute(SHARE_REBIND_PENDING_ATTR, "1");
+    initShareButtons(document);
+
+    window.setTimeout(() => {
+      button.removeAttribute(SHARE_REBIND_PENDING_ATTR);
+      if (!button.isConnected) return;
+      if (button.getAttribute(BOUND_SHARE_ATTR) !== "1") return;
+      button.click();
+    }, 0);
+  };
+
   window.BfangMangaDetail = window.BfangMangaDetail || {};
   window.BfangMangaDetail.init = initMangaDetail;
 
@@ -234,5 +257,20 @@
   window.addEventListener("bfang:pagechange", () => {
     initMangaDetail(document);
   });
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      const source = event.target;
+      if (!(source instanceof Element)) return;
+      const button = source.closest("[data-share-button]");
+      if (!button) return;
+      if (button.getAttribute(BOUND_SHARE_ATTR) === "1") return;
+
+      event.preventDefault();
+      rebindShareButtonOnDemand(button);
+    },
+    true
+  );
 })();
 

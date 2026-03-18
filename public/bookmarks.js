@@ -4,6 +4,8 @@
   const REMOVE_BOOKMARK_ENDPOINT = "/account/bookmarks/remove";
   const BOOKMARKS_PER_PAGE = 10;
   const DETAIL_BUTTON_BOUND_ATTR = "data-bookmark-bound";
+  const DETAIL_BUTTON_BOUND_KEY = "__bfangBookmarkBound";
+  const DETAIL_REBIND_PENDING_ATTR = "data-bookmark-rebind-pending";
   const PAGE_BOUND_ATTR = "data-bookmark-page-bound";
 
   const resolveSiteName = () => {
@@ -266,10 +268,17 @@
 
   const bindDetailBookmarkButton = () => {
     if (!detailBookmarkButton) return;
+    if (detailBookmarkButton[DETAIL_BUTTON_BOUND_KEY] === true) {
+      detailBookmarkButton.setAttribute(DETAIL_BUTTON_BOUND_ATTR, "1");
+      renderDetailBookmarkButton();
+      return;
+    }
     if (detailBookmarkButton.getAttribute(DETAIL_BUTTON_BOUND_ATTR) === "1") {
       renderDetailBookmarkButton();
       return;
     }
+
+    detailBookmarkButton[DETAIL_BUTTON_BOUND_KEY] = true;
     detailBookmarkButton.setAttribute(DETAIL_BUTTON_BOUND_ATTR, "1");
     detailBookmarkButton.addEventListener("click", (event) => {
       event.preventDefault();
@@ -281,6 +290,23 @@
       });
     });
     renderDetailBookmarkButton();
+  };
+
+  const rebindDetailBookmarkOnDemand = (button) => {
+    if (!(button instanceof HTMLElement)) return;
+    if (button.getAttribute(DETAIL_BUTTON_BOUND_ATTR) === "1") return;
+    if (button.getAttribute(DETAIL_REBIND_PENDING_ATTR) === "1") return;
+
+    button.setAttribute(DETAIL_REBIND_PENDING_ATTR, "1");
+    captureDetailNodes();
+    bindDetailBookmarkButton();
+
+    window.setTimeout(() => {
+      button.removeAttribute(DETAIL_REBIND_PENDING_ATTR);
+      if (!button.isConnected) return;
+      if (button.getAttribute(DETAIL_BUTTON_BOUND_ATTR) !== "1") return;
+      button.click();
+    }, 0);
   };
 
   const captureBookmarkPageNodes = () => {
@@ -681,6 +707,21 @@
   window.addEventListener("pageshow", () => {
     refreshAllFromCurrentSession().catch(() => null);
   });
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      const source = event.target;
+      if (!(source instanceof Element)) return;
+      const button = source.closest("[data-manga-bookmark-button]");
+      if (!button) return;
+      if (button.getAttribute(DETAIL_BUTTON_BOUND_ATTR) === "1") return;
+
+      event.preventDefault();
+      rebindDetailBookmarkOnDemand(button);
+    },
+    true
+  );
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return;
