@@ -6404,7 +6404,7 @@ app.get("/privacy-policy", (req, res) => {
     seo: buildSeoPayload(req, {
       title: "Privacy Policy",
       description: `Privacy Policy for ${SEO_SITE_NAME} web services and OAuth login.`,
-      robots: SEO_ROBOTS_NOINDEX,
+      robots: SEO_ROBOTS_INDEX,
       canonicalPath: "/privacy-policy"
     })
   });
@@ -6417,7 +6417,7 @@ app.get("/terms-of-service", (req, res) => {
       seo: buildSeoPayload(req, {
         title: "Terms of Service",
         description: `Terms of Service for using ${SEO_SITE_NAME} website and related features.`,
-        robots: SEO_ROBOTS_NOINDEX,
+        robots: SEO_ROBOTS_INDEX,
         canonicalPath: "/terms-of-service"
       })
   });
@@ -6443,8 +6443,6 @@ app.get("/robots.txt", (req, res) => {
       "Disallow: /publish",
       "Disallow: /messages",
       "Disallow: /user/",
-      "Disallow: /privacy-policy",
-      "Disallow: /terms-of-service",
       "",
       `Sitemap: ${sitemapUrl}`,
       ...(newsPageEnabled ? [`Sitemap: ${newsSitemapUrl}`] : [])
@@ -6485,9 +6483,14 @@ app.get(
         priority: "0.9"
       },
       {
-        loc: toAbsolutePublicUrl(req, "/amp"),
-        changefreq: "daily",
-        priority: "0.5"
+        loc: toAbsolutePublicUrl(req, "/privacy-policy"),
+        changefreq: "monthly",
+        priority: "0.3"
+      },
+      {
+        loc: toAbsolutePublicUrl(req, "/terms-of-service"),
+        changefreq: "monthly",
+        priority: "0.3"
       }
     ];
     const newsPageEnabled = Boolean(req && req.app && req.app.locals && req.app.locals.isNewsPageEnabled);
@@ -6573,13 +6576,6 @@ app.get(
         lastmod: toIsoDate(row.updated_at),
         changefreq: "daily",
         priority: "0.8"
-      });
-
-      urlEntries.push({
-        loc: toAbsolutePublicUrl(req, `/amp/manga/${encodedSlug}`),
-        lastmod: toIsoDate(row.updated_at),
-        changefreq: "daily",
-        priority: "0.4"
       });
     });
 
@@ -7900,6 +7896,7 @@ app.get(
       maxPerPage: MANGA_DETAIL_CHAPTERS_PER_PAGE,
       totalCount: chapterSummary && chapterSummary.count ? Number(chapterSummary.count) : 0
     });
+    const shouldNoIndexMangaDetail = chapterPagination.page > 1;
 
     const chapterRows = await dbAll(
       `
@@ -8006,28 +8003,30 @@ app.get(
       Array.isArray(mappedManga.genres) ? mappedManga.genres : [],
       mappedManga.status || ""
     ]);
-    const mangaSchemas = compactJsonLdList([
-      buildOrganizationSchema(req),
-      buildWebsiteSchema(req),
-      buildCollectionPageSchema(req, {
-        path: canonicalPath,
-        name: `${mangaRow.title} | Đọc manga`,
-        description: mangaDescription,
-        image: mappedManga.cover || "",
-        keywords: mangaKeywords
-      }),
-      buildBreadcrumbSchema(req, [
-        { name: "Trang chủ", path: "/" },
-        { name: "Toàn bộ truyện", path: "/manga" },
-        { name: mangaRow.title, path: canonicalPath }
-      ]),
-      buildMangaSeriesSchema(req, {
-        manga: mappedManga,
-        canonicalPath,
-        description: mangaDescription,
-        chapterCount: chapterPagination.total
-      })
-    ]);
+    const mangaSchemas = shouldNoIndexMangaDetail
+      ? []
+      : compactJsonLdList([
+          buildOrganizationSchema(req),
+          buildWebsiteSchema(req),
+          buildCollectionPageSchema(req, {
+            path: canonicalPath,
+            name: `${mangaRow.title} | Đọc manga`,
+            description: mangaDescription,
+            image: mappedManga.cover || "",
+            keywords: mangaKeywords
+          }),
+          buildBreadcrumbSchema(req, [
+            { name: "Trang chủ", path: "/" },
+            { name: "Toàn bộ truyện", path: "/manga" },
+            { name: mangaRow.title, path: canonicalPath }
+          ]),
+          buildMangaSeriesSchema(req, {
+            manga: mappedManga,
+            canonicalPath,
+            description: mangaDescription,
+            chapterCount: chapterPagination.total
+          })
+        ]);
 
     return res.render("manga-detail", {
       title: mangaRow.title,
@@ -8053,6 +8052,7 @@ app.get(
         description: mangaDescription,
         keywords: mangaKeywords,
         canonicalPath,
+        robots: shouldNoIndexMangaDetail ? SEO_ROBOTS_NOINDEX : SEO_ROBOTS_INDEX,
         ampHtml: ampPath,
         image: mappedManga.cover || "",
         ogType: "article",
@@ -8349,6 +8349,7 @@ app.get(
     const commentPageRaw = Number(req.query.commentPage);
     const commentPage =
       Number.isFinite(commentPageRaw) && commentPageRaw > 0 ? Math.floor(commentPageRaw) : 1;
+    const shouldNoIndexChapterDetail = commentPage > 1;
 
     const commentData = await getPaginatedCommentTree({
       mangaId: mangaRow.id,
@@ -8384,36 +8385,38 @@ app.get(
       splitSeoNameTokens(mangaRow.author || ""),
       Array.isArray(mappedManga.genres) ? mappedManga.genres : []
     ]);
-    const chapterSchemas = compactJsonLdList([
-      buildOrganizationSchema(req),
-      buildWebsiteSchema(req),
-      buildCollectionPageSchema(req, {
-        path: chapterPath,
-        name: `${chapterLabel} | ${mangaRow.title}`,
-        description: chapterDescription,
-        image: mappedManga.cover || "",
-        keywords: chapterKeywords
-      }),
-      buildBreadcrumbSchema(req, [
-        { name: "Trang chủ", path: "/" },
-        { name: "Toàn bộ truyện", path: "/manga" },
-        { name: mangaRow.title, path: mangaCanonicalPath },
-        { name: chapterLabel, path: chapterPath }
-      ]),
-      buildMangaSeriesSchema(req, {
-        manga: mappedManga,
-        canonicalPath: mangaCanonicalPath,
-        description: normalizeSeoText(mappedManga.description || `Đọc manga ${mangaRow.title}.`, 180),
-        chapterCount: chapterList.length
-      }),
-      buildChapterSchema(req, {
-        manga: mappedManga,
-        chapter: chapterRow,
-        chapterPath,
-        chapterLabel,
-        description: chapterDescription
-      })
-    ]);
+    const chapterSchemas = shouldNoIndexChapterDetail
+      ? []
+      : compactJsonLdList([
+          buildOrganizationSchema(req),
+          buildWebsiteSchema(req),
+          buildCollectionPageSchema(req, {
+            path: chapterPath,
+            name: `${chapterLabel} | ${mangaRow.title}`,
+            description: chapterDescription,
+            image: mappedManga.cover || "",
+            keywords: chapterKeywords
+          }),
+          buildBreadcrumbSchema(req, [
+            { name: "Trang chủ", path: "/" },
+            { name: "Toàn bộ truyện", path: "/manga" },
+            { name: mangaRow.title, path: mangaCanonicalPath },
+            { name: chapterLabel, path: chapterPath }
+          ]),
+          buildMangaSeriesSchema(req, {
+            manga: mappedManga,
+            canonicalPath: mangaCanonicalPath,
+            description: normalizeSeoText(mappedManga.description || `Đọc manga ${mangaRow.title}.`, 180),
+            chapterCount: chapterList.length
+          }),
+          buildChapterSchema(req, {
+            manga: mappedManga,
+            chapter: chapterRow,
+            chapterPath,
+            chapterLabel,
+            description: chapterDescription
+          })
+        ]);
 
     return res.render("chapter", {
       title: `${chapterBaseLabel} — ${mangaRow.title}`,
@@ -8440,6 +8443,7 @@ app.get(
         description: chapterDescription,
         keywords: chapterKeywords,
         canonicalPath: chapterPath,
+        robots: shouldNoIndexChapterDetail ? SEO_ROBOTS_NOINDEX : SEO_ROBOTS_INDEX,
         image: mappedManga.cover || "",
         ogType: "article",
         jsonLd: chapterSchemas

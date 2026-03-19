@@ -4204,13 +4204,22 @@ if (isForumPageAvailable) {
       const shouldNoindex = Boolean(q) || sort !== "hot" || page > 1 || hasUnknownQueryParam;
       const robots = shouldNoindex ? FORUM_ROBOTS_NOINDEX_FOLLOW : SEO_ROBOTS_INDEX;
       const sectionLabel = validSectionSlug ? sectionLabelBySlug.get(validSectionSlug) : "";
+      const sortLabelMap = {
+        hot: "Nổi bật",
+        new: "Mới nhất",
+        "most-commented": "Nhiều bình luận"
+      };
+      const sortLabel = sortLabelMap[sort] || sortLabelMap.hot;
+      const pageLabel = page > 1 ? ` - Trang ${page}` : "";
       const title = sectionLabel
-        ? `${sectionLabel} | ${forumSiteName} Forum`
-        : forumTitle;
+        ? `${sectionLabel} (${sortLabel})${pageLabel} | ${forumSiteName} Forum`
+        : `${forumTitle} (${sortLabel})${pageLabel}`;
       const description = sectionLabel
-        ? `Khám phá các chủ đề trong mục ${sectionLabel} tại cộng đồng ${forumSiteName}.`
-        : forumDescription;
-      const canonicalPath = baseCanonicalPath;
+        ? `Khám phá các chủ đề ${sortLabel.toLowerCase()} trong mục ${sectionLabel} tại cộng đồng ${forumSiteName}${page > 1 ? `, trang ${page}` : ""}.`
+        : `${forumDescription}${page > 1 ? ` Trang ${page}.` : ""}`;
+      const canonicalPath = page > 1
+        ? `${baseCanonicalPath}${baseCanonicalPath.includes("?") ? "&" : "?"}page=${encodeURIComponent(String(page))}`
+        : baseCanonicalPath;
       const canonical = buildForumCanonical(req, canonicalPath);
       const jsonLd = shouldNoindex
         ? []

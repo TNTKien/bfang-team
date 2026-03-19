@@ -357,8 +357,7 @@ app.use((req, res, next) => {
   const isAdminPath = pathValue === "/admin" || pathValue.startsWith("/admin/");
   const isAccountPath = pathValue === "/account" || pathValue.startsWith("/account/");
   const isAuthPath = pathValue.startsWith("/auth/");
-  const isPolicyPath = pathValue === "/privacy-policy" || pathValue === "/terms-of-service";
-  const isPrivatePath = isAdminPath || isAccountPath || isAuthPath || isPolicyPath;
+  const isPrivatePath = isAdminPath || isAccountPath || isAuthPath;
   const robotsValue = isPrivatePath ? SEO_ROBOTS_NOINDEX : SEO_ROBOTS_INDEX;
 
   res.locals.authPublicConfig = getAuthPublicConfigForRequest(req);
