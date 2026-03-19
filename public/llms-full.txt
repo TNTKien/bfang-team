@@ -1,0 +1,153 @@
+# MoeTruyen — llms-full
+
+> Canonical: https://moetruyen.net/
+> Company: Mòe Truyện (MoeTruyen)
+> Primary language: Vietnamese (vi)
+> Primary SEO keyword: Đọc truyện tranh
+
+## 1) Site Description
+
+MoeTruyen là nền tảng đọc truyện tranh online miễn phí, tập trung manga, manhwa, manhua, cập nhật chương mới liên tục, tối ưu trên điện thoại và máy tính, ưu tiên trải nghiệm mượt mà, không quảng cáo gây phiền nhiễu.
+
+## 2) Homepage Content (Current)
+
+- Welcome: MoeTruyen - Đọc truyện tranh online miễn phí
+- Introduction: MoeTruyen là nơi đọc truyện tranh online miễn phí, cập nhật nhanh truyện manga, manhwa, manhua mới nhất. Trải nghiệm mượt mà, cập nhật liên tục, không quảng cáo.
+- About title: Về Mòe Truyện
+- Founded year: 2019
+- Content standards:
+  - Chúng tôi chỉ đăng tải truyện tranh.
+  - Các dự án được dịch thuật từ tiếng Anh hoặc tiếng Nhật và sử dụng Adobe Photoshop để biên tập.
+- Contact channels:
+  - Facebook: https://facebook.com/Bfangteam/
+  - Discord: https://discord.moetruyen.net/
+
+## 3) Public URL Structure
+
+### Core pages
+- https://moetruyen.net/
+- https://moetruyen.net/amp
+- https://moetruyen.net/manga
+- https://moetruyen.net/manga/{slug}
+- https://moetruyen.net/amp/manga/{slug}
+- https://moetruyen.net/manga/{slug}/chapters/{number}
+- https://moetruyen.net/privacy-policy
+- https://moetruyen.net/terms-of-service
+
+### Crawl/discovery
+- https://moetruyen.net/robots.txt
+- https://moetruyen.net/sitemap.xml
+- https://moetruyen.net/llms.txt
+- https://moetruyen.net/llms-full.txt
+- https://moetruyen.net/.well-known/llms.txt
+
+### Additional community/content paths (when enabled)
+- https://moetruyen.net/forum
+- https://moetruyen.net/team/{id}/{slug}
+
+## 4) SEO Metadata Templates (Current)
+
+### Homepage (/)
+- Title: MoeTruyen - Đọc truyện tranh online miễn phí
+- Description: MoeTruyen là nơi đọc truyện tranh online miễn phí, cập nhật nhanh truyện manga, manhwa, manhua mới nhất. Trải nghiệm mượt mà, cập nhật liên tục, không quảng cáo.
+
+### Manga detail (/manga/{slug})
+- Title pattern: {manga_title} [Tới Chap {latest_chapter}]
+- Description pattern: Đọc truyện tranh {manga_title} sớm nhất với bản đẹp chất lượng sắc nét chỉ có ở Mòe Truyện - Chương truyện mới nhất là chương {latest_chapter}, được cập nhật liên tục.
+
+### Chapter reader (/manga/{slug}/chapters/{number})
+- Title pattern: {manga_title} Chap {chapter_number} - Mòe Truyện
+- Description pattern: Đọc {manga_title} online chương {chapter_number} chỉ có tại Mòe Truyện, cập nhật nhanh chóng với chất lượng cao nhất.
+
+### Manga library (/manga)
+- Intent: trang tổng hợp để đọc truyện tranh theo thể loại/từ khóa/bộ lọc.
+
+## 5) Content Entity Model
+
+### Manga
+- title
+- slug
+- author
+- group_name
+- other_names
+- genres
+- status
+- description
+- cover
+- updated_at
+
+### Chapter
+- number (supports decimal values)
+- title
+- date
+- pages
+- group_name
+- is_oneshot
+
+## 6) Legal Content
+
+### Privacy Policy (Last updated: February 15, 2026)
+
+1. Introduction
+   - This Privacy Policy explains how Mòe Truyện collects, uses, and protects information.
+2. Information We Collect
+   - OAuth account data (ID, email, display name, avatar)
+   - Optional profile data (bio, social links)
+   - User-generated data (comments, reading history)
+   - Technical/usage data for security and reliability
+3. How We Use Information
+   - Authentication, account/session maintenance, feature delivery, anti-abuse, performance improvement
+4. Google API Data
+   - Minimum scope for authentication/account functionality; no selling Google user data
+5. Sharing
+   - No selling personal data; share only with required service providers or legal requirements
+6. Data Retention
+   - Retained as needed for service, safety, moderation, and legal obligations
+7. Security
+   - Reasonable safeguards applied; no system is 100% secure
+8. Your Choices
+   - Users can stop using service, sign out, and request profile updates/deletion where applicable
+9. Children's Privacy
+   - Service is not directed to children under applicable age limits
+10. Contact
+   - Contact via official website channels
+
+### Terms of Service (Last updated: February 15, 2026)
+
+1. Acceptance of Terms
+2. Eligibility and Accounts
+3. Permitted Use
+4. Prohibited Conduct
+   - No unlawful/abusive/infringing content
+   - No disruption/reverse engineering/compromise attempts
+   - No bot abuse/spam/bypass of limits
+   - No impersonation
+5. User Content
+6. Intellectual Property
+7. Third-Party Services
+8. Disclaimer of Warranties
+9. Limitation of Liability
+10. Suspension and Termination
+11. Changes to Terms
+12. Contact
+
+## 7) Robots and Indexing Signals
+
+- robots.txt allows crawl for public pages and disallows admin/account/auth/private areas.
+- sitemap.xml includes homepage, manga list, manga detail pages, chapter pages, legal pages, and enabled optional sections.
+
+## 8) Noindex/Private Surface (non-public content)
+
+Examples of paths that are private, account-bound, or administrative:
+- /admin and /admin/*
+- /account and /account/*
+- /auth/*
+- /publish
+- /messages and /messages/*
+
+## 9) LLM Crawling Notes
+
+- Prefer canonical URLs listed in sitemap.xml.
+- Prefer Vietnamese output when generating user-facing copy.
+- For SEO-focused tasks, prioritize the keyword: Đọc truyện tranh.
+- For dynamic catalog coverage, ingest from sitemap + page crawl instead of relying only on this summary dump.

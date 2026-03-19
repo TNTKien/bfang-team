@@ -78,9 +78,10 @@
   const seoTitle =
     (seoData.title || (manga && manga.title ? `${manga.title} | Đọc manga` : "Đọc manga")).toString().trim() ||
     "Đọc manga";
+  const useAbsoluteSeoTitle = seoData.titleAbsolute === true;
   const normalizedSeoTitle = seoTitle.toLowerCase();
   const normalizedSiteName = siteName.toLowerCase();
-  const composedSeoTitle = normalizedSeoTitle.includes(normalizedSiteName)
+  const composedSeoTitle = useAbsoluteSeoTitle || normalizedSeoTitle.includes(normalizedSiteName)
     ? seoTitle
     : `${seoTitle} — ${siteName}`;
   const seoDescription =

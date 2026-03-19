@@ -9,8 +9,8 @@
     "footerYear": "2026"
   },
   "homepage": {
-    "welcomeMessage": "Chào mừng bạn đến với Mòe Truyện.",
-    "introduction": "Mòe Truyện là một trang truyện tranh với hàng chục đầu truyện và hàng trăm chương truyện.",
+    "welcomeMessage": "MoeTruyen - Đọc truyện tranh online miễn phí",
+    "introduction": "MoeTruyen là nơi đọc truyện tranh online miễn phí, cập nhật nhanh truyện manga, manhwa, manhua mới nhất. Trải nghiệm mượt mà, cập nhật liên tục, không quảng cáo.",
     "aboutTitle": "Về Mòe Truyện",
     "foundedYear": "2019",
     "contentStandardsTitle": "Tiêu chuẩn nội dung",
@@ -27,9 +27,9 @@
     "discordLabel": "discord.moetruyen.net"
   },
   "seo": {
-    "defaultDescription": "Mòe Truyện - Truyện tranh",
-    "homepageTitle": "Mòe Truyện - Truyện tranh",
-    "homepageDescription": "Đọc truyện tranh online và manga tiếng Việt mới nhất tại Mòe Truyện, cập nhật chương liên tục mỗi ngày."
+    "defaultDescription": "MoeTruyen - Đọc truyện tranh online miễn phí, cập nhật nhanh manga, manhwa, manhua mới mỗi ngày.",
+    "homepageTitle": "MoeTruyen - Đọc truyện tranh online miễn phí",
+    "homepageDescription": "MoeTruyen là nơi đọc truyện tranh online miễn phí, cập nhật nhanh truyện manga, manhwa, manhua mới nhất. Trải nghiệm mượt mà, cập nhật liên tục, không quảng cáo."
   },
   "admin": {
     "teamManageLabel": "Mòe Truyện Manage",

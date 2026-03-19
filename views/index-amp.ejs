@@ -118,9 +118,10 @@
   const showForumSection = Boolean(forumPageEnabled) && forumPosts.length > 0;
   const seoData = seo && typeof seo === "object" ? seo : {};
   const seoTitle = (seoData.title || title || "Trang chủ").toString().trim() || "Trang chủ";
+  const useAbsoluteSeoTitle = seoData.titleAbsolute === true;
   const normalizedSeoTitle = seoTitle.toLowerCase();
   const normalizedSiteName = siteName.toLowerCase();
-  const composedSeoTitle = normalizedSeoTitle.includes(normalizedSiteName)
+  const composedSeoTitle = useAbsoluteSeoTitle || normalizedSeoTitle.includes(normalizedSiteName)
     ? seoTitle
     : `${seoTitle} — ${siteName}`;
   const seoDescription = (seoData.description || welcomeMessage).toString().trim() || welcomeMessage;

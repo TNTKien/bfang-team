@@ -765,6 +765,32 @@ app.get("/sw-register.js", (_req, res, next) => {
   return next();
 });
 
+const llmsCacheControl = isProductionApp
+  ? "public, max-age=1800, stale-while-revalidate=86400"
+  : "no-cache";
+
+const sendLlmsTextFile = (fileName, options = {}) => (req, res, next) => {
+  const targetFilePath = path.join(publicDir, fileName);
+  res.type("text/plain; charset=utf-8");
+  res.set("Cache-Control", llmsCacheControl);
+  res.set("X-Robots-Tag", SEO_ROBOTS_INDEX);
+
+  if (options.alternatePath) {
+    res.append("Link", `<${options.alternatePath}>; rel="alternate"; type="text/plain"`);
+  }
+
+  return res.sendFile(targetFilePath, (error) => {
+    if (!error) return;
+    if (error.code === "ENOENT") {
+      return next();
+    }
+    return next(error);
+  });
+};
+
+app.get("/llms.txt", sendLlmsTextFile("llms.txt", { alternatePath: "/llms-full.txt" }));
+app.get("/llms-full.txt", sendLlmsTextFile("llms-full.txt", { alternatePath: "/llms.txt" }));
+
 app.use(express.static(publicDir));
 
 app.get("/uploads/covers/:fileName", async (req, res, next) => {

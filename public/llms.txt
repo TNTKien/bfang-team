@@ -1,0 +1,21 @@
+# MoeTruyen llms.txt
+
+> Company: Mòe Truyện (MoeTruyen)
+> Description: MoeTruyen là nền tảng đọc truyện tranh online miễn phí, cập nhật nhanh manga, manhwa, manhua mới nhất với trải nghiệm mượt mà và không quảng cáo.
+
+## Primary SEO Keyword
+- Đọc truyện tranh
+
+## Docs
+- [Homepage](https://moetruyen.net/)
+- [Well-known Alias](https://moetruyen.net/.well-known/llms.txt)
+- [Full Content Dump](https://moetruyen.net/llms-full.txt)
+- [Manga Library](https://moetruyen.net/manga)
+- [Privacy Policy](https://moetruyen.net/privacy-policy)
+- [Terms of Service](https://moetruyen.net/terms-of-service)
+- [Robots](https://moetruyen.net/robots.txt)
+- [Sitemap](https://moetruyen.net/sitemap.xml)
+
+## Content Patterns
+- [Manga Detail](https://moetruyen.net/manga/{slug})
+- [Chapter Reader](https://moetruyen.net/manga/{slug}/chapters/{number})

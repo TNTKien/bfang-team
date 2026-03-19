@@ -63,11 +63,14 @@ const normalizeSiteConfig = (rawInput) => {
       discordLabel: toText(contactInput.discordLabel, "discord.moetruyen.net")
     },
     seo: {
-      defaultDescription: toText(seoInput.defaultDescription, `${siteName} - nhóm dịch truyện tranh`),
-      homepageTitle: toText(seoInput.homepageTitle, `${siteName} - nhóm dịch truyện tranh`),
+      defaultDescription: toText(
+        seoInput.defaultDescription,
+        `${siteName} - Đọc truyện tranh online miễn phí, cập nhật nhanh mỗi ngày.`
+      ),
+      homepageTitle: toText(seoInput.homepageTitle, `${siteName} - Đọc truyện tranh online miễn phí`),
       homepageDescription: toText(
         seoInput.homepageDescription,
-        `Đọc truyện tranh online và manga tiếng Việt mới nhất tại ${siteName}, cập nhật chương liên tục mỗi ngày.`
+        `${siteName} là nơi đọc truyện tranh online miễn phí, cập nhật nhanh manga, manhwa, manhua mới nhất mỗi ngày.`
       )
     },
     admin: {

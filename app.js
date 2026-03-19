@@ -95,8 +95,10 @@ const safeCompareText = (leftValue, rightValue) => {
 
 const SEO_SITE_NAME = siteBrandingConfig.siteName || "BFANG Team";
 const SEO_DEFAULT_DESCRIPTION =
-  siteSeoConfig.defaultDescription || `${SEO_SITE_NAME} - nhóm dịch truyện tranh`;
+  siteSeoConfig.defaultDescription ||
+  `${SEO_SITE_NAME} - Đọc truyện tranh online miễn phí, cập nhật nhanh manga mới mỗi ngày.`;
 const SEO_DEFAULT_KEYWORDS = [
+  "đọc truyện tranh",
   "đọc truyện tranh online",
   "manga tiếng Việt",
   "truyện tranh mới cập nhật",
@@ -238,6 +240,7 @@ const buildSeoPayload = (req, options = {}) => {
   const canonical = toAbsolutePublicUrl(req, options.canonical || pathValue);
   const ampHtml = toAbsolutePublicUrl(req, options.ampHtml || "");
   const title = normalizeSeoText(options.title || "", 140);
+  const titleAbsolute = options.titleAbsolute === true;
   const description = normalizeSeoText(options.description || SEO_DEFAULT_DESCRIPTION, 190);
   const keywordList = normalizeSeoKeywords(
     options.keywords == null ? SEO_DEFAULT_KEYWORDS : options.keywords
@@ -253,6 +256,7 @@ const buildSeoPayload = (req, options = {}) => {
   return {
     siteName: SEO_SITE_NAME,
     title,
+    titleAbsolute,
     description,
     keywords: keywordList.join(", "),
     keywordList,

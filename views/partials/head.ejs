@@ -6,8 +6,14 @@
   <% const siteNameFallback = (brandingConfig.siteName || "BFANG Team").toString().trim() || "BFANG Team"; %>
   <% const siteName = (seoData.siteName || siteNameFallback).toString().trim() || siteNameFallback; %>
   <% const pageTitle = (seoData.title || title || "").toString().trim(); %>
-  <% const fullTitle = pageTitle ? `${pageTitle} — ${siteName}` : siteName; %>
-  <% const defaultSeoDescription = (seoConfig.defaultDescription || `${siteNameFallback} - nhóm dịch truyện tranh`).toString().trim(); %>
+  <% const normalizedPageTitle = pageTitle.toLowerCase(); %>
+  <% const normalizedSiteName = siteName.toLowerCase(); %>
+  <% const hasSiteNameInTitle = Boolean(pageTitle) && normalizedPageTitle.includes(normalizedSiteName); %>
+  <% const useAbsoluteTitle = seoData.titleAbsolute === true; %>
+  <% const fullTitle = pageTitle
+    ? (useAbsoluteTitle || hasSiteNameInTitle ? pageTitle : `${pageTitle} — ${siteName}`)
+    : siteName; %>
+  <% const defaultSeoDescription = (seoConfig.defaultDescription || `${siteNameFallback} - Đọc truyện tranh online miễn phí, cập nhật nhanh mỗi ngày.`).toString().trim(); %>
   <% const seoDescription = (seoData.description || defaultSeoDescription).toString().trim(); %>
   <% const seoKeywordListRaw = Array.isArray(seoData.keywordList)
     ? seoData.keywordList

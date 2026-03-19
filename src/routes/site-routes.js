@@ -787,6 +787,7 @@ const registerSiteRoutes = (app, deps) => {
   let homepageCachePayload = null;
   let homepageCacheUpdatedAt = "";
   const SEO_TRENDING_KEYWORDS = Object.freeze([
+    "đọc truyện tranh",
     "đọc truyện tranh online",
     "manga tiếng Việt",
     "đọc manga miễn phí",
@@ -6423,27 +6424,67 @@ app.get("/terms-of-service", (req, res) => {
   });
 });
 
+app.get("/.well-known/llms.txt", (_req, res) => {
+  return res.redirect(308, "/llms.txt");
+});
+
+app.get("/.well-known/llms-full.txt", (_req, res) => {
+  return res.redirect(308, "/llms-full.txt");
+});
+
+app.get("/.well-known/robots.txt", (_req, res) => {
+  return res.redirect(308, "/robots.txt");
+});
+
 app.get("/robots.txt", (req, res) => {
   const origin = getPublicOriginFromRequest(req);
   const sitemapUrl = origin ? `${origin}/sitemap.xml` : "/sitemap.xml";
   const newsSitemapUrl = origin ? `${origin}/tin-tuc/sitemap.xml` : "/tin-tuc/sitemap.xml";
+  const llmsUrl = origin ? `${origin}/llms.txt` : "/llms.txt";
+  const llmsFullUrl = origin ? `${origin}/llms-full.txt` : "/llms-full.txt";
+  const llmsWellKnownUrl = origin ? `${origin}/.well-known/llms.txt` : "/.well-known/llms.txt";
   const newsPageEnabled = Boolean(req && req.app && req.app.locals && req.app.locals.isNewsPageEnabled);
+  const disallowPaths = [
+    "/admin",
+    "/admin/",
+    "/forum/admin",
+    "/forum/admin/",
+    "/account",
+    "/auth/",
+    "/publish",
+    "/messages",
+    "/user/"
+  ];
 
   res.type("text/plain; charset=utf-8");
+  res.set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
   return res.send(
     [
       "User-agent: *",
       "Allow: /",
-      "Disallow: /admin",
-      "Disallow: /admin/",
-      "Disallow: /forum/admin",
-      "Disallow: /forum/admin/",
-      "Disallow: /account",
-      "Disallow: /auth/",
-      "Disallow: /publish",
-      "Disallow: /messages",
-      "Disallow: /user/",
+      "Allow: /llms.txt",
+      "Allow: /llms-full.txt",
+      ...disallowPaths.map((pathValue) => `Disallow: ${pathValue}`),
       "",
+      "User-agent: GPTBot",
+      "User-agent: OAI-SearchBot",
+      "User-agent: ChatGPT-User",
+      "User-agent: ClaudeBot",
+      "User-agent: Claude-User",
+      "User-agent: Claude-SearchBot",
+      "User-agent: Claude-Web",
+      "User-agent: PerplexityBot",
+      "User-agent: Google-Extended",
+      "User-agent: Meta-ExternalAgent",
+      "User-agent: CCBot",
+      "Allow: /",
+      "Allow: /llms.txt",
+      "Allow: /llms-full.txt",
+      ...disallowPaths.map((pathValue) => `Disallow: ${pathValue}`),
+      "",
+      `# LLM docs: ${llmsUrl}`,
+      `# LLM full docs: ${llmsFullUrl}`,
+      `# Well-known alias: ${llmsWellKnownUrl}`,
       `Sitemap: ${sitemapUrl}`,
       ...(newsPageEnabled ? [`Sitemap: ${newsSitemapUrl}`] : [])
     ].join("\n")
@@ -6481,6 +6522,16 @@ app.get(
         loc: toAbsolutePublicUrl(req, "/manga"),
         changefreq: "daily",
         priority: "0.9"
+      },
+      {
+        loc: toAbsolutePublicUrl(req, "/llms.txt"),
+        changefreq: "weekly",
+        priority: "0.6"
+      },
+      {
+        loc: toAbsolutePublicUrl(req, "/llms-full.txt"),
+        changefreq: "weekly",
+        priority: "0.5"
       },
       {
         loc: toAbsolutePublicUrl(req, "/privacy-policy"),
@@ -7513,6 +7564,7 @@ app.get(
     const seoImage = buildHomepageSeoImage(homepagePayload);
     const homepageKeywords = buildSeoKeywordList([
       SEO_TRENDING_KEYWORDS,
+      "đọc truyện tranh online miễn phí",
       "đọc manga online",
       "manga Việt hóa",
       "truyện tranh mới mỗi ngày",
@@ -7523,8 +7575,8 @@ app.get(
       buildWebsiteSchema(req),
       buildCollectionPageSchema(req, {
         path: "/",
-        name: `${SEO_SITE_NAME} - Trang chủ đọc truyện tranh`,
-        description: `Trang chủ ${SEO_SITE_NAME} với danh sách manga nổi bật, truyện mới cập nhật mỗi ngày.`,
+        name: `${SEO_SITE_NAME} - Đọc truyện tranh online`,
+        description: `${SEO_SITE_NAME} là nơi đọc truyện tranh online miễn phí, cập nhật nhanh manga, manhwa, manhua mới nhất.`,
         image: seoImage,
         keywords: homepageKeywords
       }),
@@ -7563,6 +7615,7 @@ app.get(
     const seoImage = buildHomepageSeoImage(homepagePayload);
     const homepageKeywords = buildSeoKeywordList([
       SEO_TRENDING_KEYWORDS,
+      "đọc truyện tranh online miễn phí",
       "đọc manga online",
       "manga Việt hóa",
       "truyện tranh mới mỗi ngày",
@@ -7573,8 +7626,8 @@ app.get(
       buildWebsiteSchema(req),
       buildCollectionPageSchema(req, {
         path: "/",
-        name: `${SEO_SITE_NAME} - Trang chủ đọc truyện tranh`,
-        description: `Trang chủ ${SEO_SITE_NAME} với danh sách manga nổi bật, truyện mới cập nhật mỗi ngày.`,
+        name: `${SEO_SITE_NAME} - Đọc truyện tranh online`,
+        description: `${SEO_SITE_NAME} là nơi đọc truyện tranh online miễn phí, cập nhật nhanh manga, manhwa, manhua mới nhất.`,
         image: seoImage,
         keywords: homepageKeywords
       }),
@@ -7782,13 +7835,13 @@ app.get(
     const hasFilters = Boolean(q || include.length || filteredExclude.length);
     const seoTitleQuery = normalizeSeoText(q, 55);
     const seoTitle = seoTitleQuery
-      ? `Tìm manga: ${seoTitleQuery}`
+      ? `Đọc truyện tranh: ${seoTitleQuery}`
       : hasFilters
-        ? `Lọc manga ${SEO_SITE_NAME}`
-        : "Toàn bộ manga";
+        ? `Đọc truyện tranh theo bộ lọc | ${SEO_SITE_NAME}`
+        : "Đọc truyện tranh | Toàn bộ manga";
     const seoDescription = hasFilters
-      ? `Kết quả tìm kiếm và lọc manga trên ${SEO_SITE_NAME}. Mở bộ lọc để xem toàn bộ thư viện truyện.`
-      : `Thư viện manga đầy đủ của ${SEO_SITE_NAME}, cập nhật liên tục theo nhóm dịch và thể loại.`;
+      ? `Danh sách đọc truyện tranh theo từ khóa và bộ lọc trên ${SEO_SITE_NAME}. Duyệt manga, manhwa, manhua theo thể loại nhanh chóng.`
+      : `${SEO_SITE_NAME} là kho đọc truyện tranh online miễn phí, cập nhật liên tục manga, manhwa, manhua mới nhất mỗi ngày.`;
     const shouldNoIndex = hasFilters || pagination.page > 1;
     const genreNameById = new Map(genreStats.map((genre) => [Number(genre.id), (genre.name || "").toString().trim()]));
     const includeGenreNames = include.map((id) => genreNameById.get(Number(id)) || "").filter(Boolean);
@@ -7797,6 +7850,7 @@ app.get(
       .filter(Boolean);
     const mangaListKeywords = buildSeoKeywordList([
       SEO_TRENDING_KEYWORDS,
+      "đọc truyện tranh theo thể loại",
       "thư viện manga",
       "lọc thể loại manga",
       qNormalized,
@@ -7937,6 +7991,8 @@ app.get(
     const firstChapterNumber = chapterSummary && chapterSummary.first_number != null
       ? formatChapterNumberValue(chapterSummary.first_number)
       : "";
+    const latestChapterForSeoText = latestChapterNumber || "?";
+    const mangaSeoTitle = `${mangaRow.title} [Tới Chap ${latestChapterForSeoText}]`;
 
     const commentPageRaw = Number(req.query.commentPage);
     const commentPage =
@@ -7989,15 +8045,15 @@ app.get(
       mangaBookmarked = Boolean(bookmarkRow && bookmarkRow.ok);
     }
     const mangaDescription = normalizeSeoText(
-      stripHtmlTags(mangaRow.description) || `Đọc manga ${mangaRow.title} tại ${SEO_SITE_NAME}.`,
-      180
+      `Đọc truyện tranh ${mangaRow.title} sớm nhất với bản đẹp chất lượng sắc nét chỉ có ở ${SEO_SITE_NAME} - Chương truyện mới nhất là chương ${latestChapterForSeoText}, được cập nhật liên tục.`,
+      190
     );
     const canonicalPath = `/manga/${encodeURIComponent(mangaRow.slug)}`;
     const ampPath = `/amp/manga/${encodeURIComponent(mangaRow.slug)}`;
     const mangaKeywords = buildSeoKeywordList([
       SEO_TRENDING_KEYWORDS,
       mangaRow.title,
-      `đọc ${mangaRow.title}`,
+      `đọc truyện tranh ${mangaRow.title}`,
       splitSeoNameTokens(mangaRow.author || ""),
       splitSeoNameTokens(mangaRow.group_name || ""),
       Array.isArray(mappedManga.genres) ? mappedManga.genres : [],
@@ -8010,7 +8066,7 @@ app.get(
           buildWebsiteSchema(req),
           buildCollectionPageSchema(req, {
             path: canonicalPath,
-            name: `${mangaRow.title} | Đọc manga`,
+            name: mangaSeoTitle,
             description: mangaDescription,
             image: mappedManga.cover || "",
             keywords: mangaKeywords
@@ -8048,7 +8104,8 @@ app.get(
       commentComposerEnabled,
       mangaBookmarked,
       seo: buildSeoPayload(req, {
-        title: `${mangaRow.title} | Đọc manga`,
+        title: mangaSeoTitle,
+        titleAbsolute: true,
         description: mangaDescription,
         keywords: mangaKeywords,
         canonicalPath,
@@ -8099,18 +8156,24 @@ app.get(
       ...chapter,
       is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot)
     }));
+    const latestChapterNumber =
+      chapters.length && chapters[0] && chapters[0].number != null
+        ? formatChapterNumberValue(chapters[0].number)
+        : "";
+    const latestChapterForSeoText = latestChapterNumber || "?";
+    const mangaSeoTitle = `${mangaRow.title} [Tới Chap ${latestChapterForSeoText}]`;
 
     const mappedManga = mapMangaRow(mangaRow);
     const groupTeamLinks = await listGroupTeamLinks(mangaRow.group_name || "");
     const canonicalPath = `/manga/${encodeURIComponent(mangaRow.slug)}`;
     const mangaDescription = normalizeSeoText(
-      stripHtmlTags(mangaRow.description) || `Đọc manga ${mangaRow.title} tại ${SEO_SITE_NAME}.`,
-      180
+      `Đọc truyện tranh ${mangaRow.title} sớm nhất với bản đẹp chất lượng sắc nét chỉ có ở ${SEO_SITE_NAME} - Chương truyện mới nhất là chương ${latestChapterForSeoText}, được cập nhật liên tục.`,
+      190
     );
     const mangaKeywords = buildSeoKeywordList([
       SEO_TRENDING_KEYWORDS,
       mangaRow.title,
-      `đọc ${mangaRow.title}`,
+      `đọc truyện tranh ${mangaRow.title}`,
       splitSeoNameTokens(mangaRow.author || ""),
       splitSeoNameTokens(mangaRow.group_name || ""),
       Array.isArray(mappedManga.genres) ? mappedManga.genres : [],
@@ -8121,7 +8184,7 @@ app.get(
       buildWebsiteSchema(req),
       buildCollectionPageSchema(req, {
         path: canonicalPath,
-        name: `${mangaRow.title} | Đọc manga`,
+        name: mangaSeoTitle,
         description: mangaDescription,
         image: mappedManga.cover || "",
         keywords: mangaKeywords
@@ -8139,7 +8202,8 @@ app.get(
       })
     ]);
     const seo = buildSeoPayload(req, {
-      title: `${mangaRow.title} | Đọc manga`,
+      title: mangaSeoTitle,
+      titleAbsolute: true,
       description: mangaDescription,
       keywords: mangaKeywords,
       canonicalPath,
@@ -8367,11 +8431,13 @@ app.get(
 
     const mappedManga = mapMangaRow(mangaRow);
     const chapterTitle = (chapterRow.title || "").toString().trim();
+    const chapterSeoNumber = formatChapterNumberValue(chapterRow.number);
+    const chapterSeoTitle = `${mangaRow.title} Chap ${chapterSeoNumber} - ${SEO_SITE_NAME}`;
     const chapterBaseLabel = isOneshotChapter ? "Oneshot" : `Chương ${chapterRow.number}`;
     const chapterLabel = chapterTitle ? `${chapterBaseLabel} - ${chapterTitle}` : chapterBaseLabel;
     const chapterDescription = normalizeSeoText(
-      `Đọc ${chapterLabel} của ${mangaRow.title} trên ${SEO_SITE_NAME}. Trang đọc tối ưu cho di động và máy tính.`,
-      180
+      `Đọc ${mangaRow.title} online chương ${chapterSeoNumber} chỉ có tại ${SEO_SITE_NAME}, cập nhật nhanh chóng với chất lượng cao nhất.`,
+      190
     );
     const mangaCanonicalPath = `/manga/${encodeURIComponent(mangaRow.slug)}`;
     const chapterPath = `/manga/${encodeURIComponent(mangaRow.slug)}/chapters/${encodeURIComponent(
@@ -8381,7 +8447,8 @@ app.get(
       SEO_TRENDING_KEYWORDS,
       mangaRow.title,
       chapterLabel,
-      `đọc ${chapterLabel}`,
+      `đọc truyện tranh ${mangaRow.title}`,
+      `đọc ${chapterLabel} ${mangaRow.title}`,
       splitSeoNameTokens(mangaRow.author || ""),
       Array.isArray(mappedManga.genres) ? mappedManga.genres : []
     ]);
@@ -8392,7 +8459,7 @@ app.get(
           buildWebsiteSchema(req),
           buildCollectionPageSchema(req, {
             path: chapterPath,
-            name: `${chapterLabel} | ${mangaRow.title}`,
+            name: chapterSeoTitle,
             description: chapterDescription,
             image: mappedManga.cover || "",
             keywords: chapterKeywords
@@ -8406,7 +8473,7 @@ app.get(
           buildMangaSeriesSchema(req, {
             manga: mappedManga,
             canonicalPath: mangaCanonicalPath,
-            description: normalizeSeoText(mappedManga.description || `Đọc manga ${mangaRow.title}.`, 180),
+            description: normalizeSeoText(mappedManga.description || `Đọc truyện tranh ${mangaRow.title}.`, 180),
             chapterCount: chapterList.length
           }),
           buildChapterSchema(req, {
@@ -8439,7 +8506,8 @@ app.get(
       commentComposerEnabled,
       chapterViewTrackToken,
       seo: buildSeoPayload(req, {
-        title: `${chapterLabel} | ${mangaRow.title}`,
+        title: chapterSeoTitle,
+        titleAbsolute: true,
         description: chapterDescription,
         keywords: chapterKeywords,
         canonicalPath: chapterPath,
