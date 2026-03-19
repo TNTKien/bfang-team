@@ -6,6 +6,7 @@
   const BOUND_DESC_ATTR = "data-description-bound";
   const descriptionControllers = [];
   let resizeTimer = null;
+  let lastViewportWidth = window.innerWidth;
 
   const getUrl = () => window.location.href.split("#")[0];
 
@@ -159,6 +160,27 @@
       setState(false);
     };
 
+    const refresh = () => {
+      const result = truncate(fullText, getMax());
+      if (!result.truncated) {
+        content.textContent = fullText;
+        toggle.hidden = true;
+        wrapper.classList.remove("is-expanded", "is-collapsed");
+        toggle.removeAttribute("aria-expanded");
+        return;
+      }
+
+      toggle.hidden = false;
+      if (wrapper.classList.contains("is-expanded")) {
+        content.textContent = fullText;
+        setState(true);
+        return;
+      }
+
+      content.textContent = `${result.text}...`;
+      setState(false);
+    };
+
     const expand = () => {
       content.textContent = fullText;
       toggle.hidden = false;
@@ -174,12 +196,13 @@
     });
 
     window.requestAnimationFrame(() => {
-      collapse();
+      refresh();
     });
 
     return {
       wrapper,
-      collapse
+      collapse,
+      refresh
     };
   };
 
@@ -203,7 +226,11 @@
       if (!controller || !controller.wrapper || !controller.wrapper.isConnected) {
         return;
       }
-      controller.collapse();
+      if (typeof controller.refresh === "function") {
+        controller.refresh();
+      } else {
+        controller.collapse();
+      }
       activeControllers.push(controller);
     });
     descriptionControllers.length = 0;
@@ -255,6 +282,11 @@
     }
     resizeTimer = window.setTimeout(() => {
       resizeTimer = null;
+      const nextViewportWidth = window.innerWidth;
+      if (nextViewportWidth === lastViewportWidth) {
+        return;
+      }
+      lastViewportWidth = nextViewportWidth;
       refreshDescriptionOnResize();
     }, 120);
   });
