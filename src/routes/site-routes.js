@@ -157,10 +157,10 @@ const registerSiteRoutes = (app, deps) => {
   const FAST_NAV_PAGE_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300";
   const siteSeoConfig = siteConfig && siteConfig.seo && typeof siteConfig.seo === "object" ? siteConfig.seo : {};
   const homepageSeoTitle =
-    (siteSeoConfig.homepageTitle || "").toString().trim() || `${SEO_SITE_NAME} - nhóm dịch truyện tranh`;
+    (siteSeoConfig.homepageTitle || "").toString().trim() || `${SEO_SITE_NAME} - Đọc truyện tranh online miễn phí`;
   const homepageSeoDescription =
     (siteSeoConfig.homepageDescription || "").toString().trim() ||
-    `Đọc truyện tranh online và manga tiếng Việt mới nhất tại ${SEO_SITE_NAME}, cập nhật chương liên tục mỗi ngày.`;
+    `${SEO_SITE_NAME} là nơi đọc truyện tranh online miễn phí, cập nhật nhanh manga, manhwa, manhua mới nhất mỗi ngày.`;
   const siteNotFoundDescription = `Trang bạn yêu cầu không tồn tại trên ${SEO_SITE_NAME}.`;
   const CHAPTER_VIEW_SESSION_KEY = "chapterViewSessions";
   const CHAPTER_VIEW_TRACK_WINDOW_MS = 12 * 60 * 60 * 1000;

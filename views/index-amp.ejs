@@ -45,6 +45,10 @@
     runtimeSiteConfig.homepage && typeof runtimeSiteConfig.homepage === "object"
       ? runtimeSiteConfig.homepage
       : {};
+  const seoConfig =
+    runtimeSiteConfig.seo && typeof runtimeSiteConfig.seo === "object"
+      ? runtimeSiteConfig.seo
+      : {};
   const siteName = (brandingConfig.siteName || "BFANG Team").toString().trim() || "BFANG Team";
   const brandMark = (brandingConfig.brandMark || "BFANG").toString().trim() || "BFANG";
   const brandSubmark = (brandingConfig.brandSubmark || "Team").toString().trim() || "Team";
@@ -117,14 +121,25 @@
   const forumPosts = Array.isArray(forumLatestPosts) ? forumLatestPosts.slice(0, 6) : [];
   const showForumSection = Boolean(forumPageEnabled) && forumPosts.length > 0;
   const seoData = seo && typeof seo === "object" ? seo : {};
-  const seoTitle = (seoData.title || title || "Trang chủ").toString().trim() || "Trang chủ";
+  const fallbackSeoTitle =
+    (seoConfig.homepageTitle || `${siteName} - Đọc truyện tranh online miễn phí`).toString().trim() ||
+    `${siteName} - Đọc truyện tranh online miễn phí`;
+  const fallbackSeoDescription =
+    (
+      seoConfig.homepageDescription ||
+      `${siteName} là nơi đọc truyện tranh online miễn phí, cập nhật nhanh manga, manhwa, manhua mới nhất mỗi ngày.`
+    )
+      .toString()
+      .trim() ||
+    `${siteName} là nơi đọc truyện tranh online miễn phí, cập nhật nhanh manga, manhwa, manhua mới nhất mỗi ngày.`;
+  const seoTitle = (seoData.title || fallbackSeoTitle).toString().trim() || fallbackSeoTitle;
   const useAbsoluteSeoTitle = seoData.titleAbsolute === true;
   const normalizedSeoTitle = seoTitle.toLowerCase();
   const normalizedSiteName = siteName.toLowerCase();
   const composedSeoTitle = useAbsoluteSeoTitle || normalizedSeoTitle.includes(normalizedSiteName)
     ? seoTitle
     : `${seoTitle} — ${siteName}`;
-  const seoDescription = (seoData.description || welcomeMessage).toString().trim() || welcomeMessage;
+  const seoDescription = (seoData.description || fallbackSeoDescription).toString().trim() || fallbackSeoDescription;
   const seoKeywords = (seoData.keywords || "").toString().trim();
   const seoCanonical = (seoData.canonical || pageCanonical).toString().trim() || pageCanonical;
   const seoRobots =
