@@ -1,6 +1,7 @@
 <%
+  const isChapterLocked = Boolean(chapterLocked);
   let firstChapterPageUrl = "";
-  if (Array.isArray(pageUrls) && pageUrls.length > 0) {
+  if (!isChapterLocked && Array.isArray(pageUrls) && pageUrls.length > 0) {
     firstChapterPageUrl = (pageUrls[0] || "").toString().trim();
   }
 
@@ -61,13 +62,66 @@
             </div>
           </div>
           <% const processingState = (chapter.processing_state || "").toString().trim(); %>
-          <% if (processingState === "processing") { %>
+          <% if (isChapterLocked) { %>
+            <p class="reader-note">Chương này đang được khóa mật khẩu. Vui lòng nhập mật khẩu để mở khóa.</p>
+          <% } else if (processingState === "processing") { %>
             <p class="reader-note">Chương đang xử lý ảnh, vui lòng quay lại sau.</p>
           <% } else if (!pageUrls || pageUrls.length === 0) { %>
             <p class="reader-note">Trang đọc mẫu: hiển thị khung trang, chưa có ảnh scan.</p>
           <% } %>
         </section>
 
+        <% if (isChapterLocked) { %>
+          <section class="section container">
+            <div class="panel chapter-unlock-card">
+              <div class="chapter-unlock-card__header">
+                <span class="chapter-unlock-card__icon" aria-hidden="true">
+                  <i class="fa-solid fa-lock"></i>
+                </span>
+                <div class="chapter-unlock-card__title-wrap">
+                  <h2>Mở khóa chương</h2>
+                  <p>Chương này được bảo vệ bằng mật khẩu. Nhập đúng mật khẩu để tiếp tục đọc.</p>
+                </div>
+              </div>
+              <form
+                class="chapter-unlock-form"
+                method="post"
+                action="<%= chapterUnlockPath %>"
+                data-chapter-unlock-form
+                data-chapter-unlock-retry-after-ms="<%= Math.max(Number(chapterUnlockRetryAfterMs) || 0, 0) %>"
+                novalidate
+              >
+                <label class="chapter-unlock-form__label" for="chapter-unlock-password">Mật khẩu chương</label>
+                <div class="chapter-unlock-form__row">
+                  <input
+                    id="chapter-unlock-password"
+                    class="chapter-unlock-form__input"
+                    type="password"
+                    name="chapter_password"
+                    minlength="<%= chapterPasswordMinLength %>"
+                    maxlength="<%= chapterPasswordMaxLength %>"
+                    autocomplete="current-password"
+                    required
+                    spellcheck="false"
+                    data-chapter-unlock-input
+                  />
+                  <button class="button chapter-unlock-form__submit" type="submit" data-chapter-unlock-submit>
+                    Mở khóa
+                  </button>
+                </div>
+                <p class="chapter-unlock-form__hint">
+                  Hệ thống sẽ tạm khóa nếu nhập sai quá nhiều lần liên tiếp để bảo vệ chương truyện.
+                </p>
+                <p class="chapter-unlock-form__countdown" data-chapter-unlock-countdown hidden></p>
+                <p
+                  class="chapter-unlock-form__error"
+                  data-chapter-unlock-error
+                  <%= chapterUnlockError ? "" : "hidden" %>
+                ><%= chapterUnlockError || "" %></p>
+              </form>
+            </div>
+          </section>
+        <% } else { %>
         <section class="section container reader">
           <div class="reader-fixed reader-fixed--top" data-reader-fixed>
             <div class="reader-fixed-inner">
@@ -170,50 +224,55 @@
             </div>
           </div>
         </section>
+        <% } %>
 
-        <% const chapterCommentBasePath = `/manga/${manga.slug}/chapters/${encodeURIComponent(String(chapter.number))}`; %>
-        <%- include("partials/manga-comments-section", {
-          manga,
-          comments,
-          commentCount,
-          commentPagination,
-          commentComposerEnabled,
-          commentScope: "chapter",
-          commentBasePathOverride: chapterCommentBasePath
-        }) %>
-      </main>
-      <div class="reader-float" data-reader-float>
-        <div class="reader-float-inner">
-          <%- include("partials/chapter-reader-controls", {
+        <% if (!isChapterLocked) { %>
+          <% const chapterCommentBasePath = `/manga/${manga.slug}/chapters/${encodeURIComponent(String(chapter.number))}`; %>
+          <%- include("partials/manga-comments-section", {
             manga,
-            chapter,
-            chapterTitle,
-            chapterShortLabel,
-            chapterList,
-            prevChapter,
-            nextChapter,
-            buildChapterOptionLabel,
-            dropdownClass: ""
+            comments,
+            commentCount,
+            commentPagination,
+            commentComposerEnabled,
+            commentScope: "chapter",
+            commentBasePathOverride: chapterCommentBasePath
           }) %>
+        <% } %>
+      </main>
+      <% if (!isChapterLocked) { %>
+        <div class="reader-float" data-reader-float>
+          <div class="reader-float-inner">
+            <%- include("partials/chapter-reader-controls", {
+              manga,
+              chapter,
+              chapterTitle,
+              chapterShortLabel,
+              chapterList,
+              prevChapter,
+              nextChapter,
+              buildChapterOptionLabel,
+              dropdownClass: ""
+            }) %>
+          </div>
         </div>
-      </div>
-      <div class="reader-quick" data-reader-quick>
-        <button class="reader-quick-btn" type="button" data-reader-top aria-label="Lên đầu trang">
-          <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M6 15l6-6 6 6" />
-          </svg>
-        </button>
-        <button
-          class="reader-quick-btn"
-          type="button"
-          data-reader-comments
-          aria-label="Xuống bình luận"
-        >
-          <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        </button>
-      </div>
+        <div class="reader-quick" data-reader-quick>
+          <button class="reader-quick-btn" type="button" data-reader-top aria-label="Lên đầu trang">
+            <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 15l6-6 6 6" />
+            </svg>
+          </button>
+          <button
+            class="reader-quick-btn"
+            type="button"
+            data-reader-comments
+            aria-label="Xuống bình luận"
+          >
+            <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+        </div>
+      <% } %>
       <%- include("partials/comments-lazy-loader") %>
       <%- include("partials/footer") %>
     </div>

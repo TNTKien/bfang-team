@@ -16378,6 +16378,156 @@ body.admin-page .panel > .note {
   font-size: 0.95rem;
 }
 
+.manga-detail-page .chapter-lock-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.12rem;
+  height: 1.12rem;
+  margin-left: 0.16rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  color: #facc15;
+  font-size: 0.66rem;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.chapter-unlock-card {
+  --chapter-unlock-control-height: 2.56rem;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0.95rem 1rem;
+  border: 1px solid #2a2a2a;
+  border-radius: 0.9rem;
+  background: linear-gradient(145deg, rgba(16, 16, 18, 0.96), rgba(13, 14, 17, 0.95));
+}
+
+.chapter-unlock-card__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.chapter-unlock-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid #3a3d45;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e5e7eb;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.chapter-unlock-card__title-wrap h2 {
+  margin: 0;
+  font-size: 1.08rem;
+  line-height: 1.3;
+}
+
+.chapter-unlock-card__title-wrap p {
+  margin: 0.2rem 0 0;
+  color: #babdc6;
+  font-size: 0.88rem;
+  line-height: 1.42;
+}
+
+.chapter-unlock-form {
+  margin-top: 0.72rem;
+}
+
+.chapter-unlock-form__label {
+  display: block;
+  margin-bottom: 0.34rem;
+  font-size: 0.82rem;
+  color: #cfd2da;
+}
+
+.chapter-unlock-form__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.chapter-unlock-form__input {
+  width: 100%;
+  min-height: var(--chapter-unlock-control-height);
+  height: var(--chapter-unlock-control-height);
+  padding: 0.55rem 0.72rem;
+  border-radius: 0.65rem;
+  border: 1px solid #30313a;
+  background: #121318;
+  color: #f4f5f8;
+  font-size: 0.92rem;
+  box-sizing: border-box;
+}
+
+.chapter-unlock-form__input::placeholder {
+  color: #8f94a3;
+}
+
+.chapter-unlock-form__submit {
+  min-height: var(--chapter-unlock-control-height);
+  height: var(--chapter-unlock-control-height);
+  white-space: nowrap;
+  padding: 0 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  line-height: 1;
+}
+
+.chapter-unlock-form__hint {
+  margin: 0.42rem 0 0;
+  color: #959bab;
+  font-size: 0.78rem;
+  line-height: 1.34;
+}
+
+.chapter-unlock-form__countdown {
+  margin: 0.42rem 0 0;
+  color: #d1d5db;
+  font-size: 0.82rem;
+  line-height: 1.36;
+}
+
+.chapter-unlock-form.is-locked .chapter-unlock-form__input,
+.chapter-unlock-form.is-locked .chapter-unlock-form__submit {
+  opacity: 0.52;
+}
+
+.chapter-unlock-form.is-locked .chapter-unlock-form__submit {
+  cursor: not-allowed;
+}
+
+.chapter-unlock-form__error {
+  margin-top: 0.45rem;
+  color: #fca5a5;
+  font-size: 0.86rem;
+  line-height: 1.38;
+}
+
+@media (max-width: 640px) {
+  .chapter-unlock-card {
+    padding: 0.82rem 0.84rem;
+  }
+
+  .chapter-unlock-form__row {
+    grid-template-columns: 1fr;
+  }
+
+  .chapter-unlock-form__submit {
+    width: 100%;
+  }
+}
+
 .manga-detail-page .chapter-subrow {
   margin-top: 0.28rem;
   display: flex;

@@ -4,6 +4,8 @@ const registerSiteRoutes = (app, deps) => {
     AUTH_GOOGLE_STRATEGY,
     COMMENT_LINK_LABEL_FETCH_LIMIT,
     COMMENT_MAX_LENGTH,
+    CHAPTER_PASSWORD_MAX_LENGTH,
+    CHAPTER_PASSWORD_MIN_LENGTH,
     commentImageUploadsEnabled,
     messageImageUploadsEnabled,
     FORUM_COMMENT_MIN_LENGTH,
@@ -71,6 +73,7 @@ const registerSiteRoutes = (app, deps) => {
     mapMangaRow,
     mapPublicUserRow,
     mapReadingHistoryRow,
+    normalizeChapterPasswordInput,
     normalizeAvatarUrl,
     normalizeHomepageRow,
     normalizeNextPath,
@@ -114,6 +117,7 @@ const registerSiteRoutes = (app, deps) => {
     uploadTeamMedia,
     uploadCover,
     upsertUserProfileFromAuthUser,
+    verifyChapterPasswordHash,
     wantsJson,
     withTransaction,
   } = deps;
@@ -165,6 +169,15 @@ const registerSiteRoutes = (app, deps) => {
   const CHAPTER_VIEW_SESSION_KEY = "chapterViewSessions";
   const CHAPTER_VIEW_TRACK_WINDOW_MS = 12 * 60 * 60 * 1000;
   const CHAPTER_VIEW_MAX_SESSION_ITEMS = 180;
+  const CHAPTER_UNLOCK_SESSION_KEY = "chapterUnlockSessions";
+  const CHAPTER_UNLOCK_TTL_MS = 12 * 60 * 60 * 1000;
+  const CHAPTER_UNLOCK_MAX_SESSION_ITEMS = 180;
+  const CHAPTER_UNLOCK_ATTEMPT_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const CHAPTER_UNLOCK_ATTEMPT_SOFT_LIMIT = 5;
+  const CHAPTER_UNLOCK_ATTEMPT_BASE_DELAY_MS = 15 * 1000;
+  const CHAPTER_UNLOCK_ATTEMPT_MAX_DELAY_MS = 4 * 60 * 1000;
+  const CHAPTER_UNLOCK_ATTEMPT_MAP_MAX_SIZE = 6000;
+  const chapterUnlockAttemptMap = new Map();
   const CHAPTER_VIEW_TOKEN_SECRET =
     (process.env.CHAPTER_VIEW_SECRET || process.env.SESSION_SECRET || `${SEO_SITE_NAME}-chapter-view`)
       .toString()
@@ -205,6 +218,226 @@ const registerSiteRoutes = (app, deps) => {
     });
 
     return chapterViewSchemaReadyPromise;
+  };
+
+  const chapterHasPasswordProtection = (chapterRow) => {
+    const hash = (chapterRow && chapterRow.password_hash ? chapterRow.password_hash : "").toString().trim();
+    const salt = (chapterRow && chapterRow.password_salt ? chapterRow.password_salt : "").toString().trim();
+    return Boolean(hash && salt);
+  };
+
+  const normalizeChapterUnlockSessionEntry = (entryInput) => {
+    if (!entryInput || typeof entryInput !== "object") return null;
+    const unlockedAt = toSafeTimestampMs(entryInput.unlockedAt);
+    const passwordUpdatedAt = toSafeTimestampMs(entryInput.passwordUpdatedAt);
+    if (!unlockedAt) return null;
+    return {
+      unlockedAt,
+      passwordUpdatedAt: passwordUpdatedAt || 0
+    };
+  };
+
+  const readChapterUnlockSessionMap = (sessionValue, nowMs) => {
+    const safeNow = toSafeTimestampMs(nowMs) || Date.now();
+    const source = sessionValue && typeof sessionValue === "object" ? sessionValue : {};
+    const normalized = [];
+
+    Object.keys(source).forEach((key) => {
+      const chapterId = toSafeTimestampMs(key);
+      if (!chapterId) return;
+      const entry = normalizeChapterUnlockSessionEntry(source[key]);
+      if (!entry) return;
+      if (safeNow - entry.unlockedAt > CHAPTER_UNLOCK_TTL_MS) return;
+      normalized.push({
+        chapterId,
+        entry
+      });
+    });
+
+    normalized.sort((left, right) => right.entry.unlockedAt - left.entry.unlockedAt);
+    const limited = normalized.slice(0, CHAPTER_UNLOCK_MAX_SESSION_ITEMS);
+    const result = {};
+    limited.forEach((item) => {
+      result[String(item.chapterId)] = item.entry;
+    });
+    return result;
+  };
+
+  const isChapterUnlockedForSession = ({ req, chapterRow, nowMs }) => {
+    if (!chapterHasPasswordProtection(chapterRow)) return true;
+    const chapterId = toSafeTimestampMs(chapterRow && chapterRow.id);
+    if (!chapterId) return false;
+
+    const passwordUpdatedAt = toSafeTimestampMs(chapterRow && chapterRow.password_updated_at);
+    const unlockMap = readChapterUnlockSessionMap(
+      req && req.session ? req.session[CHAPTER_UNLOCK_SESSION_KEY] : null,
+      nowMs || Date.now()
+    );
+    const unlockEntry = normalizeChapterUnlockSessionEntry(unlockMap[String(chapterId)]);
+    if (!unlockEntry) return false;
+    if (passwordUpdatedAt > 0 && unlockEntry.passwordUpdatedAt !== passwordUpdatedAt) return false;
+    return true;
+  };
+
+  const markChapterUnlockedForSession = ({ req, chapterRow, nowMs }) => {
+    if (!req || !req.session) return;
+    const chapterId = toSafeTimestampMs(chapterRow && chapterRow.id);
+    if (!chapterId) return;
+    const safeNow = toSafeTimestampMs(nowMs) || Date.now();
+    const unlockMap = readChapterUnlockSessionMap(req.session[CHAPTER_UNLOCK_SESSION_KEY], safeNow);
+    unlockMap[String(chapterId)] = {
+      unlockedAt: safeNow,
+      passwordUpdatedAt: toSafeTimestampMs(chapterRow && chapterRow.password_updated_at)
+    };
+    req.session[CHAPTER_UNLOCK_SESSION_KEY] = readChapterUnlockSessionMap(unlockMap, safeNow);
+  };
+
+  const formatUnlockThrottleMessage = (retryAfterMs) => {
+    const safeRetryMs = Math.max(Number(retryAfterMs) || 0, 0);
+    const retrySeconds = Math.max(1, Math.ceil(safeRetryMs / 1000));
+    if (retrySeconds >= 60) {
+      const retryMinutes = Math.floor(retrySeconds / 60);
+      const retryRemainSeconds = retrySeconds % 60;
+      if (retryRemainSeconds > 0) {
+        return `Bạn đã thử sai quá nhiều lần. Vui lòng chờ ${retryMinutes} phút ${retryRemainSeconds} giây rồi thử lại.`;
+      }
+      return `Bạn đã thử sai quá nhiều lần. Vui lòng chờ ${retryMinutes} phút rồi thử lại.`;
+    }
+    return `Bạn đã thử sai quá nhiều lần. Vui lòng chờ ${retrySeconds} giây rồi thử lại.`;
+  };
+
+  const resolveRequestClientIp = (req) => {
+    const forwardedHeader = req && req.headers ? req.headers["x-forwarded-for"] : "";
+    const forwardedText = Array.isArray(forwardedHeader)
+      ? forwardedHeader.join(",")
+      : (forwardedHeader || "").toString();
+    const firstForwardedIp = forwardedText
+      .split(",")
+      .map((part) => part.trim())
+      .find(Boolean);
+    const directIp = req && req.ip ? String(req.ip).trim() : "";
+    const remoteIp =
+      req && req.socket && req.socket.remoteAddress
+        ? String(req.socket.remoteAddress).trim()
+        : "";
+    const rawIp = firstForwardedIp || directIp || remoteIp || "";
+    const sanitized = rawIp.replace(/^::ffff:/i, "").trim();
+    return sanitized || "unknown-ip";
+  };
+
+  const buildChapterUnlockAttemptKey = ({ req, chapterId }) => {
+    const safeChapterId = toSafeTimestampMs(chapterId);
+    const clientIp = resolveRequestClientIp(req);
+    const userAgent = (req && req.headers && req.headers["user-agent"]
+      ? String(req.headers["user-agent"])
+      : "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 220);
+    const rawKey = `${safeChapterId}|${clientIp}|${userAgent}`;
+    return crypto.createHash("sha256").update(rawKey).digest("hex");
+  };
+
+  const pruneChapterUnlockAttemptMap = (nowMs) => {
+    const safeNow = toSafeTimestampMs(nowMs) || Date.now();
+    chapterUnlockAttemptMap.forEach((entry, key) => {
+      if (!entry || typeof entry !== "object") {
+        chapterUnlockAttemptMap.delete(key);
+        return;
+      }
+
+      const blockedUntil = toSafeTimestampMs(entry.blockedUntil);
+      const lastAttemptAt = toSafeTimestampMs(entry.lastAttemptAt);
+      const failureCountRaw = Number(entry.failureCount);
+      const failureCount =
+        Number.isFinite(failureCountRaw) && failureCountRaw > 0 ? Math.floor(failureCountRaw) : 0;
+
+      const isExpired =
+        blockedUntil <= safeNow &&
+        (lastAttemptAt <= 0 || safeNow - lastAttemptAt > CHAPTER_UNLOCK_ATTEMPT_WINDOW_MS);
+      if (isExpired) {
+        chapterUnlockAttemptMap.delete(key);
+        return;
+      }
+
+      entry.blockedUntil = blockedUntil > 0 ? blockedUntil : 0;
+      entry.failureCount = failureCount;
+      entry.lastAttemptAt = lastAttemptAt > 0 ? lastAttemptAt : 0;
+      chapterUnlockAttemptMap.set(key, entry);
+    });
+
+    if (chapterUnlockAttemptMap.size <= CHAPTER_UNLOCK_ATTEMPT_MAP_MAX_SIZE) {
+      return;
+    }
+
+    const entries = Array.from(chapterUnlockAttemptMap.entries()).sort((left, right) => {
+      const leftTime = toSafeTimestampMs(left[1] && left[1].lastAttemptAt);
+      const rightTime = toSafeTimestampMs(right[1] && right[1].lastAttemptAt);
+      return leftTime - rightTime;
+    });
+    const overflow = chapterUnlockAttemptMap.size - CHAPTER_UNLOCK_ATTEMPT_MAP_MAX_SIZE;
+    for (let index = 0; index < overflow; index += 1) {
+      const key = entries[index] ? entries[index][0] : "";
+      if (!key) continue;
+      chapterUnlockAttemptMap.delete(key);
+    }
+  };
+
+  const getChapterUnlockThrottleState = ({ attemptKey, nowMs }) => {
+    const safeNow = toSafeTimestampMs(nowMs) || Date.now();
+    pruneChapterUnlockAttemptMap(safeNow);
+    const entry = chapterUnlockAttemptMap.get(attemptKey);
+    const blockedUntil = toSafeTimestampMs(entry && entry.blockedUntil);
+    if (blockedUntil > safeNow) {
+      return {
+        blocked: true,
+        retryAfterMs: blockedUntil - safeNow
+      };
+    }
+    return {
+      blocked: false,
+      retryAfterMs: 0
+    };
+  };
+
+  const registerChapterUnlockFailure = ({ attemptKey, nowMs }) => {
+    const safeNow = toSafeTimestampMs(nowMs) || Date.now();
+    pruneChapterUnlockAttemptMap(safeNow);
+
+    const existing = chapterUnlockAttemptMap.get(attemptKey);
+    const entry = existing && typeof existing === "object" ? existing : {};
+    const previousFailureCountRaw = Number(entry.failureCount);
+    const previousFailureCount =
+      Number.isFinite(previousFailureCountRaw) && previousFailureCountRaw > 0
+        ? Math.floor(previousFailureCountRaw)
+        : 0;
+    const failureCount = previousFailureCount + 1;
+
+    let retryAfterMs = 0;
+    if (failureCount >= CHAPTER_UNLOCK_ATTEMPT_SOFT_LIMIT) {
+      const lockLevel = failureCount - CHAPTER_UNLOCK_ATTEMPT_SOFT_LIMIT + 1;
+      retryAfterMs = Math.min(
+        CHAPTER_UNLOCK_ATTEMPT_MAX_DELAY_MS,
+        CHAPTER_UNLOCK_ATTEMPT_BASE_DELAY_MS * lockLevel
+      );
+    }
+
+    const blockedUntil = retryAfterMs > 0 ? safeNow + retryAfterMs : 0;
+    chapterUnlockAttemptMap.set(attemptKey, {
+      failureCount,
+      blockedUntil,
+      lastAttemptAt: safeNow
+    });
+
+    return {
+      failureCount,
+      retryAfterMs: retryAfterMs > 0 ? retryAfterMs : 0
+    };
+  };
+
+  const clearChapterUnlockFailures = (attemptKey) => {
+    if (!attemptKey) return;
+    chapterUnlockAttemptMap.delete(attemptKey);
   };
 
   const toSafeChapterViewCount = (value) => {
@@ -7316,6 +7549,8 @@ app.post(
             AND COALESCE(c.processing_state, '') <> 'processing'
             AND COALESCE(c.pages_prefix, '') <> ''
             AND COALESCE(c.pages_ext, '') <> ''
+            AND COALESCE(c.password_hash, '') = ''
+            AND COALESCE(c.password_salt, '') = ''
           ORDER BY RANDOM()
           LIMIT ${HOMEPAGE_RANDOM_SLICE_LIMIT}
         `
@@ -7951,6 +8186,10 @@ app.get(
           c.pages,
           c.date,
           c.group_name,
+          CASE
+            WHEN COALESCE(c.password_hash, '') <> '' AND COALESCE(c.password_salt, '') <> '' THEN true
+            ELSE false
+          END AS has_password,
           COALESCE(c.is_oneshot, false) as is_oneshot,
           COALESCE(v.view_count, 0) as view_count
         FROM chapters c
@@ -7972,6 +8211,7 @@ app.get(
     );
     const chapters = chapterRows.map((chapter) => ({
       ...chapter,
+      has_password: toBooleanFlag(chapter && chapter.has_password),
       is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot),
       view_count: toSafeChapterViewCount(chapter && chapter.view_count)
     }));
@@ -8139,11 +8379,27 @@ app.get(
     }
 
     const chapterRows = await dbAll(
-      "SELECT number, title, pages, date, group_name, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? ORDER BY number DESC",
+      `
+        SELECT
+          number,
+          title,
+          pages,
+          date,
+          group_name,
+          CASE
+            WHEN COALESCE(password_hash, '') <> '' AND COALESCE(password_salt, '') <> '' THEN true
+            ELSE false
+          END AS has_password,
+          COALESCE(is_oneshot, false) as is_oneshot
+        FROM chapters
+        WHERE manga_id = ?
+        ORDER BY number DESC
+      `,
       [mangaRow.id]
     );
     const chapters = chapterRows.map((chapter) => ({
       ...chapter,
+      has_password: toBooleanFlag(chapter && chapter.has_password),
       is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot)
     }));
     const latestChapterNumber =
@@ -8274,6 +8530,9 @@ app.get(
           c.pages_updated_at,
           c.processing_state,
           c.processing_error,
+          c.password_hash,
+          c.password_salt,
+          c.password_updated_at,
           COALESCE(c.is_oneshot, false) as is_oneshot,
           COALESCE(v.view_count, 0) as view_count
         FROM chapters c
@@ -8296,6 +8555,35 @@ app.get(
       });
     }
 
+    const unlockQuery = (req.query && req.query.unlock ? String(req.query.unlock) : "").trim().toLowerCase();
+    const chapterIsLocked = chapterHasPasswordProtection(chapterRow);
+    const chapterUnlocked = isChapterUnlockedForSession({
+      req,
+      chapterRow,
+      nowMs: Date.now()
+    });
+    const requiresChapterPassword = chapterIsLocked && !chapterUnlocked;
+    let chapterUnlockRetryAfterMs = 0;
+    if (requiresChapterPassword) {
+      const unlockAttemptKey = buildChapterUnlockAttemptKey({
+        req,
+        chapterId: chapterRow.id
+      });
+      const unlockThrottleState = getChapterUnlockThrottleState({
+        attemptKey: unlockAttemptKey,
+        nowMs: Date.now()
+      });
+      chapterUnlockRetryAfterMs = unlockThrottleState.blocked ? unlockThrottleState.retryAfterMs : 0;
+    }
+    const chapterUnlockError =
+      requiresChapterPassword && chapterUnlockRetryAfterMs > 0
+        ? formatUnlockThrottleMessage(chapterUnlockRetryAfterMs)
+        : requiresChapterPassword && unlockQuery === "failed"
+        ? "Mật khẩu chương không chính xác. Vui lòng thử lại."
+        : requiresChapterPassword && unlockQuery === "throttled"
+          ? "Bạn đã thử sai quá nhiều lần. Vui lòng chờ một lúc rồi thử lại."
+        : "";
+
     const chapterListRows = await dbAll(
       "SELECT number, title, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? ORDER BY number DESC",
       [mangaRow.id]
@@ -8317,44 +8605,47 @@ app.get(
     const pages = Array.from({ length: pageCount }, (_, index) => index + 1);
     const isOneshotChapter = toBooleanFlag(mangaRow.is_oneshot) && toBooleanFlag(chapterRow.is_oneshot);
     const nowMs = Date.now();
-    const chapterSessionMap = readChapterViewSessionMap(
-      req && req.session ? req.session[CHAPTER_VIEW_SESSION_KEY] : null,
-      nowMs
-    );
-    const chapterSessionKey = String(toSafeTimestampMs(chapterRow.id));
-    const existingChapterSession = chapterSessionMap[chapterSessionKey];
-    const hasExistingStartedAt =
-      existingChapterSession && toSafeTimestampMs(existingChapterSession.startedAt) > 0;
-    const startedAt = hasExistingStartedAt
-      ? toSafeTimestampMs(existingChapterSession.startedAt)
-      : nowMs;
-    const nonce =
-      existingChapterSession && existingChapterSession.nonce
-        ? String(existingChapterSession.nonce).trim().toLowerCase()
-        : crypto.randomBytes(18).toString("hex");
-    const countedAt =
-      existingChapterSession && toSafeTimestampMs(existingChapterSession.countedAt) > 0
-        ? toSafeTimestampMs(existingChapterSession.countedAt)
-        : 0;
-    chapterSessionMap[chapterSessionKey] = {
-      startedAt,
-      nonce,
-      countedAt
-    };
-    if (req && req.session) {
-      req.session[CHAPTER_VIEW_SESSION_KEY] = readChapterViewSessionMap(chapterSessionMap, nowMs);
+    let chapterViewTrackToken = "";
+    if (!requiresChapterPassword) {
+      const chapterSessionMap = readChapterViewSessionMap(
+        req && req.session ? req.session[CHAPTER_VIEW_SESSION_KEY] : null,
+        nowMs
+      );
+      const chapterSessionKey = String(toSafeTimestampMs(chapterRow.id));
+      const existingChapterSession = chapterSessionMap[chapterSessionKey];
+      const hasExistingStartedAt =
+        existingChapterSession && toSafeTimestampMs(existingChapterSession.startedAt) > 0;
+      const startedAt = hasExistingStartedAt
+        ? toSafeTimestampMs(existingChapterSession.startedAt)
+        : nowMs;
+      const nonce =
+        existingChapterSession && existingChapterSession.nonce
+          ? String(existingChapterSession.nonce).trim().toLowerCase()
+          : crypto.randomBytes(18).toString("hex");
+      const countedAt =
+        existingChapterSession && toSafeTimestampMs(existingChapterSession.countedAt) > 0
+          ? toSafeTimestampMs(existingChapterSession.countedAt)
+          : 0;
+      chapterSessionMap[chapterSessionKey] = {
+        startedAt,
+        nonce,
+        countedAt
+      };
+      if (req && req.session) {
+        req.session[CHAPTER_VIEW_SESSION_KEY] = readChapterViewSessionMap(chapterSessionMap, nowMs);
+      }
+      chapterViewTrackToken = buildChapterViewTrackToken({
+        chapterId: chapterRow.id,
+        startedAt,
+        nonce
+      });
     }
-    const chapterViewTrackToken = buildChapterViewTrackToken({
-      chapterId: chapterRow.id,
-      startedAt,
-      nonce
-    });
 
     const cdnBaseUrl = getB2Config().cdnBaseUrl;
     const processingState = (chapterRow.processing_state || "").toString().trim();
     const isProcessing = processingState === "processing";
     const canRenderPages = Boolean(
-      !isProcessing && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
+      !requiresChapterPassword && !isProcessing && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
     );
     const padLength = Math.max(3, String(pageCount).length);
     const pageUrls = canRenderPages
@@ -8366,11 +8657,22 @@ app.get(
       : [];
 
     let nextChapterPrefetchUrls = [];
-    if (nextChapter && cdnBaseUrl) {
+    if (!requiresChapterPassword && nextChapter && cdnBaseUrl) {
       const nextChapterNumber = Number(nextChapter.number);
       if (Number.isFinite(nextChapterNumber)) {
         const nextChapterRow = await dbGet(
-          "SELECT pages, pages_prefix, pages_ext, pages_updated_at, processing_state FROM chapters WHERE manga_id = ? AND number = ?",
+          `
+            SELECT
+              pages,
+              pages_prefix,
+              pages_ext,
+              pages_updated_at,
+              processing_state,
+              password_hash,
+              password_salt
+            FROM chapters
+            WHERE manga_id = ? AND number = ?
+          `,
           [mangaRow.id, nextChapterNumber]
         );
 
@@ -8381,6 +8683,7 @@ app.get(
         const canPrefetchNextChapter = Boolean(
           nextChapterRow &&
             nextProcessingState !== "processing" &&
+            !chapterHasPasswordProtection(nextChapterRow) &&
             nextChapterRow.pages_prefix &&
             nextChapterRow.pages_ext
         );
@@ -8405,19 +8708,32 @@ app.get(
       Number.isFinite(commentPageRaw) && commentPageRaw > 0 ? Math.floor(commentPageRaw) : 1;
     const shouldNoIndexChapterDetail = commentPage > 1;
 
-    const commentData = await getPaginatedCommentTree({
-      mangaId: mangaRow.id,
-      chapterNumber: isOneshotChapter ? null : chapterNumber,
-      page: commentPage,
-      perPage: 20,
-      session: req.session
-    });
-    const commentComposerEnabled = Boolean(
-      req &&
-        req.session &&
-        req.session.authUserId &&
-        String(req.session.authUserId).trim()
-    );
+    let commentData = {
+      comments: [],
+      count: 0,
+      pagination: {
+        page: 1,
+        perPage: 20,
+        totalPages: 1,
+        totalTopLevel: 0,
+        hasPrev: false,
+        hasNext: false,
+        prevPage: 1,
+        nextPage: 1
+      }
+    };
+    if (!requiresChapterPassword) {
+      commentData = await getPaginatedCommentTree({
+        mangaId: mangaRow.id,
+        chapterNumber: isOneshotChapter ? null : chapterNumber,
+        page: commentPage,
+        perPage: 20,
+        session: req.session
+      });
+    }
+    const commentComposerEnabled =
+      !requiresChapterPassword &&
+      Boolean(req && req.session && req.session.authUserId && String(req.session.authUserId).trim());
 
     const mappedManga = mapMangaRow(mangaRow);
     const chapterTitle = (chapterRow.title || "").toString().trim();
@@ -8495,6 +8811,12 @@ app.get(
       commentPagination: commentData.pagination,
       commentComposerEnabled,
       chapterViewTrackToken,
+      chapterLocked: requiresChapterPassword,
+      chapterUnlockError,
+      chapterUnlockRetryAfterMs,
+      chapterUnlockPath: `${chapterPath}/unlock`,
+      chapterPasswordMinLength: CHAPTER_PASSWORD_MIN_LENGTH,
+      chapterPasswordMaxLength: CHAPTER_PASSWORD_MAX_LENGTH,
       seo: buildSeoPayload(req, {
         title: chapterSeoTitle,
         titleAbsolute: true,
@@ -8507,6 +8829,141 @@ app.get(
         jsonLd: chapterSchemas
       })
     });
+  })
+);
+
+app.post(
+  "/manga/:slug/chapters/:number/unlock",
+  asyncHandler(async (req, res) => {
+    const chapterNumber = Number(req.params.number);
+    if (!Number.isFinite(chapterNumber)) {
+      if (wantsJson(req)) {
+        return res.status(400).json({ ok: false, error: "Số chương không hợp lệ." });
+      }
+      return res.status(404).render("not-found", {
+        title: "Không tìm thấy",
+        team,
+        seo: buildSeoPayload(req, {
+          title: "Không tìm thấy",
+          description: siteNotFoundDescription,
+          robots: SEO_ROBOTS_NOINDEX,
+          canonicalPath: ensureLeadingSlash(req.path || "/")
+        })
+      });
+    }
+
+    const requestedSlug = (req.params.slug || "").trim();
+    const chapterLookup = await dbGet(
+      `
+        SELECT
+          c.id,
+          c.number,
+          c.password_hash,
+          c.password_salt,
+          c.password_updated_at,
+          m.slug
+        FROM chapters c
+        JOIN manga m ON m.id = c.manga_id
+        WHERE m.slug = ?
+          AND COALESCE(m.is_hidden, 0) = 0
+          AND c.number = ?
+        LIMIT 1
+      `,
+      [requestedSlug, chapterNumber]
+    );
+
+    if (!chapterLookup || !chapterLookup.id) {
+      if (wantsJson(req)) {
+        return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+      }
+      return res.status(404).render("not-found", {
+        title: "Không tìm thấy",
+        team,
+        seo: buildSeoPayload(req, {
+          title: "Không tìm thấy",
+          description: siteNotFoundDescription,
+          robots: SEO_ROBOTS_NOINDEX,
+          canonicalPath: ensureLeadingSlash(req.path || "/")
+        })
+      });
+    }
+
+    const chapterPath = `/manga/${encodeURIComponent(
+      chapterLookup.slug
+    )}/chapters/${encodeURIComponent(String(chapterLookup.number))}`;
+
+    if (!chapterHasPasswordProtection(chapterLookup)) {
+      if (wantsJson(req)) {
+        return res.json({ ok: true, unlocked: true, redirectUrl: chapterPath });
+      }
+      return res.redirect(chapterPath);
+    }
+
+    const nowMs = Date.now();
+    const attemptKey = buildChapterUnlockAttemptKey({
+      req,
+      chapterId: chapterLookup.id
+    });
+    const throttleState = getChapterUnlockThrottleState({
+      attemptKey,
+      nowMs
+    });
+    if (throttleState.blocked) {
+      const throttleMessage = formatUnlockThrottleMessage(throttleState.retryAfterMs);
+      const retryAfterSeconds = Math.max(1, Math.ceil(throttleState.retryAfterMs / 1000));
+      if (wantsJson(req)) {
+        res.set("Retry-After", String(retryAfterSeconds));
+        return res.status(429).json({
+          ok: false,
+          error: throttleMessage,
+          retryAfterMs: throttleState.retryAfterMs
+        });
+      }
+      return res.redirect(`${chapterPath}?unlock=throttled`);
+    }
+
+    const passwordInput = normalizeChapterPasswordInput(req.body && req.body.chapter_password);
+    if (!passwordInput) {
+      if (wantsJson(req)) {
+        return res.status(400).json({ ok: false, error: "Vui lòng nhập mật khẩu chương." });
+      }
+      return res.redirect(`${chapterPath}?unlock=failed`);
+    }
+
+    const verified = verifyChapterPasswordHash({
+      passwordInput,
+      passwordHash: chapterLookup.password_hash,
+      passwordSalt: chapterLookup.password_salt
+    });
+    if (!verified) {
+      const failureState = registerChapterUnlockFailure({
+        attemptKey,
+        nowMs: Date.now()
+      });
+      const shouldThrottle = failureState.retryAfterMs > 0;
+      const failureMessage = shouldThrottle
+        ? formatUnlockThrottleMessage(failureState.retryAfterMs)
+        : "Mật khẩu chương không chính xác.";
+      if (wantsJson(req)) {
+        if (shouldThrottle) {
+          const retryAfterSeconds = Math.max(1, Math.ceil(failureState.retryAfterMs / 1000));
+          res.set("Retry-After", String(retryAfterSeconds));
+        }
+        return res.status(shouldThrottle ? 429 : 403).json({
+          ok: false,
+          error: failureMessage,
+          retryAfterMs: shouldThrottle ? failureState.retryAfterMs : 0
+        });
+      }
+      return res.redirect(shouldThrottle ? `${chapterPath}?unlock=throttled` : `${chapterPath}?unlock=failed`);
+    }
+
+    clearChapterUnlockFailures(attemptKey);
+    markChapterUnlockedForSession({ req, chapterRow: chapterLookup, nowMs: Date.now() });
+    if (wantsJson(req)) {
+      return res.json({ ok: true, unlocked: true, redirectUrl: chapterPath });
+    }
+    return res.redirect(chapterPath);
   })
 );
 
@@ -8530,6 +8987,9 @@ app.post(
         SELECT
           c.id,
           c.pages,
+          c.password_hash,
+          c.password_salt,
+          c.password_updated_at,
           COALESCE(v.view_count, 0) as view_count
         FROM chapters c
         JOIN manga m ON m.id = c.manga_id
@@ -8544,6 +9004,10 @@ app.post(
 
     if (!chapterLookup || !chapterLookup.id) {
       return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+    }
+
+    if (!isChapterUnlockedForSession({ req, chapterRow: chapterLookup, nowMs: Date.now() })) {
+      return res.status(403).json({ ok: false, error: "Chương này đang được khóa bằng mật khẩu." });
     }
 
     const trackToken = (req.body && req.body.trackToken ? String(req.body.trackToken).trim() : "");

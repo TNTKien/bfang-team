@@ -91,6 +91,27 @@
                 <input type="text" name="title" autocomplete="off" />
               </label>
 
+              <label class="admin-field admin-field--wide">
+                <span class="admin-checkbox-inline">
+                  <input type="checkbox" name="chapter_password_enabled" value="1" data-chapter-password-toggle />
+                  <span>Cài mật khẩu chương</span>
+                </span>
+                <span>Mật khẩu chương</span>
+                <input
+                  type="password"
+                  name="chapter_password"
+                  minlength="<%= chapterPasswordMinLength %>"
+                  maxlength="<%= chapterPasswordMaxLength %>"
+                  autocomplete="new-password"
+                  spellcheck="false"
+                  data-chapter-password-input
+                  disabled
+                />
+                <span class="admin-sub">
+                  Mặc định tắt. Khi tích "Cài mật khẩu chương", ô nhập mật khẩu sẽ được bật để bạn đặt mật khẩu cho chương.
+                </span>
+              </label>
+
               <label
                 class="admin-field admin-field--wide admin-team-selector"
                 data-team-group-picker
@@ -162,5 +183,31 @@
         </section>
       </main>
     </div>
+    <script nonce="<%= cspNonce || "" %>">
+      (() => {
+        const form = document.querySelector("[data-chapter-new-form]");
+        if (!(form instanceof HTMLFormElement)) return;
+
+        const toggle = form.querySelector("[data-chapter-password-toggle]");
+        const input = form.querySelector("[data-chapter-password-input]");
+        if (!(toggle instanceof HTMLInputElement) || !(input instanceof HTMLInputElement)) return;
+        const initialValue = input.value || "";
+
+        const syncPasswordInputState = () => {
+          const enabled = Boolean(toggle.checked);
+          input.disabled = !enabled;
+          input.required = enabled;
+          if (enabled && !input.value && initialValue) {
+            input.value = initialValue;
+          }
+          if (!enabled) {
+            input.value = "";
+          }
+        };
+
+        toggle.addEventListener("change", syncPasswordInputState);
+        syncPasswordInputState();
+      })();
+    </script>
   </body>
 </html>

@@ -27,6 +27,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     createAdminJob,
     createChapterDraft,
     createCoverTempToken,
+    crypto,
     dbAll,
     dbGet,
     dbRun,
@@ -74,7 +75,11 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     normalizeAdminJobError,
     normalizeAvatarUrl,
     normalizeBadgeCode,
+    CHAPTER_PASSWORD_MAX_LENGTH,
+    CHAPTER_PASSWORD_MIN_LENGTH,
+    buildChapterPasswordHashRecord,
     normalizeForbiddenWordList,
+    normalizeChapterPasswordInput,
     normalizeGenreName,
     normalizeHexColor,
     normalizeHomepageRow,
@@ -455,6 +460,116 @@ const listApprovedTeamsByGroupName = async ({ groupName, dbAllFn = dbAll }) => {
   });
 
   return ordered;
+};
+
+const buildChapterPasswordLengthError = () =>
+  `Mật khẩu chương phải từ ${CHAPTER_PASSWORD_MIN_LENGTH} đến ${CHAPTER_PASSWORD_MAX_LENGTH} ký tự.`;
+
+const parseChapterPasswordUpdatePayload = ({ reqBody, allowKeep, hasExistingPassword }) => {
+  const body = reqBody && typeof reqBody === "object" ? reqBody : {};
+  const requestedMode = (body.chapter_password_mode || "").toString().trim().toLowerCase();
+  const wantsPasswordEnabled = isTruthyInput(body.chapter_password_enabled);
+  const passwordInput = normalizeChapterPasswordInput(body.chapter_password);
+  const prefillTokenInput = normalizeChapterPasswordInput(body.chapter_password_prefill_token);
+  const hasExisting = Boolean(hasExistingPassword);
+
+  const shouldKeepExistingByPrefillToken =
+    Boolean(allowKeep) &&
+    hasExisting &&
+    wantsPasswordEnabled &&
+    Boolean(passwordInput) &&
+    Boolean(prefillTokenInput) &&
+    safeCompareText(passwordInput, prefillTokenInput);
+
+  if (shouldKeepExistingByPrefillToken) {
+    return {
+      ok: true,
+      mode: "keep",
+      shouldUpdate: false,
+      passwordHash: null,
+      passwordSalt: null,
+      passwordUpdatedAt: null
+    };
+  }
+
+  if (wantsPasswordEnabled || requestedMode === "set") {
+    if (!passwordInput) {
+      return {
+        ok: false,
+        error: "Bạn đã bật Cài mật khẩu chương nhưng chưa nhập mật khẩu."
+      };
+    }
+
+    const hashRecord = buildChapterPasswordHashRecord(passwordInput);
+    if (!hashRecord) {
+      return {
+        ok: false,
+        error: buildChapterPasswordLengthError()
+      };
+    }
+
+    return {
+      ok: true,
+      mode: "set",
+      shouldUpdate: true,
+      passwordHash: hashRecord.passwordHash,
+      passwordSalt: hashRecord.passwordSalt,
+      passwordUpdatedAt: hashRecord.passwordUpdatedAt
+    };
+  }
+
+  if (requestedMode === "keep" && allowKeep && !passwordInput) {
+    return {
+      ok: true,
+      mode: "keep",
+      shouldUpdate: false,
+      passwordHash: null,
+      passwordSalt: null,
+      passwordUpdatedAt: null
+    };
+  }
+
+  if (requestedMode === "clear") {
+    return {
+      ok: true,
+      mode: "clear",
+      shouldUpdate: true,
+      passwordHash: null,
+      passwordSalt: null,
+      passwordUpdatedAt: null
+    };
+  }
+
+  if (allowKeep) {
+    if (hasExisting) {
+      return {
+        ok: true,
+        mode: "clear",
+        shouldUpdate: true,
+        passwordHash: null,
+        passwordSalt: null,
+        passwordUpdatedAt: null
+      };
+    }
+
+    return {
+      ok: true,
+      mode: "keep",
+      shouldUpdate: false,
+      passwordHash: null,
+      passwordSalt: null,
+      passwordUpdatedAt: null
+    };
+  }
+
+  return {
+    ok: true,
+    mode: "clear",
+    shouldUpdate: true,
+    passwordHash: null,
+    passwordSalt: null,
+    passwordUpdatedAt: null
+  };
 };
 
 const buildGroupNameFromApprovedTeams = (teams) => {
@@ -1867,12 +1982,31 @@ app.get(
     }
 
     const chapterRows = await dbAll(
-      "SELECT id, number, title, pages, date, group_name, COALESCE(is_oneshot, false) as is_oneshot, processing_state, processing_error FROM chapters WHERE manga_id = ? ORDER BY number DESC",
+      `
+        SELECT
+          id,
+          number,
+          title,
+          pages,
+          date,
+          group_name,
+          COALESCE(is_oneshot, false) as is_oneshot,
+          processing_state,
+          processing_error,
+          CASE
+            WHEN COALESCE(password_hash, '') <> '' AND COALESCE(password_salt, '') <> '' THEN true
+            ELSE false
+          END AS has_password
+        FROM chapters
+        WHERE manga_id = ?
+        ORDER BY number DESC
+      `,
       [mangaRow.id]
     );
     const chapters = chapterRows.map((chapter) => ({
       ...chapter,
-      is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot)
+      is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot),
+      has_password: toBooleanFlag(chapter && chapter.has_password)
     }));
     const isOneshotManga = toBooleanFlag(mangaRow.is_oneshot);
     const canCreateChapterByPermission = !teamManageScope || teamScopeHasPermission(teamManageScope, "canAddChapter");
@@ -2195,7 +2329,9 @@ app.get(
       b2Ready,
       draftToken: draft ? draft.token : "",
       draftTtlMinutes,
-      draftTtlLabel
+      draftTtlLabel,
+      chapterPasswordMinLength: CHAPTER_PASSWORD_MIN_LENGTH,
+      chapterPasswordMaxLength: CHAPTER_PASSWORD_MAX_LENGTH
     });
   })
 );
@@ -2462,6 +2598,14 @@ app.post(
       return res.status(400).send(groupSelection.error || "Thiếu thông tin chương");
     }
     const groupName = groupSelection.groupName;
+    const chapterPasswordPayload = parseChapterPasswordUpdatePayload({
+      reqBody: req.body,
+      allowKeep: false,
+      hasExistingPassword: false
+    });
+    if (!chapterPasswordPayload.ok) {
+      return res.status(400).send(chapterPasswordPayload.error || buildChapterPasswordLengthError());
+    }
     const date = buildChapterTimestampIso();
 
     const prefix = (draft.pages_prefix || "").toString().trim();
@@ -2482,13 +2626,16 @@ app.post(
         date,
         group_name,
         is_oneshot,
+        password_hash,
+        password_salt,
+        password_updated_at,
         processing_state,
         processing_error,
         processing_draft_token,
         processing_pages_json,
         processing_updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         mangaRow.id,
@@ -2498,6 +2645,9 @@ app.post(
         date,
         groupName,
         isChapterOneshot,
+        chapterPasswordPayload.passwordHash,
+        chapterPasswordPayload.passwordSalt,
+        chapterPasswordPayload.passwordUpdatedAt,
         "processing",
         "",
         token,
@@ -2566,6 +2716,14 @@ app.post(
       return res.status(400).send(groupSelection.error || "Thiếu thông tin chương");
     }
     const groupName = groupSelection.groupName;
+    const chapterPasswordPayload = parseChapterPasswordUpdatePayload({
+      reqBody: req.body,
+      allowKeep: false,
+      hasExistingPassword: false
+    });
+    if (!chapterPasswordPayload.ok) {
+      return res.status(400).send(chapterPasswordPayload.error || buildChapterPasswordLengthError());
+    }
     const pages = Math.max(Number(req.body.pages) || 0, 1);
     const date = buildChapterTimestampIso(req.body.date);
 
@@ -2583,10 +2741,32 @@ app.post(
 
     await dbRun(
       `
-      INSERT INTO chapters (manga_id, number, title, pages, date, group_name, is_oneshot)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO chapters (
+        manga_id,
+        number,
+        title,
+        pages,
+        date,
+        group_name,
+        is_oneshot,
+        password_hash,
+        password_salt,
+        password_updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-      [mangaRow.id, number, title, pages, date, groupName, isChapterOneshot]
+      [
+        mangaRow.id,
+        number,
+        title,
+        pages,
+        date,
+        groupName,
+        isChapterOneshot,
+        chapterPasswordPayload.passwordHash,
+        chapterPasswordPayload.passwordSalt,
+        chapterPasswordPayload.passwordUpdatedAt
+      ]
     );
 
     await markMangaUpdatedAtForNewChapter(mangaRow.id, date);
@@ -2636,6 +2816,9 @@ app.get(
         c.is_oneshot,
         c.date,
         c.group_name,
+        c.password_hash,
+        c.password_salt,
+        c.password_updated_at,
         m.title as manga_title,
         m.slug as manga_slug
       FROM chapters c
@@ -2695,6 +2878,13 @@ app.get(
       (teamManageScope && teamManageScope.teamName
         ? (teamManageScope.teamName || "").toString().replace(/\s+/g, " ").trim()
         : "");
+    const hasExistingChapterPassword = Boolean(
+      (chapterRow.password_hash || "").toString().trim() &&
+        (chapterRow.password_salt || "").toString().trim()
+    );
+    const chapterPasswordPrefillToken = hasExistingChapterPassword
+      ? `__chapter_password_prefill__${crypto.randomBytes(12).toString("hex")}`
+      : "";
 
     const existingPageIds = [];
     const existingPages = [];
@@ -2737,8 +2927,12 @@ app.get(
         title: chapterRow.title,
         pages: chapterRow.pages,
         date: chapterRow.date,
-        groupName: chapterGroupName
-      }
+        groupName: chapterGroupName,
+        hasPassword: hasExistingChapterPassword
+      },
+      chapterPasswordPrefillToken,
+      chapterPasswordMinLength: CHAPTER_PASSWORD_MIN_LENGTH,
+      chapterPasswordMaxLength: CHAPTER_PASSWORD_MAX_LENGTH
     });
   })
 );
@@ -2763,7 +2957,19 @@ app.post(
     }
 
     const chapterRow = await dbGet(
-      "SELECT id, manga_id, number, pages, pages_prefix FROM chapters WHERE id = ?",
+      `
+        SELECT
+          id,
+          manga_id,
+          number,
+          pages,
+          pages_prefix,
+          password_hash,
+          password_salt,
+          password_updated_at
+        FROM chapters
+        WHERE id = ?
+      `,
       [Math.floor(chapterId)]
     );
     if (!chapterRow) {
@@ -2806,6 +3012,18 @@ app.post(
       return res.status(400).send(groupSelection.error || "Thiếu thông tin chương");
     }
     const groupName = groupSelection.groupName;
+    const hasExistingChapterPassword = Boolean(
+      (chapterRow.password_hash || "").toString().trim() &&
+        (chapterRow.password_salt || "").toString().trim()
+    );
+    const chapterPasswordPayload = parseChapterPasswordUpdatePayload({
+      reqBody: req.body,
+      allowKeep: true,
+      hasExistingPassword: hasExistingChapterPassword
+    });
+    if (!chapterPasswordPayload.ok) {
+      return res.status(400).send(chapterPasswordPayload.error || buildChapterPasswordLengthError());
+    }
 
     const token = (req.body.draft_token || "").toString().trim();
     if (!isChapterDraftTokenValid(token)) {
@@ -2854,12 +3072,23 @@ app.post(
         );
       }
 
-      await dbRun("UPDATE chapters SET number = ?, title = ?, group_name = ? WHERE id = ?", [
-        nextNumber,
-        title,
-        groupName,
-        chapterRow.id
-      ]);
+      const chapterUpdateSql = [
+        "UPDATE chapters",
+        "SET number = ?, title = ?, group_name = ?"
+      ];
+      const chapterUpdateParams = [nextNumber, title, groupName];
+      if (chapterPasswordPayload.shouldUpdate) {
+        chapterUpdateSql.push(", password_hash = ?, password_salt = ?, password_updated_at = ?");
+        chapterUpdateParams.push(
+          chapterPasswordPayload.passwordHash,
+          chapterPasswordPayload.passwordSalt,
+          chapterPasswordPayload.passwordUpdatedAt
+        );
+      }
+      chapterUpdateSql.push("WHERE id = ?");
+      chapterUpdateParams.push(chapterRow.id);
+
+      await dbRun(chapterUpdateSql.join(" "), chapterUpdateParams);
       return res.redirect(`/admin/manga/${chapterRow.manga_id}/chapters`);
     }
 
@@ -2881,34 +3110,42 @@ app.post(
     }
 
     const processingStamp = Date.now();
-    await dbRun(
-      `
-      UPDATE chapters
-      SET
-        number = ?,
-        title = ?,
-        group_name = ?,
-        pages = ?,
-        processing_state = ?,
-        processing_error = ?,
-        processing_draft_token = ?,
-        processing_pages_json = ?,
-        processing_updated_at = ?
-      WHERE id = ?
-    `,
-      [
-        nextNumber,
-        title,
-        groupName,
-        pageIds.length,
-        "processing",
-        "",
-        token,
-        JSON.stringify(pageIds),
-        processingStamp,
-        chapterRow.id
-      ]
-    );
+    const processingUpdateSql = [
+      "UPDATE chapters",
+      "SET",
+      "  number = ?,",
+      "  title = ?,",
+      "  group_name = ?,",
+      "  pages = ?,",
+      "  processing_state = ?,",
+      "  processing_error = ?,",
+      "  processing_draft_token = ?,",
+      "  processing_pages_json = ?,",
+      "  processing_updated_at = ?"
+    ];
+    const processingUpdateParams = [
+      nextNumber,
+      title,
+      groupName,
+      pageIds.length,
+      "processing",
+      "",
+      token,
+      JSON.stringify(pageIds),
+      processingStamp
+    ];
+    if (chapterPasswordPayload.shouldUpdate) {
+      processingUpdateSql.push(", password_hash = ?, password_salt = ?, password_updated_at = ?");
+      processingUpdateParams.push(
+        chapterPasswordPayload.passwordHash,
+        chapterPasswordPayload.passwordSalt,
+        chapterPasswordPayload.passwordUpdatedAt
+      );
+    }
+    processingUpdateSql.push("WHERE id = ?");
+    processingUpdateParams.push(chapterRow.id);
+
+    await dbRun(processingUpdateSql.join("\n"), processingUpdateParams);
 
     enqueueChapterProcessing(chapterRow.id);
     return res.redirect(`/admin/manga/${chapterRow.manga_id}/chapters?status=processing`);

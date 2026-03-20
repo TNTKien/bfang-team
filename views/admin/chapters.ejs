@@ -156,6 +156,9 @@
                             >
                               <%= chipText %>
                             </span>
+                            <% if (chapter.has_password) { %>
+                              <span class="chip chip--warn">Khóa mật khẩu</span>
+                            <% } %>
                           </div>
                           <% const chapterTitle = (chapter.title || "").toString().trim(); %>
                           <% if (chapterTitle) { %>

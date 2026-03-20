@@ -121,6 +121,37 @@
                 <input type="text" name="title" value="<%= chapter.title %>" autocomplete="off" />
               </label>
 
+              <label class="admin-field admin-field--wide">
+                <span class="admin-checkbox-inline">
+                  <input
+                    type="checkbox"
+                    name="chapter_password_enabled"
+                    value="1"
+                    data-chapter-password-toggle
+                    <%= chapter.hasPassword ? "checked" : "" %>
+                  />
+                  <span>Cài mật khẩu chương</span>
+                </span>
+                <span>Mật khẩu chương</span>
+                <input type="hidden" name="chapter_password_prefill_token" value="<%= chapterPasswordPrefillToken || "" %>" />
+                <input
+                  type="password"
+                  name="chapter_password"
+                  minlength="<%= chapterPasswordMinLength %>"
+                  maxlength="<%= chapterPasswordMaxLength %>"
+                  autocomplete="new-password"
+                  spellcheck="false"
+                  data-chapter-password-input
+                  value="<%= chapterPasswordPrefillToken || "" %>"
+                  disabled
+                />
+                <% if (chapter.hasPassword) { %>
+                  <span class="admin-sub">Chương đang có mật khẩu. Mặc định để nguyên; chỉ khi tích "Cài mật khẩu chương" mới thay đổi mật khẩu.</span>
+                <% } else { %>
+                  <span class="admin-sub">Chương hiện chưa có mật khẩu. Tích "Cài mật khẩu chương" để bật ô nhập và đặt mật khẩu mới.</span>
+                <% } %>
+              </label>
+
               <label
                 class="admin-field admin-field--wide admin-team-selector"
                 data-team-group-picker
@@ -226,5 +257,31 @@
         </dialog>
       </main>
     </div>
+    <script nonce="<%= cspNonce || "" %>">
+      (() => {
+        const form = document.querySelector("[data-chapter-new-form]");
+        if (!(form instanceof HTMLFormElement)) return;
+
+        const toggle = form.querySelector("[data-chapter-password-toggle]");
+        const input = form.querySelector("[data-chapter-password-input]");
+        if (!(toggle instanceof HTMLInputElement) || !(input instanceof HTMLInputElement)) return;
+        const initialValue = input.value || "";
+
+        const syncPasswordInputState = () => {
+          const enabled = Boolean(toggle.checked);
+          input.disabled = !enabled;
+          input.required = enabled;
+          if (enabled && !input.value && initialValue) {
+            input.value = initialValue;
+          }
+          if (!enabled) {
+            input.value = "";
+          }
+        };
+
+        toggle.addEventListener("change", syncPasswordInputState);
+        syncPasswordInputState();
+      })();
+    </script>
   </body>
 </html>

@@ -93,6 +93,72 @@ const safeCompareText = (leftValue, rightValue) => {
   return crypto.timingSafeEqual(left, right);
 };
 
+const CHAPTER_PASSWORD_MIN_LENGTH = 4;
+const CHAPTER_PASSWORD_MAX_LENGTH = 128;
+const CHAPTER_PASSWORD_HASH_VERSION = "scrypt-v1";
+const CHAPTER_PASSWORD_SALT_BYTES = 16;
+const CHAPTER_PASSWORD_KEY_LENGTH = 64;
+
+const normalizeChapterPasswordInput = (value) => {
+  const raw = value == null ? "" : String(value);
+  return raw.trim();
+};
+
+const isChapterPasswordLengthValid = (value) => {
+  const text = normalizeChapterPasswordInput(value);
+  const length = text.length;
+  return length >= CHAPTER_PASSWORD_MIN_LENGTH && length <= CHAPTER_PASSWORD_MAX_LENGTH;
+};
+
+const deriveChapterPasswordDigestHex = (passwordInput, saltHexInput) => {
+  const password = normalizeChapterPasswordInput(passwordInput);
+  const saltHex = (saltHexInput || "").toString().trim().toLowerCase();
+  if (!password) return "";
+  if (!/^[a-f0-9]{16,256}$/.test(saltHex)) return "";
+
+  const digest = crypto.scryptSync(
+    password,
+    Buffer.from(saltHex, "hex"),
+    CHAPTER_PASSWORD_KEY_LENGTH
+  );
+  return digest.toString("hex");
+};
+
+const buildChapterPasswordHashRecord = (passwordInput) => {
+  const password = normalizeChapterPasswordInput(passwordInput);
+  if (!isChapterPasswordLengthValid(password)) return null;
+
+  const salt = crypto.randomBytes(CHAPTER_PASSWORD_SALT_BYTES).toString("hex");
+  const digest = deriveChapterPasswordDigestHex(password, salt);
+  if (!digest) return null;
+
+  return {
+    passwordHash: `${CHAPTER_PASSWORD_HASH_VERSION}$${digest}`,
+    passwordSalt: salt,
+    passwordUpdatedAt: Date.now()
+  };
+};
+
+const verifyChapterPasswordHash = ({ passwordInput, passwordHash, passwordSalt }) => {
+  const password = normalizeChapterPasswordInput(passwordInput);
+  if (!isChapterPasswordLengthValid(password)) return false;
+
+  const hashText = (passwordHash || "").toString().trim().toLowerCase();
+  const saltText = (passwordSalt || "").toString().trim().toLowerCase();
+  if (!hashText || !saltText) return false;
+
+  const hashParts = hashText.split("$");
+  if (hashParts.length !== 2) return false;
+  if (hashParts[0] !== CHAPTER_PASSWORD_HASH_VERSION) return false;
+
+  const digestHex = hashParts[1] || "";
+  if (!/^[a-f0-9]{128}$/.test(digestHex)) return false;
+
+  const expectedDigest = deriveChapterPasswordDigestHex(password, saltText);
+  if (!expectedDigest) return false;
+  return safeCompareText(expectedDigest, digestHex);
+};
+
 const SEO_SITE_NAME = siteBrandingConfig.siteName || "BFANG Team";
 const SEO_DEFAULT_DESCRIPTION =
   siteSeoConfig.defaultDescription ||
@@ -3820,6 +3886,8 @@ const appContainer = {
   AUTH_GOOGLE_STRATEGY,
   COMMENT_LINK_LABEL_FETCH_LIMIT,
   COMMENT_MAX_LENGTH,
+  CHAPTER_PASSWORD_MAX_LENGTH,
+  CHAPTER_PASSWORD_MIN_LENGTH,
   FORUM_COMMENT_MIN_LENGTH,
   FORUM_POST_MIN_LENGTH,
   FORUM_POST_TITLE_MIN_LENGTH,
@@ -3835,6 +3903,7 @@ const appContainer = {
   buildAvatarUrlFromAuthUser,
   buildCommentAuthorFromAuthUser,
   buildCommentChapterContext,
+  buildChapterPasswordHashRecord,
   buildCommentMentionsForContent,
   buildHomepageNotices,
   buildOAuthCallbackUrl,
@@ -3997,6 +4066,7 @@ const appContainer = {
   markMangaUpdatedAtForNewChapter,
   normalizeAdminJobError,
   normalizeBadgeCode,
+  normalizeChapterPasswordInput,
   normalizeForbiddenWordList,
   normalizeGenreName,
   normalizeHexColor,
@@ -4015,6 +4085,7 @@ const appContainer = {
   uploadChapterPage,
   uploadChapterPages,
   uploadCover,
+  verifyChapterPasswordHash,
   writeNotificationStreamEvent,
 };
 

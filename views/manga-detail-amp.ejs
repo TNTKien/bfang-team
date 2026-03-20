@@ -867,7 +867,12 @@
               <li>
                 <a class="chapter-link" href="/manga/<%= encodeURIComponent(manga.slug) %>/chapters/<%= encodeURIComponent(String(chapter.number)) %>">
                   <div class="chapter-top">
-                    <div class="chapter-main"><%= chapterLabel %><%= chapterTitle ? ` - ${chapterTitle}` : "" %></div>
+                    <div class="chapter-main">
+                      <%= chapterLabel %><%= chapterTitle ? ` - ${chapterTitle}` : "" %>
+                      <% if (chapter && chapter.has_password) { %>
+                        <span title="Chương có mật khẩu" aria-label="Chương có mật khẩu">&#128274;</span>
+                      <% } %>
+                    </div>
                     <div class="chapter-date"><%= chapter && chapter.date ? formatDate(chapter.date) : "" %></div>
                   </div>
                   <% if (chapterGroups.length) { %>

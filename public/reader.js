@@ -8,6 +8,247 @@ const READER_JUMP_COMMENTS_EVENT = "bfang:reader-jump-comments";
 const READER_CANCEL_JUMP_COMMENTS_EVENT = "bfang:reader-cancel-jump-comments";
 const READER_COMMENTS_LAYOUT_EVENT = "bfang:reader-comments-layout";
 
+(() => {
+  const unlockForm = document.querySelector("[data-chapter-unlock-form]");
+  if (!(unlockForm instanceof HTMLFormElement)) return;
+  if (typeof window.fetch !== "function") return;
+
+  const passwordInput = unlockForm.querySelector("[data-chapter-unlock-input]");
+  const submitButton = unlockForm.querySelector("[data-chapter-unlock-submit]");
+  const errorEl = unlockForm.querySelector("[data-chapter-unlock-error]");
+  const countdownEl = unlockForm.querySelector("[data-chapter-unlock-countdown]");
+  let lockUntilMs = 0;
+  let lockTimerId = 0;
+
+  const parsePositiveNumber = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return Math.floor(parsed);
+  };
+
+  const formatLockDurationLabel = (remainingMs) => {
+    const totalSeconds = Math.max(1, Math.ceil(Math.max(Number(remainingMs) || 0, 0) / 1000));
+    if (totalSeconds >= 60) {
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${minutes}:${String(seconds).padStart(2, "0")}`;
+    }
+    return `${totalSeconds}s`;
+  };
+
+  const clearLockTimer = () => {
+    if (!lockTimerId) return;
+    window.clearInterval(lockTimerId);
+    lockTimerId = 0;
+  };
+
+  const getRemainingLockMs = () => {
+    if (lockUntilMs <= 0) return 0;
+    return Math.max(0, lockUntilMs - Date.now());
+  };
+
+  const isLocked = () => getRemainingLockMs() > 0;
+
+  const setCountdownMessage = (message) => {
+    if (!(countdownEl instanceof HTMLElement)) return;
+    const text = (message || "").toString().trim();
+    countdownEl.textContent = text;
+    countdownEl.hidden = !text;
+  };
+
+  const applyControlState = () => {
+    const isSubmitting = unlockForm.dataset.unlockSubmitting === "1";
+    const remainingLockMs = getRemainingLockMs();
+    const hasLock = remainingLockMs > 0;
+
+    unlockForm.classList.toggle("is-locked", hasLock);
+
+    if (passwordInput instanceof HTMLInputElement) {
+      passwordInput.disabled = isSubmitting || hasLock;
+    }
+
+    if (submitButton instanceof HTMLButtonElement) {
+      submitButton.disabled = isSubmitting || hasLock;
+      if (isSubmitting) {
+        submitButton.textContent = "Đang kiểm tra...";
+      } else if (hasLock) {
+        submitButton.textContent = `Thử lại ${formatLockDurationLabel(remainingLockMs)}`;
+      } else {
+        submitButton.textContent = "Mở khóa";
+      }
+    }
+  };
+
+  const stopLockCountdown = () => {
+    lockUntilMs = 0;
+    clearLockTimer();
+    setCountdownMessage("");
+    setError("");
+    applyControlState();
+  };
+
+  const tickLockCountdown = () => {
+    const remainingLockMs = getRemainingLockMs();
+    if (remainingLockMs <= 0) {
+      stopLockCountdown();
+      return;
+    }
+    setCountdownMessage(`Bạn có thể thử lại sau ${formatLockDurationLabel(remainingLockMs)}.`);
+    applyControlState();
+  };
+
+  const startLockCountdown = (retryAfterMs, message) => {
+    const parsedRetryAfterMs = parsePositiveNumber(retryAfterMs);
+    const safeRetryAfterMs = parsedRetryAfterMs > 0 ? parsedRetryAfterMs : 15 * 1000;
+    lockUntilMs = Date.now() + safeRetryAfterMs;
+    clearLockTimer();
+    if (message) {
+      setError(message);
+    }
+    tickLockCountdown();
+    lockTimerId = window.setInterval(tickLockCountdown, 250);
+  };
+
+  const parseRetryAfterMsFromResponse = (response, data) => {
+    const bodyRetryAfterMs = parsePositiveNumber(data && data.retryAfterMs);
+    if (bodyRetryAfterMs > 0) return bodyRetryAfterMs;
+
+    if (response && response.headers) {
+      const retryAfterHeader = response.headers.get("Retry-After");
+      const retryAfterSeconds = Number(retryAfterHeader);
+      if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+        return Math.floor(retryAfterSeconds * 1000);
+      }
+    }
+
+    return 0;
+  };
+
+  const showErrorToast = (message) => {
+    const text = (message || "").toString().trim();
+    if (!text) return;
+
+    if (window.BfangToast && typeof window.BfangToast.error === "function") {
+      window.BfangToast.error(text, {
+        dedupe: false,
+        duration: 5600
+      });
+      return;
+    }
+
+    if (typeof window.CustomEvent === "function") {
+      window.dispatchEvent(
+        new CustomEvent("bfang:toast", {
+          detail: {
+            message: text,
+            tone: "error",
+            dedupe: false,
+            duration: 5600
+          }
+        })
+      );
+    }
+  };
+
+  const setError = (message) => {
+    if (!(errorEl instanceof HTMLElement)) return;
+    const text = (message || "").toString().trim();
+    errorEl.textContent = text;
+    errorEl.hidden = !text;
+  };
+
+  const initialRetryAfterMs = parsePositiveNumber(unlockForm.dataset.chapterUnlockRetryAfterMs);
+  if (initialRetryAfterMs > 0) {
+    const initialLockMessage =
+      errorEl instanceof HTMLElement ? String(errorEl.textContent || "").trim() : "";
+    startLockCountdown(initialRetryAfterMs, initialLockMessage);
+  } else {
+    applyControlState();
+  }
+
+  unlockForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    if (unlockForm.dataset.unlockSubmitting === "1") {
+      return;
+    }
+
+    if (isLocked()) {
+      const message = `Bạn cần chờ ${formatLockDurationLabel(getRemainingLockMs())} trước khi thử lại.`;
+      setError(message);
+      showErrorToast(message);
+      tickLockCountdown();
+      return;
+    }
+
+    const passwordValue =
+      passwordInput instanceof HTMLInputElement ? String(passwordInput.value || "").trim() : "";
+    if (!passwordValue) {
+      const message = "Vui lòng nhập mật khẩu chương.";
+      setError(message);
+      showErrorToast(message);
+      if (passwordInput instanceof HTMLInputElement) {
+        passwordInput.focus();
+      }
+      return;
+    }
+
+    const formData = new FormData(unlockForm);
+    const params = new URLSearchParams();
+    formData.forEach((value, key) => {
+      params.append(key, value == null ? "" : String(value));
+    });
+
+    let navigating = false;
+    unlockForm.dataset.unlockSubmitting = "1";
+    applyControlState();
+    try {
+      const response = await fetch(unlockForm.action, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+          Accept: "application/json",
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        credentials: "same-origin",
+        body: params.toString()
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || data.ok !== true) {
+        const fallbackMessage =
+          response.status === 429
+            ? "Bạn đã thử sai quá nhiều lần. Vui lòng chờ một lúc rồi thử lại."
+            : "Mật khẩu chương không chính xác.";
+        const message = data && data.error ? String(data.error) : fallbackMessage;
+        if (response.status === 429) {
+          const retryAfterMs = parseRetryAfterMsFromResponse(response, data);
+          startLockCountdown(retryAfterMs, message);
+        } else {
+          setError(message);
+        }
+        showErrorToast(message);
+        return;
+      }
+
+      setError("");
+      stopLockCountdown();
+      const redirectUrl = (data.redirectUrl || "").toString().trim() || window.location.pathname;
+      navigating = true;
+      window.location.href = redirectUrl;
+    } catch (_error) {
+      const message = "Không thể kiểm tra mật khẩu lúc này. Vui lòng thử lại.";
+      setError(message);
+      showErrorToast(message);
+    } finally {
+      delete unlockForm.dataset.unlockSubmitting;
+      if (!navigating) {
+        applyControlState();
+      }
+    }
+  });
+})();
+
 const isElementVisible = (element) => {
   if (!element) return false;
   const rect = element.getBoundingClientRect();

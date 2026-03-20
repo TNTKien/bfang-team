@@ -992,6 +992,9 @@ const initDb = async () => {
       pages_ext TEXT,
       pages_updated_at BIGINT,
       is_oneshot BOOLEAN NOT NULL DEFAULT false,
+      password_hash TEXT,
+      password_salt TEXT,
+      password_updated_at BIGINT,
       processing_state TEXT,
       processing_error TEXT,
       processing_draft_token TEXT,
@@ -1006,11 +1009,39 @@ const initDb = async () => {
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_ext TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_updated_at BIGINT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS is_oneshot BOOLEAN NOT NULL DEFAULT false");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS password_hash TEXT");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS password_salt TEXT");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS password_updated_at BIGINT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_state TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_error TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_draft_token TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_pages_json TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_updated_at BIGINT");
+  await dbRun(
+    `
+      UPDATE chapters
+      SET
+        password_hash = NULL,
+        password_salt = NULL,
+        password_updated_at = NULL
+      WHERE
+        (password_hash IS NULL OR TRIM(password_hash) = '')
+        OR (password_salt IS NULL OR TRIM(password_salt) = '')
+    `
+  );
+  await dbRun(
+    `
+      UPDATE chapters
+      SET password_updated_at = ?
+      WHERE
+        password_hash IS NOT NULL
+        AND TRIM(password_hash) <> ''
+        AND password_salt IS NOT NULL
+        AND TRIM(password_salt) <> ''
+        AND password_updated_at IS NULL
+    `,
+    [Date.now()]
+  );
 
   await dbRun(
     `

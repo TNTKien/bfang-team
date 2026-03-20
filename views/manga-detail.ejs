@@ -241,6 +241,12 @@
                             <span class="chapter-sep" aria-hidden="true">-</span>
                             <span class="chapter-title" title="<%= chapterTitle %>"><%= chapterTitle %></span>
                           <% } %>
+                          <% if (chapter && chapter.has_password) { %>
+                            <span class="chapter-lock-icon" title="Chương có mật khẩu">
+                              <i class="fa-solid fa-lock" aria-hidden="true"></i>
+                              <span class="sr-only">Chương có mật khẩu</span>
+                            </span>
+                          <% } %>
                           <% if (isEndChapter) { %>
                             <span class="chapter-badge" title="Chương kết">END</span>
                           <% } %>

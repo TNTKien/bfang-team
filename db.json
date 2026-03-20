@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "public",
-  "generated_at": "2026-03-17T06:30:42.486Z",
+  "generated_at": "2026-03-20T16:28:39.063Z",
   "generated_by": "scripts/sync-db-json.js",
   "source_files": [
     "src/domains/init-db-domain.js",
@@ -226,6 +226,21 @@
           "name": "is_oneshot",
           "data_type": "boolean",
           "is_nullable": false
+        },
+        {
+          "name": "password_hash",
+          "data_type": "text",
+          "is_nullable": true
+        },
+        {
+          "name": "password_salt",
+          "data_type": "text",
+          "is_nullable": true
+        },
+        {
+          "name": "password_updated_at",
+          "data_type": "bigint",
+          "is_nullable": true
         }
       ]
     },
