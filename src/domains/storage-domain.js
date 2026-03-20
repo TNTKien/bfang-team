@@ -164,12 +164,38 @@ const buildB2DirPrefix = (value) => {
   return `${trimmed}/`;
 };
 
-const parseChapterPageNumberFromFileName = (prefixDir, fileName) => {
+const chapterPageFilePrefixPattern = /^[a-zA-Z]{5}$/;
+
+const normalizeChapterPageFilePrefix = (value) => {
+  const text = (value || "").toString().trim();
+  if (!text) return "";
+  return chapterPageFilePrefixPattern.test(text) ? text : "";
+};
+
+const buildChapterPageFileName = ({ pageNumber, padLength, extension, pageFilePrefix }) => {
+  const page = Number(pageNumber);
+  if (!Number.isFinite(page) || page <= 0) return "";
+  const safePadLength = Math.max(1, Math.floor(Number(padLength) || 0));
+  const ext = (extension || "").toString().trim();
+  if (!ext) return "";
+  const pageName = String(Math.floor(page)).padStart(safePadLength, "0");
+  const suffix = normalizeChapterPageFilePrefix(pageFilePrefix);
+  return suffix ? `${pageName}_${suffix}.${ext}` : `${pageName}.${ext}`;
+};
+
+const parseChapterPageNumberFromFileName = (prefixDir, fileName, expectedPageFilePrefix) => {
   if (!prefixDir || !fileName) return null;
   if (!fileName.startsWith(prefixDir)) return null;
   const tail = fileName.slice(prefixDir.length);
-  const match = tail.match(/^(\d{1,6})\.[a-z0-9]+$/i);
+  const match = tail.match(/^(\d{1,6})(?:_([a-zA-Z]{5}))?\.[a-z0-9]+$/i);
   if (!match) return null;
+  const matchedPrefix = normalizeChapterPageFilePrefix(match[2]);
+  const expectedPrefix = normalizeChapterPageFilePrefix(expectedPageFilePrefix);
+  if (expectedPrefix) {
+    if (matchedPrefix !== expectedPrefix) return null;
+  } else if (matchedPrefix) {
+    return null;
+  }
   const page = Number(match[1]);
   if (!Number.isFinite(page) || page <= 0) return null;
   return Math.floor(page);
@@ -351,7 +377,7 @@ const b2DeleteAllByPrefix = async (prefix) => {
   return b2DeleteFileVersions(versions);
 };
 
-const b2DeleteChapterExtraPages = async ({ prefix, keepPages }) => {
+const b2DeleteChapterExtraPages = async ({ prefix, keepPages, pageFilePrefix }) => {
   const config = getB2Config();
   if (!isB2Ready(config)) {
     throw new Error("Thiếu cấu hình lưu trữ ảnh trong .env");
@@ -362,9 +388,10 @@ const b2DeleteChapterExtraPages = async ({ prefix, keepPages }) => {
 
   const keep = Math.max(0, Math.floor(Number(keepPages) || 0));
   const versions = await b2ListFileVersionsByPrefix(prefixDir);
+  const normalizedFilePrefix = normalizeChapterPageFilePrefix(pageFilePrefix);
   const toDelete = versions.filter((version) => {
     const fileName = version && typeof version.fileName === "string" ? version.fileName : "";
-    const page = parseChapterPageNumberFromFileName(prefixDir, fileName);
+    const page = parseChapterPageNumberFromFileName(prefixDir, fileName, normalizedFilePrefix);
     return page != null && page > keep;
   });
 
@@ -872,6 +899,7 @@ const runChapterProcessingJob = async (chapterId) => {
       number,
       pages,
       pages_prefix,
+      pages_file_prefix,
       processing_state,
       processing_draft_token,
       processing_pages_json
@@ -975,6 +1003,7 @@ const runChapterProcessingJob = async (chapterId) => {
 
   const chapterNumberKey = String(chapterRow.number);
   const finalPrefix = `${config.chapterPrefix}/manga-${chapterRow.manga_id}/ch-${chapterNumberKey}`;
+  const pageFilePrefix = normalizeChapterPageFilePrefix(chapterRow.pages_file_prefix);
   const padLength = Math.max(3, Math.min(6, String(pageIds.length).length));
 
   let available = [];
@@ -1010,7 +1039,7 @@ const runChapterProcessingJob = async (chapterId) => {
     const latestByPage = new Map();
     existingFiles.forEach((file) => {
       const fileName = file && typeof file.fileName === "string" ? file.fileName : "";
-      const page = parseChapterPageNumberFromFileName(existingPrefixDir, fileName);
+      const page = parseChapterPageNumberFromFileName(existingPrefixDir, fileName, pageFilePrefix);
       if (page == null) return;
 
       const prev = latestByPage.get(page);
@@ -1059,8 +1088,16 @@ const runChapterProcessingJob = async (chapterId) => {
         );
       }
 
-      const pageName = String(index + 1).padStart(padLength, "0");
-      const destinationName = `${finalPrefix}/${pageName}.webp`;
+      const pageFileName = buildChapterPageFileName({
+        pageNumber: index + 1,
+        padLength,
+        extension: "webp",
+        pageFilePrefix
+      });
+      if (!pageFileName) {
+        throw new Error("Tên ảnh trang không hợp lệ.");
+      }
+      const destinationName = `${finalPrefix}/${pageFileName}`;
       await b2CopyFile({ sourceFileId, destinationFileName: destinationName });
     }
   } catch (err) {
@@ -1094,7 +1131,7 @@ const runChapterProcessingJob = async (chapterId) => {
   );
   // Cleanup any leftover pages from previous uploads/edits.
   try {
-    await b2DeleteChapterExtraPages({ prefix: finalPrefix, keepPages: pageIds.length });
+    await b2DeleteChapterExtraPages({ prefix: finalPrefix, keepPages: pageIds.length, pageFilePrefix });
   } catch (err) {
     console.warn("Chapter extra page cleanup failed", err);
   }
@@ -1199,6 +1236,7 @@ const convertChapterPageToWebp = async (inputBuffer) => {
     b2ListFileVersionsByPrefix,
     b2UploadBuffer,
     buildB2DirPrefix,
+    buildChapterPageFileName,
     buildChapterDraftPrefix,
     buildChapterExistingPageId,
     chapterDraftCleanupIntervalMs,

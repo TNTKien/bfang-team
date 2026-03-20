@@ -465,6 +465,25 @@ const registerSiteRoutes = (app, deps) => {
     return crypto.timingSafeEqual(left, right);
   };
 
+  const chapterPageFilePrefixPattern = /^[a-zA-Z]{5}$/;
+
+  const normalizeChapterPageFilePrefix = (value) => {
+    const text = (value || "").toString().trim();
+    if (!text) return "";
+    return chapterPageFilePrefixPattern.test(text) ? text : "";
+  };
+
+  const buildChapterPageAssetFileName = ({ pageNumber, padLength, pagesExt, pageFilePrefix }) => {
+    const safePageNumber = Number(pageNumber);
+    if (!Number.isFinite(safePageNumber) || safePageNumber <= 0) return "";
+    const safePadLength = Math.max(1, Math.floor(Number(padLength) || 0));
+    const extension = (pagesExt || "").toString().trim().toLowerCase();
+    if (!extension) return "";
+    const pageName = String(Math.floor(safePageNumber)).padStart(safePadLength, "0");
+    const normalizedFilePrefix = normalizeChapterPageFilePrefix(pageFilePrefix);
+    return normalizedFilePrefix ? `${pageName}_${normalizedFilePrefix}.${extension}` : `${pageName}.${extension}`;
+  };
+
   const buildChapterViewTrackToken = ({ chapterId, startedAt, nonce }) => {
     const safeChapterId = toSafeTimestampMs(chapterId);
     const safeStartedAt = toSafeTimestampMs(startedAt);
@@ -7540,6 +7559,7 @@ app.post(
             c.number AS chapter_number,
             c.pages AS page_count,
             c.pages_prefix,
+            c.pages_file_prefix,
             c.pages_ext,
             c.pages_updated_at
           FROM chapters c
@@ -7565,8 +7585,14 @@ app.post(
           if (!mangaSlug || !chapterNumberText || pageCount <= 4) return null;
 
           const randomPage = Math.floor(Math.random() * (pageCount - 4)) + 3;
-          const pageName = String(randomPage).padStart(Math.max(3, String(pageCount).length), "0");
-          const rawImageUrl = `${cdnBaseUrl}/${row.pages_prefix}/${pageName}.${row.pages_ext}`;
+          const pageFileName = buildChapterPageAssetFileName({
+            pageNumber: randomPage,
+            padLength: Math.max(3, String(pageCount).length),
+            pagesExt: row && row.pages_ext,
+            pageFilePrefix: row && row.pages_file_prefix
+          });
+          if (!pageFileName) return null;
+          const rawImageUrl = `${cdnBaseUrl}/${row.pages_prefix}/${pageFileName}`;
 
           return {
             key: `${row.manga_id || "m"}-${chapterNumberText}-${randomPage}-${index}`,
@@ -8526,6 +8552,7 @@ app.get(
           c.pages,
           c.date,
           c.pages_prefix,
+          c.pages_file_prefix,
           c.pages_ext,
           c.pages_updated_at,
           c.processing_state,
@@ -8650,10 +8677,16 @@ app.get(
     const padLength = Math.max(3, String(pageCount).length);
     const pageUrls = canRenderPages
       ? pages.map((page) => {
-        const pageName = String(page).padStart(padLength, "0");
-        const rawUrl = `${cdnBaseUrl}/${chapterRow.pages_prefix}/${pageName}.${chapterRow.pages_ext}`;
+        const pageFileName = buildChapterPageAssetFileName({
+          pageNumber: page,
+          padLength,
+          pagesExt: chapterRow.pages_ext,
+          pageFilePrefix: chapterRow.pages_file_prefix
+        });
+        if (!pageFileName) return "";
+        const rawUrl = `${cdnBaseUrl}/${chapterRow.pages_prefix}/${pageFileName}`;
         return cacheBust(rawUrl, chapterRow.pages_updated_at);
-      })
+      }).filter(Boolean)
       : [];
 
     let nextChapterPrefetchUrls = [];
@@ -8665,6 +8698,7 @@ app.get(
             SELECT
               pages,
               pages_prefix,
+              pages_file_prefix,
               pages_ext,
               pages_updated_at,
               processing_state,
@@ -8695,10 +8729,16 @@ app.get(
 
           nextChapterPrefetchUrls = Array.from({ length: prefetchCount }, (_, idx) => {
             const page = idx + 1;
-            const pageName = String(page).padStart(nextPadLength, "0");
-            const rawUrl = `${cdnBaseUrl}/${nextChapterRow.pages_prefix}/${pageName}.${nextChapterRow.pages_ext}`;
+            const pageFileName = buildChapterPageAssetFileName({
+              pageNumber: page,
+              padLength: nextPadLength,
+              pagesExt: nextChapterRow.pages_ext,
+              pageFilePrefix: nextChapterRow.pages_file_prefix
+            });
+            if (!pageFileName) return "";
+            const rawUrl = `${cdnBaseUrl}/${nextChapterRow.pages_prefix}/${pageFileName}`;
             return cacheBust(rawUrl, nextChapterRow.pages_updated_at);
-          });
+          }).filter(Boolean);
         }
       }
     }

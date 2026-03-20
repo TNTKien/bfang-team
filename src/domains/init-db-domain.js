@@ -989,6 +989,7 @@ const initDb = async () => {
       date TEXT NOT NULL,
       group_name TEXT,
       pages_prefix TEXT,
+      pages_file_prefix TEXT,
       pages_ext TEXT,
       pages_updated_at BIGINT,
       is_oneshot BOOLEAN NOT NULL DEFAULT false,
@@ -1006,6 +1007,7 @@ const initDb = async () => {
 
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS group_name TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_prefix TEXT");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_file_prefix TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_ext TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_updated_at BIGINT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS is_oneshot BOOLEAN NOT NULL DEFAULT false");

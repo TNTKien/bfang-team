@@ -14,6 +14,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     b2ListFileVersionsByPrefix,
     b2UploadBuffer,
     buildAutoBadgeCode,
+    buildChapterPageFileName,
     buildChapterExistingPageId,
     buildChapterTimestampIso,
     buildMangaSlug,
@@ -115,6 +116,17 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
   } = deps;
 
 const NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER = "manga_bookmark_new_chapter";
+const chapterPageFilePrefixAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const chapterPageFilePrefixLength = 5;
+
+const buildChapterPageFilePrefix = () => {
+  let result = "";
+  for (let index = 0; index < chapterPageFilePrefixLength; index += 1) {
+    const randomIndex = crypto.randomInt(0, chapterPageFilePrefixAlphabet.length);
+    result += chapterPageFilePrefixAlphabet[randomIndex];
+  }
+  return result;
+};
 
 const notifyBookmarkedUsersForNewChapter = async ({ mangaId, chapterNumber }) => {
   const mangaIdValue = Number(mangaId);
@@ -2615,6 +2627,7 @@ app.post(
 
     const processingPagesJson = JSON.stringify(pageIds);
     const processingStamp = Date.now();
+    const pageFilePrefix = buildChapterPageFilePrefix();
 
     const result = await dbRun(
       `
@@ -2623,6 +2636,7 @@ app.post(
         number,
         title,
         pages,
+        pages_file_prefix,
         date,
         group_name,
         is_oneshot,
@@ -2635,13 +2649,14 @@ app.post(
         processing_pages_json,
         processing_updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         mangaRow.id,
         number,
         title,
         pageIds.length,
+        pageFilePrefix,
         date,
         groupName,
         isChapterOneshot,
@@ -2726,6 +2741,7 @@ app.post(
     }
     const pages = Math.max(Number(req.body.pages) || 0, 1);
     const date = buildChapterTimestampIso(req.body.date);
+    const pageFilePrefix = buildChapterPageFilePrefix();
 
     if (number == null || number < 0 || !groupName || !date) {
       return res.status(400).send("Thiếu thông tin chương");
@@ -2746,6 +2762,7 @@ app.post(
         number,
         title,
         pages,
+        pages_file_prefix,
         date,
         group_name,
         is_oneshot,
@@ -2753,13 +2770,14 @@ app.post(
         password_salt,
         password_updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         mangaRow.id,
         number,
         title,
         pages,
+        pageFilePrefix,
         date,
         groupName,
         isChapterOneshot,
@@ -2811,6 +2829,7 @@ app.get(
         c.title,
         c.pages,
         c.pages_prefix,
+        c.pages_file_prefix,
         c.pages_ext,
         c.pages_updated_at,
         c.is_oneshot,
@@ -2892,8 +2911,14 @@ app.get(
     if (pageCount > 0 && pagesPrefix && config.cdnBaseUrl) {
       for (let page = 1; page <= pageCount; page += 1) {
         const id = buildChapterExistingPageId(chapterRow.id, page);
-        const pageName = String(page).padStart(padLength, "0");
-        const rawUrl = `${config.cdnBaseUrl}/${pagesPrefix}/${pageName}.${pagesExt}`;
+        const pageName = buildChapterPageFileName({
+          pageNumber: page,
+          padLength,
+          extension: pagesExt,
+          pageFilePrefix: chapterRow.pages_file_prefix
+        });
+        if (!pageName) continue;
+        const rawUrl = `${config.cdnBaseUrl}/${pagesPrefix}/${pageName}`;
         const url = cacheBust(rawUrl, pagesUpdatedAt || Date.now());
         existingPageIds.push(id);
         existingPages.push({ id, page });
@@ -3193,7 +3218,7 @@ app.post(
     }
 
     const chapterRow = await dbGet(
-      "SELECT id, manga_id, number, pages_prefix, processing_draft_token FROM chapters WHERE id = ?",
+      "SELECT id, manga_id, number, pages_prefix, pages_file_prefix, processing_draft_token FROM chapters WHERE id = ?",
       [Math.floor(chapterId)]
     );
     if (!chapterRow) {
@@ -3229,8 +3254,16 @@ app.post(
           return res.status(400).send("Ảnh trang không hợp lệ.");
         }
 
-        const pageName = String(pageNumber).padStart(padLength, "0");
-        const fileName = `${prefix}/${pageName}.webp`;
+        const pageName = buildChapterPageFileName({
+          pageNumber,
+          padLength,
+          extension: "webp",
+          pageFilePrefix: chapterRow.pages_file_prefix
+        });
+        if (!pageName) {
+          return res.status(400).send("Tên trang không hợp lệ.");
+        }
+        const fileName = `${prefix}/${pageName}`;
         await b2UploadBuffer({
           fileName,
           buffer: webpBuffer,
@@ -3267,7 +3300,11 @@ app.post(
         if (oldPrefix !== prefix) {
           await b2DeleteAllByPrefix(oldPrefix);
         } else {
-          await b2DeleteChapterExtraPages({ prefix, keepPages: files.length });
+          await b2DeleteChapterExtraPages({
+            prefix,
+            keepPages: files.length,
+            pageFilePrefix: chapterRow.pages_file_prefix
+          });
         }
       } catch (err) {
         console.warn("Chapter page cleanup failed", err);
@@ -3295,7 +3332,7 @@ app.post(
     }
 
     const chapterRow = await dbGet(
-      "SELECT id, manga_id, number, pages_prefix, processing_draft_token FROM chapters WHERE id = ?",
+      "SELECT id, manga_id, number, pages_prefix, pages_file_prefix, processing_draft_token FROM chapters WHERE id = ?",
       [Math.floor(chapterId)]
     );
     if (!chapterRow) {
@@ -3326,8 +3363,16 @@ app.post(
     }
 
     const prefix = `${config.chapterPrefix}/manga-${chapterRow.manga_id}/ch-${chapterRow.number}`;
-    const pageName = String(Math.floor(pageNumber)).padStart(padLength, "0");
-    const fileName = `${prefix}/${pageName}.webp`;
+    const pageName = buildChapterPageFileName({
+      pageNumber: Math.floor(pageNumber),
+      padLength,
+      extension: "webp",
+      pageFilePrefix: chapterRow.pages_file_prefix
+    });
+    if (!pageName) {
+      return res.status(400).send("Tên trang không hợp lệ.");
+    }
+    const fileName = `${prefix}/${pageName}`;
 
     try {
       await b2UploadBuffer({
@@ -3340,7 +3385,7 @@ app.post(
       return res.status(500).send("Upload ảnh thất bại.");
     }
 
-    const url = `${config.cdnBaseUrl}/${prefix}/${pageName}.webp`;
+    const url = `${config.cdnBaseUrl}/${prefix}/${pageName}`;
     if (wantsJson(req)) {
       return res.json({ ok: true, page: Math.floor(pageNumber), url });
     }
@@ -3370,7 +3415,7 @@ app.post(
     }
 
     const chapterRow = await dbGet(
-      "SELECT id, manga_id, number, pages_prefix FROM chapters WHERE id = ?",
+      "SELECT id, manga_id, number, pages_prefix, pages_file_prefix FROM chapters WHERE id = ?",
       [Math.floor(chapterId)]
     );
     if (!chapterRow) {
@@ -3407,7 +3452,11 @@ app.post(
           if (oldPrefix !== prefix) {
             await b2DeleteAllByPrefix(oldPrefix);
           } else {
-            await b2DeleteChapterExtraPages({ prefix, keepPages: pages });
+            await b2DeleteChapterExtraPages({
+              prefix,
+              keepPages: pages,
+              pageFilePrefix: chapterRow.pages_file_prefix
+            });
           }
         } catch (err) {
           console.warn("Chapter page cleanup failed", err);

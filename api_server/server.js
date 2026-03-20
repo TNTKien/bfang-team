@@ -34,6 +34,9 @@ const CHAPTER_MAX_PAGES = 220;
 const CHAPTER_PAGE_MAX_SIZE_BYTES = 12 * 1024 * 1024;
 const UPLOAD_SESSION_TTL_MS = 3 * 60 * 60 * 1000;
 const UPLOAD_SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
+const CHAPTER_PAGE_FILE_PREFIX_PATTERN = /^[a-zA-Z]{5}$/;
+const CHAPTER_PAGE_FILE_PREFIX_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const CHAPTER_PAGE_FILE_PREFIX_LENGTH = 5;
 
 if (!DATABASE_URL) {
   throw new Error("DATABASE_URL is required for api_server");
@@ -267,6 +270,53 @@ function parseChapterNumberInput(value) {
   if (!Number.isFinite(parsed)) return null;
   const rounded = Math.round(parsed * 1000) / 1000;
   return rounded;
+}
+
+function normalizeChapterPageFilePrefix(value) {
+  const text = (value == null ? "" : String(value)).trim();
+  if (!text) return "";
+  return CHAPTER_PAGE_FILE_PREFIX_PATTERN.test(text) ? text : "";
+}
+
+function buildRandomChapterPageFilePrefix(length = CHAPTER_PAGE_FILE_PREFIX_LENGTH) {
+  const safeLength = Math.max(1, Math.floor(Number(length) || CHAPTER_PAGE_FILE_PREFIX_LENGTH));
+  const alphabetLength = CHAPTER_PAGE_FILE_PREFIX_ALPHABET.length;
+  let output = "";
+  while (output.length < safeLength) {
+    const bytes = crypto.randomBytes(Math.max(8, safeLength * 2));
+    for (let i = 0; i < bytes.length && output.length < safeLength; i += 1) {
+      output += CHAPTER_PAGE_FILE_PREFIX_ALPHABET[bytes[i] % alphabetLength];
+    }
+  }
+  return output;
+}
+
+function buildChapterPageFileName({ pageNumber, padLength, extension, pageFilePrefix }) {
+  const page = Number(pageNumber);
+  if (!Number.isFinite(page) || page <= 0) return "";
+  const safePadLength = Math.max(1, Math.floor(Number(padLength) || 0));
+  const ext = (extension == null ? "" : String(extension)).trim();
+  if (!ext) return "";
+  const pageName = String(Math.floor(page)).padStart(safePadLength, "0");
+  const suffix = normalizeChapterPageFilePrefix(pageFilePrefix);
+  return suffix ? `${pageName}_${suffix}.${ext}` : `${pageName}.${ext}`;
+}
+
+function parseChapterPageNumberFromFileName({ fileName, expectedPageFilePrefix }) {
+  const tail = (fileName == null ? "" : String(fileName)).trim();
+  if (!tail) return null;
+  const match = tail.match(/^(\d{1,6})(?:_([a-zA-Z]{5}))?\.webp$/i);
+  if (!match) return null;
+  const matchedPrefix = normalizeChapterPageFilePrefix(match[2]);
+  const expectedPrefix = normalizeChapterPageFilePrefix(expectedPageFilePrefix);
+  if (expectedPrefix) {
+    if (matchedPrefix !== expectedPrefix) return null;
+  } else if (matchedPrefix) {
+    return null;
+  }
+  const page = Number(match[1]);
+  if (!Number.isFinite(page) || page <= 0) return null;
+  return Math.floor(page);
 }
 
 function readApiKeyFromRequest(req) {
@@ -731,9 +781,10 @@ async function copyS3Object({ sourceKey, destinationKey }) {
   );
 }
 
-async function deleteChapterExtraPages({ prefix, keepPages }) {
+async function deleteChapterExtraPages({ prefix, keepPages, pageFilePrefix }) {
   const safePrefix = normalizeS3Key(prefix);
   const safeKeepPages = Number(keepPages);
+  const normalizedFilePrefix = normalizeChapterPageFilePrefix(pageFilePrefix);
   if (!safePrefix) return 0;
   if (!Number.isFinite(safeKeepPages) || safeKeepPages <= 0) return 0;
 
@@ -746,9 +797,10 @@ async function deleteChapterExtraPages({ prefix, keepPages }) {
     const key = item && item.key ? String(item.key).trim() : "";
     if (!key || !key.startsWith(keyPrefix)) continue;
     const fileName = key.slice(keyPrefix.length);
-    const match = fileName.match(/^(\d+)\.webp$/i);
-    if (!match) continue;
-    const pageNumber = Number(match[1]);
+    const pageNumber = parseChapterPageNumberFromFileName({
+      fileName,
+      expectedPageFilePrefix: normalizedFilePrefix
+    });
     if (!Number.isFinite(pageNumber) || pageNumber <= safeKeepPages) continue;
     deleteKeys.push(key);
   }
@@ -968,6 +1020,7 @@ app.get("/v1/manga/:mangaId/chapters", requireApiKey, async (req, res) => {
           date,
           pages_prefix,
           pages_ext,
+          pages_file_prefix,
           pages_updated_at
         FROM chapters
         WHERE manga_id = $1
@@ -996,6 +1049,9 @@ app.get("/v1/manga/:mangaId/chapters", requireApiKey, async (req, res) => {
           date: chapter && chapter.date ? String(chapter.date) : "",
           pagesPrefix: chapter && chapter.pages_prefix ? String(chapter.pages_prefix).trim() : "",
           pagesExt: chapter && chapter.pages_ext ? String(chapter.pages_ext).trim() : "",
+          pagesFilePrefix: normalizeChapterPageFilePrefix(
+            chapter && chapter.pages_file_prefix ? String(chapter.pages_file_prefix) : ""
+          ),
           pagesUpdatedAt: chapter && chapter.pages_updated_at != null ? Number(chapter.pages_updated_at) || 0 : 0
         };
       })
@@ -1039,7 +1095,7 @@ app.post("/v1/uploads/start", requireApiKey, async (req, res) => {
 
     const existingChapter = await dbGet(
       `
-        SELECT id, pages_prefix
+        SELECT id, pages_prefix, pages_file_prefix
         FROM chapters
         WHERE manga_id = $1 AND number = $2
         LIMIT 1
@@ -1080,6 +1136,10 @@ app.post("/v1/uploads/start", requireApiKey, async (req, res) => {
         : canonicalPrefix;
     const tmpPrefix = normalizeS3Key(`${S3_CHAPTER_PREFIX}/tmp/desktop/manga-${mangaId}/session-${sessionId}`);
     const padLength = Math.max(3, Math.min(6, String(totalPages).length));
+    const existingPageFilePrefix = normalizeChapterPageFilePrefix(
+      existingChapter && existingChapter.pages_file_prefix ? String(existingChapter.pages_file_prefix) : ""
+    );
+    const targetPageFilePrefix = existingChapter ? existingPageFilePrefix : buildRandomChapterPageFilePrefix();
 
     const session = createUploadSession({
       id: sessionId,
@@ -1100,6 +1160,7 @@ app.post("/v1/uploads/start", requireApiKey, async (req, res) => {
       existingChapterId: existingChapter && existingChapter.id ? Number(existingChapter.id) || 0 : 0,
       existingPrefix:
         existingChapter && existingChapter.pages_prefix ? String(existingChapter.pages_prefix).trim() : "",
+      pageFilePrefix: targetPageFilePrefix,
       targetPrefix,
       tmpPrefix
     });
@@ -1114,6 +1175,8 @@ app.post("/v1/uploads/start", requireApiKey, async (req, res) => {
       overwrite,
       exists: Boolean(existingChapter),
       targetPrefix: session.targetPrefix,
+      pageFilePrefix: session.pageFilePrefix,
+      pagesFilePrefix: session.pageFilePrefix,
       tmpPrefix: session.tmpPrefix
     });
   } catch (err) {
@@ -1188,9 +1251,15 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
     }
 
     for (let index = 1; index <= session.totalPages; index += 1) {
-      const pageName = `${String(index).padStart(session.padLength, "0")}.webp`;
-      const sourceKey = normalizeS3Key(`${session.tmpPrefix}/${pageName}`);
-      const destinationKey = normalizeS3Key(`${session.targetPrefix}/${pageName}`);
+      const sourcePageName = `${String(index).padStart(session.padLength, "0")}.webp`;
+      const destinationPageName = buildChapterPageFileName({
+        pageNumber: index,
+        padLength: session.padLength,
+        extension: "webp",
+        pageFilePrefix: session.pageFilePrefix
+      });
+      const sourceKey = normalizeS3Key(`${session.tmpPrefix}/${sourcePageName}`);
+      const destinationKey = normalizeS3Key(`${session.targetPrefix}/${destinationPageName}`);
       await runWithRetry(() => copyS3Object({ sourceKey, destinationKey }), 2);
     }
 
@@ -1210,14 +1279,15 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
               group_name = $4,
               pages_prefix = $5,
               pages_ext = 'webp',
-              pages_updated_at = $6,
-              is_oneshot = $7,
+              pages_file_prefix = $6,
+              pages_updated_at = $7,
+              is_oneshot = $8,
               processing_state = NULL,
               processing_error = NULL,
               processing_draft_token = NULL,
               processing_pages_json = NULL,
               processing_updated_at = NULL
-            WHERE id = $8
+            WHERE id = $9
           `,
           [
             session.title,
@@ -1225,6 +1295,7 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
             nowIso,
             session.groupName,
             session.targetPrefix,
+            session.pageFilePrefix || null,
             nowMs,
             session.isOneshot,
             session.existingChapterId
@@ -1243,6 +1314,7 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
               group_name,
               pages_prefix,
               pages_ext,
+              pages_file_prefix,
               pages_updated_at,
               is_oneshot,
               processing_state,
@@ -1251,7 +1323,7 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
               processing_pages_json,
               processing_updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'webp', $8, $9, NULL, NULL, NULL, NULL, NULL)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'webp', $8, $9, $10, NULL, NULL, NULL, NULL, NULL)
             RETURNING id
           `,
           [
@@ -1262,6 +1334,7 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
             nowIso,
             session.groupName,
             session.targetPrefix,
+            session.pageFilePrefix || null,
             nowMs,
             session.isOneshot
           ]
@@ -1277,11 +1350,16 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
       return {
         chapterId,
         pagesPrefix: session.targetPrefix,
-        pages: session.totalPages
+        pages: session.totalPages,
+        pagesFilePrefix: session.pageFilePrefix || ""
       };
     });
 
-    await deleteChapterExtraPages({ prefix: session.targetPrefix, keepPages: session.totalPages }).catch(() => null);
+    await deleteChapterExtraPages({
+      prefix: session.targetPrefix,
+      keepPages: session.totalPages,
+      pageFilePrefix: session.pageFilePrefix
+    }).catch(() => null);
 
     if (session.existingPrefix && session.existingPrefix !== session.targetPrefix) {
       deleteAllByPrefix(session.existingPrefix).catch(() => null);
@@ -1300,7 +1378,9 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
         title: session.title,
         pages: result.pages,
         pagesPrefix: result.pagesPrefix,
-        pagesExt: "webp"
+        pagesExt: "webp",
+        pagesFilePrefix: result.pagesFilePrefix || "",
+        pageFilePrefix: result.pagesFilePrefix || ""
       }
     });
   } catch (err) {
