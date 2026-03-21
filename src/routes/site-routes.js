@@ -158,7 +158,7 @@ const registerSiteRoutes = (app, deps) => {
   const NOTIFICATION_TYPE_COMMENT_REPLY = "comment_reply";
   const MANGA_DETAIL_CHAPTERS_PER_PAGE = 30;
   const BOOKMARKS_PER_PAGE = 10;
-  const FAST_NAV_PAGE_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300";
+  const FAST_NAV_PAGE_CACHE_CONTROL = "private, max-age=60, stale-while-revalidate=300";
   const siteSeoConfig = siteConfig && siteConfig.seo && typeof siteConfig.seo === "object" ? siteConfig.seo : {};
   const homepageSeoTitle =
     (siteSeoConfig.homepageTitle || "").toString().trim() || `${SEO_SITE_NAME} - Đọc truyện tranh online miễn phí`;
@@ -3265,7 +3265,10 @@ const registerSiteRoutes = (app, deps) => {
 app.get(
   "/auth/session",
   asyncHandler(async (req, res) => {
+    res.vary("Cookie");
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.set("CDN-Cache-Control", "no-store");
+    res.set("Cloudflare-CDN-Cache-Control", "no-store");
 
     if (isServerSessionVersionMismatch(req)) {
       clearAllAuthSessionState(req);
@@ -3299,7 +3302,10 @@ app.get(
 app.post(
   "/auth/logout",
   asyncHandler(async (req, res) => {
+    res.vary("Cookie");
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.set("CDN-Cache-Control", "no-store");
+    res.set("Cloudflare-CDN-Cache-Control", "no-store");
 
     if (req && req.session && typeof req.session.regenerate === "function") {
       await regenerateSession(req).catch(() => null);

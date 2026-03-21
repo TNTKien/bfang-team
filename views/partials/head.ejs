@@ -166,6 +166,14 @@
     assetUrl,
     cspNonce
   }) %>
+  <%- include("head-config", {
+    runtimeSiteConfig,
+    authPublicConfig,
+    turnstilePublicConfig,
+    safeJsonForScript,
+    assetUrl,
+    cspNonce
+  }) %>
   <%- include("head-styles", {
     isHeadStyleEnabled,
     extraPreconnectOrigins,
@@ -175,14 +183,6 @@
     extraStylesheets,
     assetUrl,
     preloadImages,
-    cspNonce
-  }) %>
-  <%- include("head-config", {
-    runtimeSiteConfig,
-    authPublicConfig,
-    turnstilePublicConfig,
-    safeJsonForScript,
-    assetUrl,
     cspNonce
   }) %>
   <%- include("head-scripts", {

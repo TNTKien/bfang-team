@@ -42,6 +42,9 @@ const configureCoreRuntime = (app, deps) => {
 
 app.set("view engine", "ejs");
   app.set("views", path.join(appRootDir, "views"));
+if (trustProxy) {
+  app.set("trust proxy", 1);
+}
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
@@ -107,24 +110,24 @@ const buildInitialAuthStateForRequest = async (req) => {
     return buildSignedOutInitialAuthState();
   }
 
-    try {
-      const user = typeof loadSessionUserById === "function" ? await loadSessionUserById(authUserId) : null;
-      if (!user || !user.id) {
-        return buildSignedOutInitialAuthState();
-      }
+  try {
+    const user = typeof loadSessionUserById === "function" ? await loadSessionUserById(authUserId) : null;
+    if (!user || !user.id) {
+      return buildSignedOutInitialAuthState();
+    }
 
-      const publishNav = await loadInitialPublishNavState(user.id);
+    const publishNav = await loadInitialPublishNavState(user.id);
 
-      return {
-        hasServerState: true,
-        signedIn: true,
-        session: {
-          user
-        },
-        publishNav
-      };
-    } catch (error) {
-      console.warn("Cannot prepare initial auth state.", error);
+    return {
+      hasServerState: true,
+      signedIn: true,
+      session: {
+        user
+      },
+      publishNav
+    };
+  } catch (error) {
+    console.warn("Cannot prepare initial auth state.", error);
     return buildSignedOutInitialAuthState();
   }
 };
@@ -328,6 +331,14 @@ app.use(
 const forceSecureCookie = parseEnvBoolean(process.env.SESSION_COOKIE_SECURE, isProductionApp);
 const enableCsp = parseEnvBoolean(process.env.CSP_ENABLED, true);
 const cspReportOnly = parseEnvBoolean(process.env.CSP_REPORT_ONLY, false);
+const applyNoStoreResponseHeaders = (res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.set("CDN-Cache-Control", "no-store");
+  res.set("Cloudflare-CDN-Cache-Control", "no-store");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+};
+
 if (isProductionApp && forceSecureCookie && !trustProxy) {
   console.warn("APP_ENV=production + SESSION_COOKIE_SECURE=true; nếu chạy sau reverse proxy, hãy đặt TRUST_PROXY=1.");
 }
@@ -376,6 +387,7 @@ app.use((req, res, next) => {
 
   if (isPrivatePath) {
     res.set("X-Robots-Tag", SEO_ROBOTS_NOINDEX);
+    applyNoStoreResponseHeaders(res);
   }
 
   next();
@@ -423,6 +435,20 @@ app.use((req, res, next) => {
       res.locals.authPublicConfig = authPublicConfig;
       next();
     });
+});
+app.use((req, res, next) => {
+  const originalRender = res.render.bind(res);
+  res.render = (...args) => {
+    res.vary("Cookie");
+    const authUserId = (req && req.session && req.session.authUserId ? req.session.authUserId : "")
+      .toString()
+      .trim();
+    if (authUserId) {
+      applyNoStoreResponseHeaders(res);
+    }
+    return originalRender(...args);
+  };
+  next();
 });
 app.use(requireSameOriginForAdminWrites);
   app.use("/vendor/emoji-mart", express.static(path.join(appRootDir, "node_modules", "emoji-mart")));

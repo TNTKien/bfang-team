@@ -661,7 +661,10 @@
       return String(session.access_token).trim();
     };
 
-    const refreshUi = async () => loadSession({ force: true });
+    const refreshUi = async (options = {}) => {
+      const shouldForce = Boolean(options && options.force === true);
+      return loadSession({ force: shouldForce });
+    };
 
     const requestUpdateUser = async (payload) => {
       const response = await fetch("/auth/profile", {
