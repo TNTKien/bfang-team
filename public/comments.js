@@ -4150,7 +4150,7 @@ const replaceCommentsSectionFromPage = async (targetUrl, options) => {
     initCommentCharCounters(nextSection);
 
     if (window.BfangAuth && typeof window.BfangAuth.refreshUi === "function") {
-      window.BfangAuth.refreshUi().catch(() => null);
+      window.BfangAuth.refreshUi({ force: false }).catch(() => null);
     }
 
     refreshDeleteVisibility().catch(() => null);

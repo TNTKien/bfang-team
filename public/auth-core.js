@@ -663,6 +663,21 @@
 
     const refreshUi = async (options = {}) => {
       const shouldForce = Boolean(options && options.force === true);
+      if (!shouldForce && sessionLoaded) {
+        const signedIn = Boolean(lastSession && lastSession.user);
+        setAuthRootState(true, signedIn ? "in" : "out");
+        setMemberOnlyNavVisibility(signedIn);
+        updatePublishNavLinkLabel(lastSession);
+        updateWidgets(lastSession);
+        updateCommentForms(lastSession);
+
+        if (signedIn) {
+          refreshProfileForSession(lastSession).catch(() => null);
+        }
+
+        return lastSession;
+      }
+
       return loadSession({ force: shouldForce });
     };
 
