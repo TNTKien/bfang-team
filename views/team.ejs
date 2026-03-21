@@ -238,10 +238,18 @@
                         <% overviewMangaList.forEach((series) => { %>
                           <% const statusText = (series.status || "").toString().trim(); %>
                           <% const statusRaw = statusText.toLowerCase(); %>
-                          <% const isCompleted = statusRaw.includes("hoàn") || statusRaw.includes("complete"); %>
-                          <% const isPaused = statusRaw.includes("tạm dừng") || statusRaw.includes("hiatus") || statusRaw.includes("pause") || statusRaw.includes("on hold"); %>
-                          <% const isDropped = statusRaw.includes("drop") || statusRaw.includes("ngừng") || statusRaw.includes("cancel") || statusRaw.includes("hủy"); %>
-                          <% const statusToneClass = isCompleted ? "is-completed" : (isPaused ? "is-paused" : (isDropped ? "is-dropped" : "is-ongoing")); %>
+                          <% const isComplete = statusRaw.includes("hoàn") || statusRaw.includes("complete"); %>
+                          <% const isHiatus =
+                            statusRaw.includes("tạm dừng") ||
+                            statusRaw.includes("tạm ngưng") ||
+                            statusRaw.includes("hiatus") ||
+                            statusRaw.includes("pause") ||
+                            statusRaw.includes("on hold") ||
+                            statusRaw.includes("drop") ||
+                            statusRaw.includes("ngừng") ||
+                            statusRaw.includes("cancel") ||
+                            statusRaw.includes("hủy"); %>
+                          <% const statusToneClass = isComplete ? "is-complete" : (isHiatus ? "is-hiatus" : "is-ongoing"); %>
                           <article class="team-manga-card">
                             <a class="team-manga-card__cover" href="<%= series.url %>">
                               <% if (series.cover) { %>
@@ -254,7 +262,7 @@
                             <div class="team-manga-card__body">
                               <a class="team-manga-card__title" href="<%= series.url %>"><%= series.title %></a>
                               <div class="team-manga-card__meta-row">
-                                <span class="team-series-status <%= statusToneClass %>"><%= statusText || "Đang cập nhật" %></span>
+                                <span class="manga-status-pill <%= statusToneClass %>"><%= statusText || "Đang ra" %></span>
                                 <span><%= series.latestChapterLabel %></span>
                               </div>
                               <p class="note team-manga-card__updated"><%= series.updatedAtText ? `Cập nhật ${series.updatedAtText}` : "" %></p>
@@ -293,10 +301,18 @@
                     <% mangaList.forEach((series) => { %>
                       <% const statusText = (series.status || "").toString().trim(); %>
                       <% const statusRaw = statusText.toLowerCase(); %>
-                      <% const isCompleted = statusRaw.includes("hoàn") || statusRaw.includes("complete"); %>
-                      <% const isPaused = statusRaw.includes("tạm dừng") || statusRaw.includes("hiatus") || statusRaw.includes("pause") || statusRaw.includes("on hold"); %>
-                      <% const isDropped = statusRaw.includes("drop") || statusRaw.includes("ngừng") || statusRaw.includes("cancel") || statusRaw.includes("hủy"); %>
-                      <% const statusToneClass = isCompleted ? "is-completed" : (isPaused ? "is-paused" : (isDropped ? "is-dropped" : "is-ongoing")); %>
+                      <% const isComplete = statusRaw.includes("hoàn") || statusRaw.includes("complete"); %>
+                      <% const isHiatus =
+                        statusRaw.includes("tạm dừng") ||
+                        statusRaw.includes("tạm ngưng") ||
+                        statusRaw.includes("hiatus") ||
+                        statusRaw.includes("pause") ||
+                        statusRaw.includes("on hold") ||
+                        statusRaw.includes("drop") ||
+                        statusRaw.includes("ngừng") ||
+                        statusRaw.includes("cancel") ||
+                        statusRaw.includes("hủy"); %>
+                      <% const statusToneClass = isComplete ? "is-complete" : (isHiatus ? "is-hiatus" : "is-ongoing"); %>
                       <article class="team-manga-card">
                         <a class="team-manga-card__cover" href="<%= series.url %>">
                           <% if (series.cover) { %>
@@ -309,7 +325,7 @@
                         <div class="team-manga-card__body">
                           <a class="team-manga-card__title" href="<%= series.url %>"><%= series.title %></a>
                           <div class="team-manga-card__meta-row">
-                            <span class="team-series-status <%= statusToneClass %>"><%= statusText || "Đang cập nhật" %></span>
+                            <span class="manga-status-pill <%= statusToneClass %>"><%= statusText || "Đang ra" %></span>
                             <span><%= series.latestChapterLabel %></span>
                           </div>
                           <p class="note team-manga-card__updated"><%= series.updatedAtText ? `Cập nhật ${series.updatedAtText}` : "" %></p>
