@@ -145,9 +145,37 @@
 .forum-card-preview-fade {
   position: relative;
   overflow: hidden;
+  isolation: isolate;
+}
+.forum-card-preview-fade > * {
+  position: relative;
+  z-index: 0;
 }
 .forum-card-preview-collapsed {
-  max-height: 7.2rem;
+  --forum-card-preview-lines: 10;
+  --forum-card-preview-line-height: 1.6;
+  max-height: calc(var(--forum-card-preview-lines) * var(--forum-card-preview-line-height) * 1em);
+  overflow: hidden;
+}
+.forum-card-preview-collapsed img,
+.forum-card-preview-collapsed video,
+.forum-card-preview-collapsed iframe {
+  display: none !important;
+}
+.forum-card-preview-collapsed h1,
+.forum-card-preview-collapsed h2,
+.forum-card-preview-collapsed h3,
+.forum-card-preview-collapsed h4,
+.forum-card-preview-collapsed h5,
+.forum-card-preview-collapsed h6 {
+  margin: 0.15rem 0;
+  font-size: 1em;
+  line-height: var(--forum-card-preview-line-height);
+}
+.forum-card-preview-collapsed pre,
+.forum-card-preview-collapsed blockquote {
+  margin: 0.15rem 0;
+  max-height: calc(var(--forum-card-preview-line-height) * 3.4em);
   overflow: hidden;
 }
 .forum-card-preview-fade::after {
@@ -157,6 +185,7 @@
   right: 0;
   bottom: 0;
   height: 3.25rem;
+  z-index: 1;
   pointer-events: none;
   background: linear-gradient(
     to bottom,

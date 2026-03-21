@@ -30,7 +30,16 @@
           </nav>
           <div class="detail-grid manga-detail-hero">
             <div class="detail-cover reveal" style="--delay: 0.05s;">
-              <div class="cover cover--detail">
+              <div
+                class="cover cover--detail <%= manga.isAdult ? "cover--adult" : "" %>"
+                <% if (manga.isAdult) { %>
+                  data-adult-cover
+                  data-adult-cover-reveal-on-click
+                  role="button"
+                  tabindex="0"
+                  aria-label="Nhấn để hiện bìa truyện 18+"
+                <% } %>
+              >
                 <% if (manga.cover) { %>
                   <img
                     src="<%= detailCover194 %>"
@@ -201,6 +210,23 @@
             </div>
           </div>
         </section>
+
+        <% if (manga.isAdult) { %>
+          <div class="adult-warning" data-adult-warning hidden>
+            <div class="adult-warning__backdrop" data-adult-warning-dismiss></div>
+            <div class="adult-warning__dialog" role="dialog" aria-modal="true" aria-labelledby="adult-warning-title">
+              <p class="adult-warning__kicker">Cảnh báo 18+</p>
+              <h2 id="adult-warning-title">Nội dung chỉ dành cho người đủ 18 tuổi</h2>
+              <p>
+                Truyện bạn sắp xem có thể chứa nội dung nhạy cảm. Hãy xác nhận bạn đủ tuổi và đồng ý tự chịu trách nhiệm trước khi tiếp tục.
+              </p>
+              <div class="adult-warning__actions">
+                <button class="button" type="button" data-adult-warning-confirm data-button-icon-skip="1">Tôi đủ 18 tuổi</button>
+                <a class="button button--ghost" href="/manga" data-button-icon-skip="1">Quay lại danh sách truyện</a>
+              </div>
+            </div>
+          </div>
+        <% } %>
 
         <section id="chapters" class="section container">
           <% const chapterPage = chapterPagination && chapterPagination.page ? Number(chapterPagination.page) : 1; %>

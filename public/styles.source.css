@@ -17018,7 +17018,127 @@ body.admin-page .panel > .note {
     padding: 0.74rem 0.82rem;
   }
 
-  .manga-detail-page .chapter-time {
+.manga-detail-page .chapter-time {
     font-size: 0.84rem;
   }
+}
+
+.cover--adult {
+  position: relative;
+}
+
+.cover--adult img {
+  filter: blur(14px) saturate(0.78) brightness(0.68);
+  transform: scale(1.04);
+  transform-origin: center;
+  transition: filter 0.25s ease, transform 0.25s ease;
+}
+
+.cover--adult::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.58));
+  pointer-events: none;
+}
+
+.cover--adult.is-adult-revealed img,
+.cover--adult[data-adult-revealed="1"] img {
+  filter: none;
+  transform: none;
+}
+
+.cover--adult.is-adult-revealed::after,
+.cover--adult[data-adult-revealed="1"]::after {
+  display: none;
+}
+
+.cover--adult[data-adult-cover-reveal-on-click]:not(.is-adult-revealed):not([data-adult-revealed="1"]) {
+  cursor: pointer;
+}
+
+.cover--adult[data-adult-cover-reveal-on-click]:not(.is-adult-revealed):not([data-adult-revealed="1"]):focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.92);
+  outline-offset: 2px;
+}
+
+.header-search-item__cover--adult {
+  position: relative;
+  overflow: hidden;
+}
+
+.header-search-item__cover--adult img {
+  filter: blur(10px) saturate(0.8) brightness(0.7);
+  transform: scale(1.06);
+  transform-origin: center;
+}
+
+.header-search-item__cover--adult::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.5));
+  pointer-events: none;
+}
+
+.reader-note--adult {
+  border-color: rgba(244, 90, 90, 0.55);
+  background: rgba(244, 90, 90, 0.12);
+}
+
+body.adult-warning-open {
+  overflow: hidden;
+}
+
+.adult-warning {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.adult-warning__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.adult-warning__dialog {
+  position: relative;
+  width: min(560px, 92vw);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 0.75rem;
+  background: #131313;
+  padding: 1.3rem 1.3rem 1.22rem;
+  z-index: 1;
+  display: grid;
+  gap: 0.66rem;
+}
+
+.adult-warning__kicker {
+  margin: 0;
+  color: #f45a5a;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.74rem;
+  font-family: var(--font-title);
+}
+
+.adult-warning__dialog h2 {
+  margin: 0;
+  font-size: 1.34rem;
+}
+
+.adult-warning__dialog p {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.adult-warning__actions {
+  display: flex;
+  gap: 0.58rem;
+  flex-wrap: wrap;
+  margin-top: 0.22rem;
 }

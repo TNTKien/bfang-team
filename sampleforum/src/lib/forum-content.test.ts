@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeForumContentHtml } from "@/lib/forum-content";
+import { normalizeForumContentHtml, trimForumContentEdges } from "@/lib/forum-content";
 
 const getBody = (html: string) => new DOMParser().parseFromString(html, "text/html").body;
 
@@ -160,5 +160,15 @@ describe("normalizeForumContentHtml", () => {
 
     expect(paragraphs.length).toBe(3);
     expect(paragraphs[1]?.textContent || "").toBe("");
+  });
+});
+
+describe("trimForumContentEdges", () => {
+  it("removes trailing empty paragraph blocks", () => {
+    expect(trimForumContentEdges("<p>Xin chao</p><p></p>")).toBe("<p>Xin chao</p>");
+  });
+
+  it("removes trailing br inside the final paragraph", () => {
+    expect(trimForumContentEdges("<p>Xin chao<br></p>")).toBe("<p>Xin chao</p>");
   });
 });

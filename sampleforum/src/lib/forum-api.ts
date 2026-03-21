@@ -15,7 +15,7 @@ import type {
   MentionCandidateResponse,
   PostBookmarkResponse,
 } from "@/types/forum";
-import { measureForumTextLength } from "@/lib/forum-content";
+import { measureForumTextLength, trimForumContentEdges } from "@/lib/forum-content";
 import { FORUM_COMMENT_MAX_LENGTH, FORUM_POST_MAX_LENGTH } from "@/lib/forum-limits";
 import type { ForumLocalPostImage } from "@/lib/forum-local-post-images";
 
@@ -205,7 +205,7 @@ export const submitForumPost = async (params: {
   normalizedContent: string;
 }> => {
   const title = (params.title || "").toString().trim();
-  const body = (params.content || "").toString().trim();
+  const body = trimForumContentEdges(params.content || "");
   const forumMetaMarker = buildForumMetaMarker(params.categorySlug || "");
   const normalizedContent = body ? `${forumMetaMarker}${body}` : "";
   if (!normalizedContent || normalizedContent === "<p></p>") {
@@ -432,7 +432,7 @@ export const submitForumReply = async (params: {
     throw new Error("Không xác định được chủ đề để phản hồi.");
   }
 
-  const content = (params.content || "").toString().trim();
+  const content = trimForumContentEdges(params.content || "");
   const imageUrl = (params.imageUrl || "").toString().trim();
 
   if (!content && !imageUrl) {

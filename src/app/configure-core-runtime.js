@@ -4,6 +4,7 @@ const configureCoreRuntime = (app, deps) => {
     SEO_ROBOTS_NOINDEX,
     appRootDir,
     adminConfig,
+    adultContentControlEnabled,
     asyncHandler,
     buildContentSecurityPolicy,
     buildSeoPayload,
@@ -376,6 +377,7 @@ app.use((req, res, next) => {
   res.locals.siteConfig = siteConfig;
   res.locals.newsPageEnabled = Boolean(app.locals && app.locals.newsPageEnabled);
   res.locals.forumPageEnabled = Boolean(app.locals && app.locals.forumPageEnabled);
+  res.locals.adultContentControlEnabled = Boolean(adultContentControlEnabled);
 
   res.locals.seo = buildSeoPayload(req, {
     canonicalPath: pathValue,
@@ -966,6 +968,7 @@ app.locals.formatTimeAgo = formatTimeAgo;
 app.locals.cacheBust = cacheBust;
 app.locals.assetVersion = serverAssetVersion;
 app.locals.siteConfig = siteConfig;
+app.locals.adultContentControlEnabled = Boolean(adultContentControlEnabled);
 
   return {
     prebuildMinifiedScriptsAtStartup,

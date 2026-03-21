@@ -56,7 +56,7 @@ import {
   FORUM_POST_TITLE_MAX_LENGTH,
 } from "@/lib/forum-limits";
 import { mapApiCommentToUiComment, mapApiPostToUiPost } from "@/lib/forum-presenters";
-import { measureForumTextLength, normalizeForumContentHtml } from "@/lib/forum-content";
+import { measureForumTextLength, normalizeForumContentHtml, trimForumContentEdges } from "@/lib/forum-content";
 import type { AuthSessionUser, Comment as UiComment, ForumPostDetailResponse } from "@/types/forum";
 import {
   MessageSquare,
@@ -1647,7 +1647,7 @@ const PostDetail = () => {
     }
     if (!detail?.post.id) return;
 
-    const safeContent = (content || "").toString().trim();
+    const safeContent = trimForumContentEdges(content || "");
     let pendingImagePreviewUrl = "";
     if (imageFile instanceof File) {
       pendingImagePreviewUrl = URL.createObjectURL(imageFile);
@@ -1732,7 +1732,7 @@ const PostDetail = () => {
       return next;
     });
 
-    const normalizedContent = (content || "").toString().trim();
+    const normalizedContent = trimForumContentEdges(content || "");
     let pendingImagePreviewUrl = "";
     if (imageFile instanceof File) {
       pendingImagePreviewUrl = URL.createObjectURL(imageFile);
@@ -2311,15 +2311,16 @@ const PostDetail = () => {
                       : "clamp(220px, 52vh, 560px)"
                     : "320px"
                 }
+                footerContent={(
+                  <span
+                    className={`text-[11px] ${
+                      overEditDialogLimit ? "text-destructive" : "text-muted-foreground"
+                    }`}
+                  >
+                    {editDialogContentLength}/{isEditTargetPost ? FORUM_POST_MAX_LENGTH : FORUM_COMMENT_MAX_LENGTH}
+                  </span>
+                )}
               />
-
-              <p
-                className={`mt-1 text-right text-[11px] ${
-                  overEditDialogLimit ? "text-destructive" : "text-muted-foreground"
-                }`}
-              >
-                {editDialogContentLength}/{isEditTargetPost ? FORUM_POST_MAX_LENGTH : FORUM_COMMENT_MAX_LENGTH}
-              </p>
             </div>
 
             <DialogFooter>

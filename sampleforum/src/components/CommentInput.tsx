@@ -3,7 +3,7 @@ import { ImageIcon, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { fetchAuthSession } from "@/lib/forum-api";
-import { measureForumTextLength } from "@/lib/forum-content";
+import { measureForumTextLength, trimForumContentEdges } from "@/lib/forum-content";
 import { FORUM_COMMENT_MAX_LENGTH, FORUM_COMMENT_MIN_LENGTH } from "@/lib/forum-limits";
 import type { AuthSessionUser } from "@/types/forum";
 
@@ -159,7 +159,7 @@ export const CommentInput = memo(function CommentInput({
 
   const handleSubmit = () => {
     if (submitting) return;
-    const normalized = (content || "").toString().trim();
+    const normalized = trimForumContentEdges(content || "");
     const visibleLength = measureForumTextLength(normalized);
     const hasImage = pendingImageFile instanceof File;
     if (!normalized && !hasImage) {
@@ -169,7 +169,7 @@ export const CommentInput = memo(function CommentInput({
       return;
     }
 
-    onSubmit(content, pendingImageFile);
+    onSubmit(normalized, pendingImageFile);
     setContent("");
     clearPendingImage();
     if (!autoFocus) setExpanded(false);
@@ -183,7 +183,7 @@ export const CommentInput = memo(function CommentInput({
     picker.click();
   };
 
-  const normalizedContent = (content || "").toString().trim();
+  const normalizedContent = trimForumContentEdges(content || "");
   const contentLength = measureForumTextLength(normalizedContent);
   const overLimit = contentLength > FORUM_COMMENT_MAX_LENGTH;
   const underMin = Boolean(normalizedContent) && contentLength < FORUM_COMMENT_MIN_LENGTH;

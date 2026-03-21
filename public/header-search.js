@@ -190,6 +190,9 @@
             const href = `/manga/${encodeURIComponent(slug)}`;
             const coverUrl = buildCoverUrl(item.cover, item.coverUpdatedAt);
             const statusLabel = status || "Đang cập nhật";
+            const isAdult = Boolean(item && item.isAdult);
+            const coverStateClass = isAdult ? " header-search-item__cover--adult" : "";
+            const coverDataAttr = isAdult ? ' data-sensitive="adult"' : "";
             const coverHtml = coverUrl
               ? `<img src="${escapeHtml(coverUrl)}" alt="" loading="lazy" decoding="async" />`
               : '<span class="header-search-item__cover--empty">?</span>';
@@ -197,7 +200,7 @@
             return `
               <li>
                 <a class="header-search-item" href="${href}" role="option" id="header-search-option-${index}">
-                  <span class="header-search-item__cover">${coverHtml}</span>
+                  <span class="header-search-item__cover${coverStateClass}"${coverDataAttr}>${coverHtml}</span>
                   <span class="header-search-item__meta">
                     <span class="header-search-item__title">${escapeHtml(title)}</span>
                     <span class="header-search-item__status">${escapeHtml(statusLabel)}</span>
@@ -231,6 +234,7 @@
           const response = await fetch(
             `${ENDPOINT}?q=${encodeURIComponent(query)}&limit=${MAX_RESULTS}`,
             {
+              cache: "no-store",
               headers: {
                 Accept: "application/json"
               },

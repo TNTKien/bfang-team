@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import { PostCard } from "@/components/PostCard";
@@ -47,25 +47,67 @@ const renderPostCard = (postOverrides: Partial<Post> = {}) =>
     </MemoryRouter>
   );
 
-describe("PostCard preview fade", () => {
-  it("shows fade teaser for long collapsed previews", () => {
-    const { container } = renderPostCard();
+const setPreviewOverflow = (container: HTMLElement, hasOverflow: boolean) => {
+  const preview = container.querySelector(".forum-card-preview-collapsed") as HTMLElement | null;
+  expect(preview).not.toBeNull();
+  if (!preview) return;
 
-    expect(container.querySelector(".forum-card-preview-fade")).not.toBeNull();
+  const scrollHeight = hasOverflow ? 260 : 120;
+  const clientHeight = hasOverflow ? 120 : 120;
+
+  Object.defineProperty(preview, "scrollHeight", {
+    configurable: true,
+    value: scrollHeight,
+  });
+  Object.defineProperty(preview, "clientHeight", {
+    configurable: true,
+    value: clientHeight,
+  });
+
+  window.dispatchEvent(new Event("resize"));
+};
+
+describe("PostCard preview fade", () => {
+  it("shows fade teaser when preview overflows collapsed height", async () => {
+    const { container } = renderPostCard();
+    setPreviewOverflow(container, true);
+
+    await waitFor(() => {
+      expect(container.querySelector(".forum-card-preview-fade")).not.toBeNull();
+    });
     expect(screen.queryByRole("button", { name: /xem thêm/i })).toBeNull();
   });
 
-  it("keeps teaser state without preview action buttons", () => {
+  it("keeps teaser state without preview action buttons", async () => {
     const { container } = renderPostCard();
+    setPreviewOverflow(container, true);
 
-    expect(container.querySelector(".forum-card-preview-fade")).not.toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector(".forum-card-preview-fade")).not.toBeNull();
+    });
     expect(screen.queryByRole("button", { name: /thu gọn/i })).toBeNull();
   });
 
-  it("does not show fade teaser for short previews", () => {
+  it("does not show fade teaser for non-overflow previews", async () => {
     const { container } = renderPostCard({ content: "<p>Ngắn gọn</p>" });
+    setPreviewOverflow(container, false);
 
-    expect(container.querySelector(".forum-card-preview-fade")).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector(".forum-card-preview-fade")).toBeNull();
+    });
     expect(screen.queryByRole("button", { name: /xem thêm/i })).toBeNull();
+  });
+
+  it("does not render embedded media tags in preview content", async () => {
+    const { container } = renderPostCard({
+      content:
+        '<p>Co noi dung</p><img src="https://example.com/a.jpg" alt="a"/><video src="https://example.com/v.mp4"></video><iframe src="https://example.com/embed"></iframe>',
+    });
+
+    await waitFor(() => {
+      const preview = container.querySelector(".forum-card-preview-collapsed");
+      expect(preview).not.toBeNull();
+      expect(preview?.querySelector("img,video,iframe,picture,source")).toBeNull();
+    });
   });
 });

@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 type ForumRichContentProps = {
   html: string;
   className?: string;
+  stripMedia?: boolean;
 };
 
 const toSafeText = (value: unknown): string => String(value == null ? "" : value).trim();
@@ -67,13 +68,48 @@ const extractCandidateUrls = (html: string): string[] => {
   );
 };
 
-export const ForumRichContent = ({ html, className }: ForumRichContentProps) => {
-  const [renderedHtml, setRenderedHtml] = useState<string>(toSafeText(html) ? String(html) : "");
+const removeEmbeddedMediaTags = (html: string): string => {
+  const source = String(html || "");
+  if (!source) return "";
+
+  if (typeof DOMParser === "function") {
+    const parsed = new DOMParser().parseFromString(source, "text/html");
+    parsed.body
+      .querySelectorAll("img, picture, source, video, audio, iframe, embed, object")
+      .forEach((node) => {
+        node.remove();
+      });
+
+    parsed.body.querySelectorAll("a").forEach((anchor) => {
+      const hasVisualChildren = Boolean(anchor.querySelector("img,picture,source,video,audio,iframe,embed,object"));
+      const text = toSafeText(anchor.textContent);
+      if (!hasVisualChildren && text) return;
+      if (!anchor.children.length && !text) {
+        anchor.remove();
+      }
+    });
+
+    return parsed.body.innerHTML;
+  }
+
+  return source
+    .replace(/<\s*img\b[^>]*>/gi, "")
+    .replace(/<\s*(picture|video|audio|iframe|embed|object)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<\s*source\b[^>]*>/gi, "");
+};
+
+const resolveRenderedHtml = (html: string, stripMedia: boolean): string => {
+  const source = String(html || "");
+  return stripMedia ? removeEmbeddedMediaTags(source) : source;
+};
+
+export const ForumRichContent = ({ html, className, stripMedia = false }: ForumRichContentProps) => {
+  const [renderedHtml, setRenderedHtml] = useState<string>(() => resolveRenderedHtml(html, stripMedia));
   const [viewerImage, setViewerImage] = useState<{ src: string; alt: string } | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const source = String(html || "");
+    const source = resolveRenderedHtml(html, stripMedia);
     setRenderedHtml(source);
 
     const candidateUrls = extractCandidateUrls(source);
@@ -127,66 +163,70 @@ export const ForumRichContent = ({ html, className }: ForumRichContentProps) => 
     return () => {
       cancelled = true;
     };
-  }, [html]);
+  }, [html, stripMedia]);
 
   useEffect(() => {
     const root = contentRef.current;
     if (!root) return;
-
-    const interactiveImages = Array.from(root.querySelectorAll<HTMLImageElement>('img:not([src*="/stickers/"])'));
-    if (!interactiveImages.length) return;
-
-    const cleanups = interactiveImages.map((image) => {
-      const handleClick = () => {
-        const src = toSafeText(image.getAttribute("src") || image.currentSrc || image.src || "");
-        if (!src) return;
-        setViewerImage({
-          src,
-          alt: toSafeText(image.getAttribute("alt") || "Ảnh bài viết") || "Ảnh bài viết",
-        });
-      };
-
-      image.addEventListener("click", handleClick);
-      return () => image.removeEventListener("click", handleClick);
-    });
-
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
+    root.innerHTML = renderedHtml;
   }, [renderedHtml]);
+
+  useEffect(() => {
+    if (stripMedia) return;
+    const root = contentRef.current;
+    if (!root) return;
+
+    const handleClick = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLImageElement)) return;
+      const sourceUrl = toSafeText(target.getAttribute("src") || target.currentSrc || target.src || "");
+      if (!sourceUrl || sourceUrl.includes("/stickers/")) return;
+      setViewerImage({
+        src: sourceUrl,
+        alt: toSafeText(target.getAttribute("alt") || "Ảnh bài viết") || "Ảnh bài viết",
+      });
+    };
+
+    root.addEventListener("click", handleClick);
+    return () => {
+      root.removeEventListener("click", handleClick);
+    };
+  }, [stripMedia]);
 
   return (
     <>
-      <div ref={contentRef} className={className} dangerouslySetInnerHTML={{ __html: renderedHtml }} />
-      <Dialog open={Boolean(viewerImage)} onOpenChange={(open) => { if (!open) setViewerImage(null); }}>
-        <DialogContent
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              setViewerImage(null);
-            }
-          }}
-          className="inset-0 left-0 top-0 flex h-screen w-screen max-w-none translate-x-0 translate-y-0 items-center justify-center border-none bg-transparent p-0 shadow-none [&>button:not(.forum-image-viewer-close)]:hidden"
-        >
-          <DialogTitle className="sr-only">Xem ảnh gốc</DialogTitle>
-          <DialogClose asChild>
-            <button
-              type="button"
-              aria-label="Đóng xem ảnh"
-              onClick={() => setViewerImage(null)}
-              className="forum-image-viewer-close fixed right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white transition-colors hover:bg-black/72"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </DialogClose>
-          {viewerImage ? (
-            <img
-              src={viewerImage.src}
-              alt={viewerImage.alt}
-              className="block h-auto max-h-screen w-auto max-w-[90vw] object-contain"
-            />
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      <div ref={contentRef} className={className} />
+      {!stripMedia ? (
+        <Dialog open={Boolean(viewerImage)} onOpenChange={(open) => { if (!open) setViewerImage(null); }}>
+          <DialogContent
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                setViewerImage(null);
+              }
+            }}
+            className="inset-0 left-0 top-0 flex h-screen w-screen max-w-none translate-x-0 translate-y-0 items-center justify-center border-none bg-transparent p-0 shadow-none [&>button:not(.forum-image-viewer-close)]:hidden"
+          >
+            <DialogTitle className="sr-only">Xem ảnh gốc</DialogTitle>
+            <DialogClose asChild>
+              <button
+                type="button"
+                aria-label="Đóng xem ảnh"
+                onClick={() => setViewerImage(null)}
+                className="forum-image-viewer-close fixed right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white transition-colors hover:bg-black/72"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </DialogClose>
+            {viewerImage ? (
+              <img
+                src={viewerImage.src}
+                alt={viewerImage.alt}
+                className="block h-auto max-h-screen w-auto max-w-[90vw] object-contain"
+              />
+            ) : null}
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </>
   );
 };

@@ -258,7 +258,7 @@
               <% const featuredStatusClass = manga.status === "Hoàn thành" ? "is-complete" : manga.status === "Tạm dừng" ? "is-hiatus" : "is-ongoing"; %>
               <article class="manga-card manga-card--featured">
                 <a href="/manga/<%= manga.slug %>">
-                  <div class="cover">
+                  <div class="cover <%= manga.isAdult ? "cover--adult" : "" %>" <%= manga.isAdult ? "data-adult-cover" : "" %>>
                     <% if (manga.cover) { %>
                       <% const featuredCoverBaseUrl = cacheBust(manga.cover, manga.coverUpdatedAt); %>
                       <% const featuredCoverSources = buildSafeCoverSources(featuredCoverBaseUrl, {
@@ -373,7 +373,7 @@
               <% const latestStatusClass = manga.status === "Hoàn thành" ? "is-complete" : manga.status === "Tạm dừng" ? "is-hiatus" : "is-ongoing"; %>
               <article class="manga-card manga-card--list">
                 <a href="/manga/<%= manga.slug %>">
-                  <div class="cover">
+                  <div class="cover <%= manga.isAdult ? "cover--adult" : "" %>" <%= manga.isAdult ? "data-adult-cover" : "" %>>
                     <% if (manga.cover) { %>
                       <% const latestCoverBaseUrl = cacheBust(manga.cover, manga.coverUpdatedAt); %>
                       <% const latestCoverSources = buildSafeCoverSources(latestCoverBaseUrl, {

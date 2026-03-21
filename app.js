@@ -48,6 +48,7 @@ app.locals.isForumPageEnabled = false;
 app.locals.forumPageEnabled = false;
 app.locals.commentImageUploadsEnabled = false;
 app.locals.messageImageUploadsEnabled = false;
+app.locals.adultContentControlEnabled = true;
 const PORT = process.env.PORT || 3000;
 const appEnv = (process.env.APP_ENV || process.env.NODE_ENV || "development")
   .toString()
@@ -68,6 +69,8 @@ const isNewsPageEnabled = parseEnvBoolean(process.env.NEWS_PAGE_ENABLED, true);
 const isForumPageEnabled = parseEnvBoolean(process.env.FORUM_PAGE_ENABLED, false);
 const isForumPageAvailable = isForumPageEnabled && isForumFrontendAvailable;
 const isGoogleDriveUploadEnabled = parseEnvBoolean(process.env.GOOGLE_DRIVE_UPLOAD_ENABLED, false);
+const isAdultContentControlBypassed = parseEnvBoolean(process.env.ADULT_CONTENT_CONTROL, true);
+const isAdultContentControlEnabled = !isAdultContentControlBypassed;
 const commentImageUploadsEnabled =
   isGoogleDriveUploadEnabled && parseEnvBoolean(process.env.COMMENT_IMAGE_UPLOAD_ENABLED, false);
 const messageImageUploadsEnabled =
@@ -80,6 +83,7 @@ app.locals.newsPageEnabled = isNewsPageEnabled;
 app.locals.forumPageEnabled = isForumPageAvailable;
 app.locals.commentImageUploadsEnabled = commentImageUploadsEnabled;
 app.locals.messageImageUploadsEnabled = messageImageUploadsEnabled;
+app.locals.adultContentControlEnabled = isAdultContentControlEnabled;
 
 const isTruthyInput = (value) => {
   const raw = (value == null ? "" : String(value)).trim().toLowerCase();
@@ -3873,6 +3877,7 @@ const coreRuntime = configureCoreRuntime(app, {
   stickersDir,
   trustProxy,
   uploadDir,
+  adultContentControlEnabled: isAdultContentControlEnabled,
 });
 const {
   prebuildMinifiedScriptsAtStartup,
@@ -4059,6 +4064,7 @@ const appContainer = {
   isPasswordAdminEnabled,
   isForumPageAvailable,
   isForumPageEnabled,
+  adultContentControlEnabled: isAdultContentControlEnabled,
   isTruthyInput,
   listQuery,
   loadCoverTempBuffer,

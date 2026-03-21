@@ -35,6 +35,7 @@
   <% const isAdminRequest = typeof isAdminPath === "boolean"
     ? isAdminPath
     : requestPathValue === "/admin" || requestPathValue.startsWith("/admin/"); %>
+  <% const isAdultContentControlEnabled = Boolean(adultContentControlEnabled); %>
   <% const isChapterPath = /^\/manga\/[^/]+\/chapters\/[^/]+$/.test(requestPathValue); %>
   <% const isMangaDetailPath = /^\/manga\/[^/]+$/.test(requestPathValue); %>
   <% const isMangaListPath = requestPathValue === "/manga"; %>
@@ -69,6 +70,7 @@
     bookmarks: false,
     notifications: false,
     messagesIndicator: !isAdminRequest,
+    adultContent: !isAdminRequest && isAdultContentControlEnabled,
     homepageRefresh: isHomepagePath,
     comments: false,
     mangaDetail: isMangaDetailPath,
@@ -185,6 +187,38 @@
     preloadImages,
     cspNonce
   }) %>
+  <% if (isAdultContentControlEnabled) { %>
+    <style nonce="<%= cspNonce || '' %>">
+      .cover--adult {
+        position: relative;
+      }
+
+      .cover--adult img {
+        filter: blur(14px) saturate(0.78) brightness(0.68);
+        transform: scale(1.04);
+        transform-origin: center;
+      }
+
+      .cover--adult::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.58));
+        pointer-events: none;
+      }
+
+      .cover--adult.is-adult-revealed img,
+      .cover--adult[data-adult-revealed="1"] img {
+        filter: none;
+        transform: none;
+      }
+
+      .cover--adult.is-adult-revealed::after,
+      .cover--adult[data-adult-revealed="1"]::after {
+        display: none;
+      }
+    </style>
+  <% } %>
   <%- include("head-scripts", {
     isHeadScriptEnabled,
     flowbiteScriptUrl,

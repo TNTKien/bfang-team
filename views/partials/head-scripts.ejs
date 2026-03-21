@@ -35,6 +35,9 @@
   <% if (isHeadScriptEnabled("messagesIndicator")) { %>
     <script src="<%= assetUrl("/messages-indicator.js") %>" defer></script>
   <% } %>
+  <% if (isHeadScriptEnabled("adultContent")) { %>
+    <script src="<%= assetUrl("/adult-content.js") %>" defer></script>
+  <% } %>
   <% if (isHeadScriptEnabled("homepageRefresh")) { %>
     <script src="<%= assetUrl("/homepage-refresh.js") %>" defer></script>
   <% } %>

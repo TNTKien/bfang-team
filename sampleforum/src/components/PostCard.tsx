@@ -1,6 +1,6 @@
 import { MessageSquare, Pin, Lock, Megaphone, Bookmark, Share2, MoreHorizontal, Edit3, Trash2 } from "lucide-react";
 import { Post } from "@/types/forum";
-import { useCallback, useEffect, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ReactionBar, ReactionType, getDefaultReactionCounts } from "@/components/ReactionBar";
 import { UserInfo } from "@/components/UserInfo";
@@ -161,10 +161,20 @@ export const PostCard = memo(function PostCard({
   };
 
   const contentPreview = post.content;
-  const isLong = contentPreview.length > 200;
-  const displayContent = contentPreview.slice(0, 200);
-  const canExpandPreview = isLong || hasPreviewOverflow;
-  const shouldFadePreview = canExpandPreview;
+  const displayContent = contentPreview;
+  const previewTextLength = useMemo(
+    () =>
+      String(displayContent || "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim().length,
+    [displayContent]
+  );
+  const previewBlockCount = useMemo(
+    () => (String(displayContent || "").match(/<(p|li|blockquote|pre|h[1-6])\b/gi) || []).length,
+    [displayContent]
+  );
+  const shouldFadePreview = hasPreviewOverflow || previewTextLength > 380 || previewBlockCount > 6;
   const canLockPost = Boolean((post.permissions?.isOwner || canModerateForum) && post.id);
   const canPinPost = Boolean(canModerateForum && post.id);
   const canManagePost = Boolean(
@@ -279,19 +289,78 @@ export const PostCard = memo(function PostCard({
       return;
     }
 
+    let frameId = 0;
+    const timeoutIds: number[] = [];
+    let cancelled = false;
+
     const measure = () => {
       const nextOverflow = node.scrollHeight - node.clientHeight > 2;
       setHasPreviewOverflow(nextOverflow);
     };
 
-    const frameId = window.requestAnimationFrame(measure);
-    window.addEventListener("resize", measure);
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measure);
+    };
+
+    const handleDeferredMediaLoad = (event: Event) => {
+      if (!(event.target instanceof HTMLElement)) return;
+      const tagName = event.target.tagName;
+      if (tagName === "IMG" || tagName === "VIDEO" || tagName === "IFRAME") {
+        scheduleMeasure();
+      }
+    };
+
+    const mutationObserver = new MutationObserver(() => {
+      scheduleMeasure();
+    });
+    mutationObserver.observe(node, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+
+    const resizeObserver =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver(() => {
+            scheduleMeasure();
+          })
+        : null;
+    if (resizeObserver) {
+      resizeObserver.observe(node);
+    }
+
+    scheduleMeasure();
+    timeoutIds.push(window.setTimeout(scheduleMeasure, 0));
+    timeoutIds.push(window.setTimeout(scheduleMeasure, 120));
+    timeoutIds.push(window.setTimeout(scheduleMeasure, 360));
+
+    if (typeof document !== "undefined" && document.fonts && typeof document.fonts.ready?.then === "function") {
+      document.fonts.ready
+        .then(() => {
+          if (cancelled) return;
+          scheduleMeasure();
+        })
+        .catch(() => null);
+    }
+
+    window.addEventListener("resize", scheduleMeasure);
+    node.addEventListener("load", handleDeferredMediaLoad, true);
 
     return () => {
+      cancelled = true;
       window.cancelAnimationFrame(frameId);
-      window.removeEventListener("resize", measure);
+      timeoutIds.forEach((id) => {
+        window.clearTimeout(id);
+      });
+      window.removeEventListener("resize", scheduleMeasure);
+      node.removeEventListener("load", handleDeferredMediaLoad, true);
+      mutationObserver.disconnect();
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
     };
-  }, [displayContent]);
+  }, []);
 
   if (isDeleted) {
     return null;
@@ -302,6 +371,14 @@ export const PostCard = memo(function PostCard({
       <article
         className="rounded-lg border border-border bg-card overflow-hidden transition-colors hover:border-muted-foreground/20 animate-fade-in cursor-pointer"
         onClick={(event) => {
+          if (Date.now() < suppressCardNavigationUntilRef.current) return;
+          const target = event.target as HTMLElement;
+          if (target.closest("button, a, input, textarea, [data-no-nav='true']")) return;
+          navigate(buildPostDetailUrl());
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
           if (Date.now() < suppressCardNavigationUntilRef.current) return;
           const target = event.target as HTMLElement;
           if (target.closest("button, a, input, textarea, [data-no-nav='true']")) return;
@@ -423,6 +500,11 @@ export const PostCard = memo(function PostCard({
         {/* Title */}
           <h3
             onClick={() => navigate(buildPostDetailUrl())}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              navigate(buildPostDetailUrl());
+            }}
             className="text-sm font-semibold text-foreground leading-snug mb-1.5 hover:text-primary cursor-pointer transition-colors break-words [overflow-wrap:anywhere]"
           >
             {post.title}
@@ -434,7 +516,7 @@ export const PostCard = memo(function PostCard({
             ref={previewRef}
             className={`forum-rich-content forum-card-preview-collapsed ${shouldFadePreview ? "forum-card-preview-fade" : ""}`}
           >
-            <ForumRichContent html={displayContent} />
+            <ForumRichContent html={displayContent} stripMedia />
           </div>
         </div>
 
@@ -443,6 +525,7 @@ export const PostCard = memo(function PostCard({
           <ReactionBar counts={reactions} userReaction={userReaction} onReact={handleReact} />
 
           <button
+            type="button"
             onClick={() => navigate(buildPostDetailUrl())}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1.5 rounded-md hover:bg-accent"
           >
@@ -462,6 +545,7 @@ export const PostCard = memo(function PostCard({
           </button>
 
           <button
+            type="button"
             onClick={handleBookmark}
             className={`flex items-center gap-1.5 text-xs transition-colors px-2 py-1.5 rounded-md hover:bg-accent ${
               bookmarked ? "text-sticky" : "text-muted-foreground hover:text-foreground"

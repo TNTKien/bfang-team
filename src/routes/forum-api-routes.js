@@ -95,6 +95,28 @@ const registerForumApiRoutes = (app, deps) => {
       : null;
 
   const toText = (value) => (value == null ? "" : String(value)).trim();
+  const trimForumContentEdges = (value) => {
+    let output = toText(value);
+    if (!output) return "";
+    if (!/<\/?[a-z][\s\S]*>/i.test(output)) {
+      return output;
+    }
+
+    let previous = "";
+    while (output && output !== previous) {
+      previous = output;
+      output = output
+        .replace(/^(?:\s|&nbsp;|<br\s*\/?>)+/i, "")
+        .replace(/(?:\s|&nbsp;|<br\s*\/?>)+$/i, "")
+        .replace(/^(?:<(p|div)\b[^>]*>(?:\s|&nbsp;|<br\s*\/?>)*<\/\1>\s*)+/i, "")
+        .replace(/(?:\s*<(p|div)\b[^>]*>(?:\s|&nbsp;|<br\s*\/?>)*<\/\1>)+$/i, "")
+        .replace(/^(<(p|div)\b[^>]*>)(?:\s|&nbsp;|<br\s*\/?>)+([\s\S]*)$/i, "$1$3")
+        .replace(/^([\s\S]*?)(?:\s|&nbsp;|<br\s*\/?>)+(<\/(p|div)>\s*)$/i, "$1$2")
+        .trim();
+    }
+
+    return output;
+  };
   const readSafeUploadedImageUrl = (value) => {
     const normalized =
       typeof normalizeUploadedImageUrl === "function"
@@ -836,7 +858,7 @@ const registerForumApiRoutes = (app, deps) => {
       }
 
       const title = toText(req.body && req.body.title).slice(0, 220);
-      const bodyContent = toText(req.body && req.body.content);
+      const bodyContent = trimForumContentEdges(req.body && req.body.content);
       const sectionSlug = toText(req.body && req.body.categorySlug);
       const normalizedContent = buildNormalizedForumPostContent({
         title,
@@ -883,7 +905,7 @@ const registerForumApiRoutes = (app, deps) => {
 
       const postId = normalizePositiveInt(req.params.id, 0);
       const parentIdInput = normalizePositiveInt(req.body && req.body.parentId, 0);
-      const content = toText(req.body && req.body.content);
+      const content = trimForumContentEdges(req.body && req.body.content);
       const imageUrl = readSafeUploadedImageUrl(req.body && req.body.imageUrl);
       if (imageUrl && !commentImageUploadsEnabled) {
         return res.status(503).json({ ok: false, error: "Tính năng gửi ảnh trong bình luận hiện đang tắt." });
@@ -1682,6 +1704,8 @@ const registerForumApiRoutes = (app, deps) => {
   app.get(
     "/forum/api/home",
     asyncHandler(async (req, res) => {
+      res.vary("Cookie");
+      res.set("Cache-Control", "private, no-store");
       const requestedPage = normalizePositiveInt(req.query.page, 1);
       const perPageRequested = normalizePositiveInt(req.query.perPage, DEFAULT_PER_PAGE);
       const perPage = Math.min(Math.max(perPageRequested, 1), MAX_PER_PAGE);
@@ -1886,6 +1910,7 @@ const registerForumApiRoutes = (app, deps) => {
         }),
         posts: postRows.map((row) =>
           mapPostSummary(row, {
+            includeContent: true,
             viewer,
             authorDecorationMap,
             mentionByCommentId,
@@ -2075,6 +2100,8 @@ const registerForumApiRoutes = (app, deps) => {
   app.get(
     "/forum/api/saved-posts",
     asyncHandler(async (req, res) => {
+      res.vary("Cookie");
+      res.set("Cache-Control", "private, no-store");
       const requestedPage = normalizePositiveInt(req.query.page, 1);
       const requestedPerPage = normalizePositiveInt(req.query.perPage, 0);
       const requestedLimit = normalizePositiveInt(req.query.limit, 0);
@@ -2167,6 +2194,7 @@ const registerForumApiRoutes = (app, deps) => {
         }),
         posts: postRows.map((row) =>
           mapPostSummary(row, {
+            includeContent: true,
             viewer,
             authorDecorationMap,
             mentionByCommentId,

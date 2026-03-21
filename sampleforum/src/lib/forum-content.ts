@@ -466,11 +466,34 @@ const decorateMentionsInHtml = (html: string, mentionItems: MentionDecoratedItem
   return body.innerHTML;
 };
 
+export const trimForumContentEdges = (value: string): string => {
+  let output = String(value || "").trim();
+  if (!output) return "";
+  if (!/<\/?[a-z][\s\S]*>/i.test(output)) {
+    return output;
+  }
+
+  let previous = "";
+  while (output && output !== previous) {
+    previous = output;
+    output = output
+      .replace(/^(?:\s|&nbsp;|<br\s*\/?>)+/i, "")
+      .replace(/(?:\s|&nbsp;|<br\s*\/?>)+$/i, "")
+      .replace(/^(?:<(p|div)\b[^>]*>(?:\s|&nbsp;|<br\s*\/?>)*<\/\1>\s*)+/i, "")
+      .replace(/(?:\s*<(p|div)\b[^>]*>(?:\s|&nbsp;|<br\s*\/?>)*<\/\1>)+$/i, "")
+      .replace(/^(<(p|div)\b[^>]*>)(?:\s|&nbsp;|<br\s*\/?>)+([\s\S]*)$/i, "$1$3")
+      .replace(/^([\s\S]*?)(?:\s|&nbsp;|<br\s*\/?>)+(<\/(p|div)>\s*)$/i, "$1$2")
+      .trim();
+  }
+
+  return output;
+};
+
 export const normalizeForumContentHtml = (
   value: string,
   mentionItems: MentionDecoratedItem[] = []
 ): string => {
-  const raw = String(value || "").trim();
+  const raw = trimForumContentEdges(value);
   if (!raw) return "";
 
   const hasHtmlTag = /<\/?[a-z][\s\S]*>/i.test(raw);

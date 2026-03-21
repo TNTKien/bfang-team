@@ -158,7 +158,7 @@
                 <% const catalogStatusClass = manga.status === "Hoàn thành" ? "is-complete" : manga.status === "Tạm dừng" ? "is-hiatus" : "is-ongoing"; %>
                 <article class="manga-card manga-card--list">
                   <a href="/manga/<%= manga.slug %>">
-                    <div class="cover">
+                    <div class="cover <%= manga.isAdult ? "cover--adult" : "" %>" <%= manga.isAdult ? "data-adult-cover" : "" %>>
                       <% if (manga.cover) { %>
                         <% const catalogCoverBaseUrl = cacheBust(manga.cover, manga.coverUpdatedAt); %>
                         <% const catalogCover172 = appendCoverVariant(catalogCoverBaseUrl, 172, 229, 95); %>

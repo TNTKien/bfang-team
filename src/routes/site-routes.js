@@ -64,6 +64,7 @@ const registerSiteRoutes = (app, deps) => {
     isOauthProviderEnabled,
     isServerSessionVersionMismatch,
     isUploadedAvatarUrl,
+    adultContentControlEnabled,
     listAuthIdentityRowsForUser,
     listQueryBase,
     listQueryOrder,
@@ -146,9 +147,10 @@ const registerSiteRoutes = (app, deps) => {
   const HOMEPAGE_LATEST_LIMIT = 18;
   const HOMEPAGE_RANDOM_SLICE_LIMIT = 16;
   const teamCommunityNameCache = new Map();
-  let homepageRandomSliceCache = [];
-  let homepageRandomSliceCacheExpiresAt = 0;
-  let homepageRandomSliceCacheSignature = "";
+  const HOMEPAGE_CACHE_AUDIENCE_SIGNED_IN = "signed-in";
+  const HOMEPAGE_CACHE_AUDIENCE_SIGNED_OUT = "signed-out";
+  const homepageCacheByAudience = new Map();
+  const homepageRandomSliceCacheByAudience = new Map();
   const COMMENT_PANEL_PER_PAGE = 20;
   const NOTIFICATION_TYPE_TEAM_JOIN_REQUEST = "team_join_request";
   const NOTIFICATION_TYPE_TEAM_JOIN_APPROVED = "team_join_approved";
@@ -183,6 +185,93 @@ const registerSiteRoutes = (app, deps) => {
       .toString()
       .trim() || "chapter-view-fallback";
   let chapterViewSchemaReadyPromise = null;
+
+  const MANGA_HAS_CHAPTER_SQL = "EXISTS (SELECT 1 FROM chapters c_has WHERE c_has.manga_id = m.id)";
+  const isAdultContentControlActive = toBooleanFlag(adultContentControlEnabled);
+  const MANGA_HAS_ADULT_GENRE_SQL = `
+    EXISTS (
+      SELECT 1
+      FROM manga_genres mg_adult
+      JOIN genres g_adult ON g_adult.id = mg_adult.genre_id
+      WHERE mg_adult.manga_id = m.id
+        AND (
+          lower(trim(g_adult.name)) = 'adult'
+          OR lower(trim(g_adult.name)) = '18+'
+          OR lower(trim(g_adult.name)) = '18 +'
+          OR lower(trim(g_adult.name)) = 'r18'
+          OR lower(trim(g_adult.name)) = 'r-18'
+          OR lower(trim(g_adult.name)) = 'nsfw'
+          OR lower(trim(g_adult.name)) LIKE '%adult%'
+        )
+    )
+  `;
+
+  const buildHomepageAudienceCacheKey = (includeAdult) =>
+    includeAdult ? HOMEPAGE_CACHE_AUDIENCE_SIGNED_IN : HOMEPAGE_CACHE_AUDIENCE_SIGNED_OUT;
+
+  const isAuthenticatedRequest = (req) => {
+    const authUserId = req && req.session && req.session.authUserId
+      ? String(req.session.authUserId).trim()
+      : "";
+    return Boolean(authUserId);
+  };
+
+  const normalizeGenreLabelForAdultCheck = (value) =>
+    (value == null ? "" : String(value))
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/_/g, "")
+      .replace(/-/g, "")
+      .trim();
+
+  const isAdultGenreLabel = (value) => {
+    const normalized = normalizeGenreLabelForAdultCheck(value);
+    if (!normalized) return false;
+    return normalized === "adult"
+      || normalized === "18+"
+      || normalized === "r18"
+      || normalized === "nsfw"
+      || normalized.includes("adult");
+  };
+
+  const hasAdultGenre = (genresInput) => {
+    if (Array.isArray(genresInput)) {
+      return genresInput.some((genre) => isAdultGenreLabel(genre));
+    }
+    if (typeof genresInput === "string") {
+      return genresInput.split(",").some((genre) => isAdultGenreLabel(genre));
+    }
+    return false;
+  };
+
+  const isMangaRowAdult = (mangaRow) => {
+    if (!mangaRow || typeof mangaRow !== "object") return false;
+    if (toBooleanFlag(mangaRow.is_adult)) return true;
+    if (hasAdultGenre(mangaRow.genre_agg)) return true;
+    if (hasAdultGenre(mangaRow.genres)) return true;
+    return false;
+  };
+
+  const shouldExposeAdultMarker = (mangaRow) =>
+    isAdultContentControlActive && isMangaRowAdult(mangaRow);
+
+  const shouldIncludeAdultMangaForRequest = (req) =>
+    !isAdultContentControlActive || isAuthenticatedRequest(req);
+
+  const isAdultMangaBlockedForRequest = (req, mangaRow) =>
+    isAdultContentControlActive && !isAuthenticatedRequest(req) && isMangaRowAdult(mangaRow);
+
+  const renderNotFoundPage = (req, res) =>
+    res.status(404).render("not-found", {
+      title: "Không tìm thấy",
+      team,
+      seo: buildSeoPayload(req, {
+        title: "Không tìm thấy",
+        description: siteNotFoundDescription,
+        robots: SEO_ROBOTS_NOINDEX,
+        canonicalPath: ensureLeadingSlash(req.path || "/")
+      })
+    });
 
   const readSafeUploadedImageUrl = (value) => {
     if (typeof normalizeUploadedImageUrl === "function") {
@@ -7568,12 +7657,15 @@ app.post(
   const buildHomepageRandomSliceCacheSignature = (randomPageSlices) =>
     crypto.createHash("sha256").update(JSON.stringify(randomPageSlices || [])).digest("hex");
 
-  const resolveHomepageRandomPageSlices = async () => {
+  const resolveHomepageRandomPageSlices = async (options = {}) => {
+    const includeAdult = Boolean(options && options.includeAdult);
+    const audienceKey = buildHomepageAudienceCacheKey(includeAdult);
     const now = Date.now();
-    if (homepageRandomSliceCacheExpiresAt > now) {
+    const cachedState = homepageRandomSliceCacheByAudience.get(audienceKey);
+    if (cachedState && cachedState.expiresAt > now) {
       return {
-        randomPageSlices: homepageRandomSliceCache,
-        randomPageSlicesSignature: homepageRandomSliceCacheSignature
+        randomPageSlices: cachedState.randomPageSlices,
+        randomPageSlicesSignature: cachedState.randomPageSlicesSignature
       };
     }
 
@@ -7581,6 +7673,7 @@ app.post(
     let randomPageSlices = [];
 
     if (cdnBaseUrl) {
+      const adultVisibilityClause = includeAdult ? "" : ` AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})`;
       const randomSliceRows = await dbAll(
         `
           SELECT
@@ -7596,6 +7689,8 @@ app.post(
           FROM chapters c
           JOIN manga m ON m.id = c.manga_id
           WHERE COALESCE(m.is_hidden, 0) = 0
+            AND ${MANGA_HAS_CHAPTER_SQL}
+            ${adultVisibilityClause}
             AND COALESCE(c.pages, 0) > 4
             AND COALESCE(c.processing_state, '') <> 'processing'
             AND COALESCE(c.pages_prefix, '') <> ''
@@ -7637,13 +7732,16 @@ app.post(
         .filter(Boolean);
     }
 
-    homepageRandomSliceCache = randomPageSlices;
-    homepageRandomSliceCacheSignature = buildHomepageRandomSliceCacheSignature(randomPageSlices);
-    homepageRandomSliceCacheExpiresAt = now + HOMEPAGE_RANDOM_SLICE_TTL_MS;
+    const nextCacheState = {
+      randomPageSlices,
+      randomPageSlicesSignature: buildHomepageRandomSliceCacheSignature(randomPageSlices),
+      expiresAt: now + HOMEPAGE_RANDOM_SLICE_TTL_MS
+    };
+    homepageRandomSliceCacheByAudience.set(audienceKey, nextCacheState);
 
     return {
-      randomPageSlices: homepageRandomSliceCache,
-      randomPageSlicesSignature: homepageRandomSliceCacheSignature
+      randomPageSlices: nextCacheState.randomPageSlices,
+      randomPageSlicesSignature: nextCacheState.randomPageSlicesSignature
     };
   };
 
@@ -7666,140 +7764,157 @@ app.post(
 
   const resolveHomepagePayload = async (options = {}) => {
     const forceFresh = Boolean(options && options.forceFresh);
+    const includeAdult = Boolean(options && options.includeAdult);
+    const audienceKey = buildHomepageAudienceCacheKey(includeAdult);
     const now = Date.now();
-    let homepagePayload = homepageCachePayload;
+    const cachedState = homepageCacheByAudience.get(audienceKey);
+    let homepagePayload = cachedState && cachedState.payload ? cachedState.payload : null;
 
     if (forceFresh) {
       homepagePayload = null;
     }
 
-    if (homepagePayload && homepageCacheExpiresAt > now) {
+    if (homepagePayload && cachedState && cachedState.expiresAt > now) {
       const homepageMetaRow = await dbGet("SELECT updated_at FROM homepage WHERE id = 1");
       const latestUpdatedAt = homepageMetaRow && homepageMetaRow.updated_at
         ? String(homepageMetaRow.updated_at).trim()
         : "";
-      if (latestUpdatedAt !== homepageCacheUpdatedAt) {
+      if (latestUpdatedAt !== (cachedState.updatedAt || "")) {
         homepagePayload = null;
       }
     }
 
-    if (!homepagePayload || homepageCacheExpiresAt <= now) {
+    if (!homepagePayload || !cachedState || cachedState.expiresAt <= now) {
       const homepageRow = await dbGet("SELECT * FROM homepage WHERE id = 1");
-    const homepageData = normalizeHomepageRow(homepageRow);
-    const notices = buildHomepageNotices(homepageData);
-    const featuredIds = homepageData.featuredIds.slice(0, 4);
-    let featuredRows = [];
+      const homepageData = normalizeHomepageRow(homepageRow);
+      const notices = buildHomepageNotices(homepageData);
+      const featuredIds = homepageData.featuredIds.slice(0, 4);
+      const adultVisibilityClause = includeAdult ? "" : ` AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})`;
+      let featuredRows = [];
 
-    if (featuredIds.length > 0) {
-      const placeholders = featuredIds.map(() => "?").join(",");
-      const rows = await dbAll(
-        `${listQueryBase} WHERE m.id IN (${placeholders}) AND COALESCE(m.is_hidden, 0) = 0`,
-        featuredIds
+      if (featuredIds.length > 0) {
+        const placeholders = featuredIds.map(() => "?").join(",");
+        const rows = await dbAll(
+          `${listQueryBase} WHERE m.id IN (${placeholders}) AND COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`,
+          featuredIds
+        );
+        const rowMap = new Map(rows.map((row) => [row.id, row]));
+        featuredRows = featuredIds.map((id) => rowMap.get(id)).filter(Boolean);
+      }
+
+      if (featuredRows.length === 0) {
+        featuredRows = await dbAll(
+          `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT 4`
+        );
+      }
+
+      const latestRows = await dbAll(
+        `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${HOMEPAGE_LATEST_LIMIT}`
       );
-      const rowMap = new Map(rows.map((row) => [row.id, row]));
-      featuredRows = featuredIds.map((id) => rowMap.get(id)).filter(Boolean);
-    }
-
-    if (featuredRows.length === 0) {
-      featuredRows = await dbAll(
-        `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 ${listQueryOrder} LIMIT 4`
+      const totalSeriesRow = await dbGet(
+        `SELECT COUNT(*) as count FROM manga m WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`
       );
-    }
+      const totalsRow = await dbGet(
+        `
+          SELECT COUNT(*) as total_chapters
+          FROM chapters c
+          JOIN manga m ON m.id = c.manga_id
+          WHERE COALESCE(m.is_hidden, 0) = 0
+            ${adultVisibilityClause}
+        `
+      );
+      const latestForumPostRows = isForumPageAvailable
+        ? await dbAll(
+            `
+              SELECT
+                p.id,
+                p.content,
+                p.created_at,
+                COALESCE(reply_stats.latest_activity_at, p.created_at) AS latest_activity_at,
+                p.author,
+                p.author_name,
+                p.author_avatar_url,
+                p.author_user_id,
+                COALESCE(u.username, '') AS user_username,
+                COALESCE(u.display_name, '') AS user_display_name,
+                COALESCE(u.avatar_url, '') AS user_avatar_url,
+                COALESCE(reply_stats.reply_count, 0) AS reply_count
+              FROM forum_posts p
+              LEFT JOIN users u ON u.id = p.author_user_id
+              LEFT JOIN LATERAL (
+                WITH RECURSIVE subtree AS (
+                  SELECT child.id, child.created_at
+                  FROM forum_posts child
+                  WHERE child.status = 'visible'
+                    AND COALESCE(child.client_request_id, '') ILIKE ?
+                    AND child.parent_id = p.id
+                  UNION ALL
+                  SELECT child.id, child.created_at
+                  FROM forum_posts child
+                  JOIN subtree ON child.parent_id = subtree.id
+                  WHERE child.status = 'visible'
+                    AND COALESCE(child.client_request_id, '') ILIKE ?
+                )
+                SELECT COUNT(*)::int AS reply_count, MAX(created_at) AS latest_activity_at
+                FROM subtree
+              ) reply_stats ON TRUE
+              WHERE p.status = 'visible'
+                AND p.parent_id IS NULL
+                AND COALESCE(p.client_request_id, '') ILIKE ?
+              ORDER BY COALESCE(reply_stats.latest_activity_at, p.created_at) DESC, p.created_at DESC, p.id DESC
+              LIMIT ?
+            `,
+            [HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_POST_LIMIT]
+          )
+        : [];
 
-    const latestRows = await dbAll(
-      `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 ${listQueryOrder} LIMIT ${HOMEPAGE_LATEST_LIMIT}`
-    );
-    const totalSeriesRow = await dbGet(
-      "SELECT COUNT(*) as count FROM manga WHERE COALESCE(is_hidden, 0) = 0"
-    );
-    const totalsRow = await dbGet(
-      `
-      SELECT COUNT(*) as total_chapters
-      FROM chapters c
-      JOIN manga m ON m.id = c.manga_id
-      WHERE COALESCE(m.is_hidden, 0) = 0
-    `
-    );
-    const latestForumPostRows = isForumPageAvailable
-      ? await dbAll(
-          `
-            SELECT
-              p.id,
-              p.content,
-              p.created_at,
-              COALESCE(reply_stats.latest_activity_at, p.created_at) AS latest_activity_at,
-              p.author,
-              p.author_name,
-              p.author_avatar_url,
-              p.author_user_id,
-              COALESCE(u.username, '') AS user_username,
-              COALESCE(u.display_name, '') AS user_display_name,
-              COALESCE(u.avatar_url, '') AS user_avatar_url,
-              COALESCE(reply_stats.reply_count, 0) AS reply_count
-            FROM forum_posts p
-            LEFT JOIN users u ON u.id = p.author_user_id
-            LEFT JOIN LATERAL (
-              WITH RECURSIVE subtree AS (
-                SELECT child.id, child.created_at
-                FROM forum_posts child
-                WHERE child.status = 'visible'
-                  AND COALESCE(child.client_request_id, '') ILIKE ?
-                  AND child.parent_id = p.id
-                UNION ALL
-                SELECT child.id, child.created_at
-                FROM forum_posts child
-                JOIN subtree ON child.parent_id = subtree.id
-                WHERE child.status = 'visible'
-                  AND COALESCE(child.client_request_id, '') ILIKE ?
-              )
-              SELECT COUNT(*)::int AS reply_count, MAX(created_at) AS latest_activity_at
-              FROM subtree
-            ) reply_stats ON TRUE
-            WHERE p.status = 'visible'
-              AND p.parent_id IS NULL
-              AND COALESCE(p.client_request_id, '') ILIKE ?
-            ORDER BY COALESCE(reply_stats.latest_activity_at, p.created_at) DESC, p.created_at DESC, p.id DESC
-            LIMIT ?
-          `,
-          [HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_POST_LIMIT]
-        )
-      : [];
+      const mappedFeatured = featuredRows.map((row) => {
+        const mapped = mapMangaListRow(row);
+        return {
+          ...mapped,
+          isAdult: shouldExposeAdultMarker(row)
+        };
+      });
+      const mappedLatest = latestRows.map((row) => {
+        const mapped = mapMangaListRow(row);
+        return {
+          ...mapped,
+          isAdult: shouldExposeAdultMarker(row)
+        };
+      });
+      const forumAuthorDecorationMap = await buildForumAuthorDecorationMap(latestForumPostRows);
+      const mappedLatestForumPosts = latestForumPostRows.map((row) => {
+        const postId = Number(row && row.id);
+        const safePostId = Number.isFinite(postId) && postId > 0 ? Math.floor(postId) : 0;
+        const title = extractForumTopicHeadline(row && row.content) || "Bài viết diễn đàn";
+        const authorDisplayName = (row && row.user_display_name ? String(row.user_display_name) : "").trim();
+        const authorUsername = (row && row.user_username ? String(row.user_username) : "").trim().toLowerCase();
+        const fallbackAuthor = (row && (row.author_name || row.author) ? String(row.author_name || row.author) : "").trim();
+        const authorName = authorDisplayName || (authorUsername ? `@${authorUsername}` : fallbackAuthor || "Thành viên");
+        const avatarCandidate = row && (row.user_avatar_url || row.author_avatar_url) ? String(row.user_avatar_url || row.author_avatar_url) : "";
+        const avatarUrl = typeof normalizeAvatarUrl === "function" ? normalizeAvatarUrl(avatarCandidate) : avatarCandidate.trim();
+        const metadataAuthor = authorDisplayName || authorUsername || fallbackAuthor || "Thành viên";
+        const authorUserId = row && row.author_user_id ? String(row.author_user_id).trim() : "";
+        const authorColor = authorUserId && forumAuthorDecorationMap.has(authorUserId)
+          ? forumAuthorDecorationMap.get(authorUserId) || ""
+          : "";
+        const sectionLabel = buildForumSectionLabel(row && row.content);
 
-    const mappedFeatured = featuredRows.map(mapMangaListRow);
-    const mappedLatest = latestRows.map(mapMangaListRow);
-    const forumAuthorDecorationMap = await buildForumAuthorDecorationMap(latestForumPostRows);
-    const mappedLatestForumPosts = latestForumPostRows.map((row) => {
-      const postId = Number(row && row.id);
-      const safePostId = Number.isFinite(postId) && postId > 0 ? Math.floor(postId) : 0;
-      const title = extractForumTopicHeadline(row && row.content) || "Bài viết diễn đàn";
-      const authorDisplayName = (row && row.user_display_name ? String(row.user_display_name) : "").trim();
-      const authorUsername = (row && row.user_username ? String(row.user_username) : "").trim().toLowerCase();
-      const fallbackAuthor = (row && (row.author_name || row.author) ? String(row.author_name || row.author) : "").trim();
-      const authorName = authorDisplayName || (authorUsername ? `@${authorUsername}` : fallbackAuthor || "Thành viên");
-      const avatarCandidate = row && (row.user_avatar_url || row.author_avatar_url) ? String(row.user_avatar_url || row.author_avatar_url) : "";
-      const avatarUrl = typeof normalizeAvatarUrl === "function" ? normalizeAvatarUrl(avatarCandidate) : avatarCandidate.trim();
-      const metadataAuthor = authorDisplayName || authorUsername || fallbackAuthor || "Thành viên";
-      const authorUserId = row && row.author_user_id ? String(row.author_user_id).trim() : "";
-      const authorColor = authorUserId && forumAuthorDecorationMap.has(authorUserId)
-        ? forumAuthorDecorationMap.get(authorUserId) || ""
-        : "";
-      const sectionLabel = buildForumSectionLabel(row && row.content);
-
-      return {
-        id: safePostId,
-        title,
-        authorName,
-        metadataAuthor,
-        authorColor,
-        avatarUrl,
-        avatarFallback: buildAvatarFallback(authorDisplayName || authorUsername || fallbackAuthor),
-        sectionLabel,
-        commentCount: Number(row && row.reply_count) || 0,
-        timeAgo: formatTimeAgo(row && row.latest_activity_at || row && row.created_at),
-        href: safePostId > 0 ? `/forum/post/${safePostId}` : "/forum"
-      };
-    });
-      const randomSliceState = await resolveHomepageRandomPageSlices();
+        return {
+          id: safePostId,
+          title,
+          authorName,
+          metadataAuthor,
+          authorColor,
+          avatarUrl,
+          avatarFallback: buildAvatarFallback(authorDisplayName || authorUsername || fallbackAuthor),
+          sectionLabel,
+          commentCount: Number(row && row.reply_count) || 0,
+          timeAgo: formatTimeAgo(row && row.latest_activity_at || row && row.created_at),
+          href: safePostId > 0 ? `/forum/post/${safePostId}` : "/forum"
+        };
+      });
+      const randomSliceState = await resolveHomepageRandomPageSlices({ includeAdult });
 
       homepagePayload = {
         featured: mappedFeatured,
@@ -7811,17 +7926,20 @@ app.post(
           notices
         },
         stats: {
-          totalSeries: totalSeriesRow ? totalSeriesRow.count : 0,
+          totalSeries: totalSeriesRow ? Number(totalSeriesRow.count) || 0 : 0,
           totalChapters: totalsRow
             ? Number(totalsRow.total_chapters ?? totalsRow.totalchapters ?? totalsRow.totalChapters) || 0
             : 0
         }
       };
-      homepageCachePayload = homepagePayload;
-      homepageCacheExpiresAt = now + HOMEPAGE_CACHE_TTL_MS;
-      homepageCacheUpdatedAt = homepageRow && homepageRow.updated_at
-        ? String(homepageRow.updated_at).trim()
-        : "";
+
+      homepageCacheByAudience.set(audienceKey, {
+        payload: homepagePayload,
+        expiresAt: now + HOMEPAGE_CACHE_TTL_MS,
+        updatedAt: homepageRow && homepageRow.updated_at
+          ? String(homepageRow.updated_at).trim()
+          : ""
+      });
     }
 
     return homepagePayload;
@@ -7836,10 +7954,12 @@ app.get(
   "/",
   asyncHandler(async (req, res) => {
     const forceFreshHomepagePayload = isHomepageRefreshRequest(req);
+    res.vary("Cookie");
     res.set("Cache-Control", forceFreshHomepagePayload ? "no-store" : FAST_NAV_PAGE_CACHE_CONTROL);
 
     const homepagePayload = await resolveHomepagePayload({
-      forceFresh: forceFreshHomepagePayload
+      forceFresh: forceFreshHomepagePayload,
+      includeAdult: shouldIncludeAdultMangaForRequest(req)
     });
     const homepageSignature = buildHomepagePayloadSignature(homepagePayload);
     res.set("X-Homepage-Signature", homepageSignature);
@@ -7893,7 +8013,10 @@ app.get(
 app.get(
   "/amp",
   asyncHandler(async (req, res) => {
-    const homepagePayload = await resolveHomepagePayload();
+    res.vary("Cookie");
+    const homepagePayload = await resolveHomepagePayload({
+      includeAdult: shouldIncludeAdultMangaForRequest(req)
+    });
     const seoImage = buildHomepageSeoImage(homepagePayload);
     const homepageKeywords = buildSeoKeywordList([
       SEO_TRENDING_KEYWORDS,
@@ -7986,7 +8109,12 @@ app.get(
       return res.status(406).send("Yêu cầu JSON.");
     }
 
+    res.vary("Cookie");
+    res.set("Cache-Control", "private, no-store");
+
     const q = normalizeMangaSearchQuery(req.query && typeof req.query.q === "string" ? req.query.q : "", 80);
+    const includeAdult = shouldIncludeAdultMangaForRequest(req);
+    const adultVisibilityClause = includeAdult ? "" : ` AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})`;
     if (!q) {
       return res.json({ ok: true, query: "", items: [] });
     }
@@ -8012,6 +8140,7 @@ app.get(
             m.cover,
             COALESCE(m.cover_updated_at, 0) AS cover_updated_at,
             COALESCE(m.status, '') AS status,
+            ${MANGA_HAS_ADULT_GENRE_SQL} AS is_adult,
             (
               CASE
                 WHEN lower(trim(m.title)) = ? THEN 1200
@@ -8029,6 +8158,7 @@ app.get(
             AS score
           FROM manga m
           WHERE COALESCE(m.is_hidden, 0) = 0
+            ${adultVisibilityClause}
             AND (
               lower(m.title) LIKE ?
               OR lower(m.slug) LIKE ?
@@ -8067,6 +8197,7 @@ app.get(
             m.cover,
             COALESCE(m.cover_updated_at, 0) AS cover_updated_at,
             COALESCE(m.status, '') AS status,
+            ${MANGA_HAS_ADULT_GENRE_SQL} AS is_adult,
             (
               CASE
                 WHEN lower(trim(m.title)) = ? THEN 1200
@@ -8080,6 +8211,7 @@ app.get(
             AS score
           FROM manga m
           WHERE COALESCE(m.is_hidden, 0) = 0
+            ${adultVisibilityClause}
             AND (
               lower(m.title) LIKE ?
               OR lower(m.slug) LIKE ?
@@ -8108,6 +8240,7 @@ app.get(
             m.cover,
             COALESCE(m.cover_updated_at, 0) AS cover_updated_at,
             COALESCE(m.status, '') AS status,
+            ${MANGA_HAS_ADULT_GENRE_SQL} AS is_adult,
             (
               CASE
                 WHEN lower(trim(m.title)) = ? THEN 1200
@@ -8123,6 +8256,7 @@ app.get(
             AS score
           FROM manga m
           WHERE COALESCE(m.is_hidden, 0) = 0
+            ${adultVisibilityClause}
             AND (
               lower(m.title) LIKE ?
               OR lower(m.slug) LIKE ?
@@ -8158,7 +8292,8 @@ app.get(
         title: (row.title || "").toString().trim(),
         cover: (row.cover || "").toString().trim(),
         coverUpdatedAt: Number(row.cover_updated_at) || 0,
-        status: (row.status || "").toString().trim()
+        status: (row.status || "").toString().trim(),
+        isAdult: shouldExposeAdultMarker(row)
       }))
     });
   })
@@ -8167,9 +8302,11 @@ app.get(
 app.get(
   "/manga",
   asyncHandler(async (req, res) => {
+    res.vary("Cookie");
     res.set("Cache-Control", FAST_NAV_PAGE_CACHE_CONTROL);
 
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const includeAdult = shouldIncludeAdultMangaForRequest(req);
     const rawStatus = typeof req.query.status === "string" ? req.query.status.trim() : "";
     const rawInclude = req.query.include;
     const rawExclude = req.query.exclude;
@@ -8181,8 +8318,10 @@ app.get(
     const statusRows = await dbAll(
       `
         SELECT status, COUNT(*) as count
-        FROM manga
-        WHERE COALESCE(is_hidden, 0) = 0
+        FROM manga m
+        WHERE COALESCE(m.is_hidden, 0) = 0
+          AND ${MANGA_HAS_CHAPTER_SQL}
+          ${includeAdult ? "" : `AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})`}
           AND status IS NOT NULL
           AND TRIM(status) <> ''
         GROUP BY status
@@ -8257,6 +8396,10 @@ app.get(
     const params = [];
 
     conditions.push("COALESCE(m.is_hidden, 0) = 0");
+    conditions.push(MANGA_HAS_CHAPTER_SQL);
+    if (!includeAdult) {
+      conditions.push(`NOT (${MANGA_HAS_ADULT_GENRE_SQL})`);
+    }
 
     const qNormalized = q.replace(/^#/, "").trim();
     const qId = /^\d+$/.test(qNormalized) ? Number(qNormalized) : null;
@@ -8337,7 +8480,13 @@ app.get(
 
     const query = `${listQueryBase} ${whereClause} ${listQueryOrder} LIMIT ? OFFSET ?`;
     const mangaRows = await dbAll(query, [...params, pagination.perPage, pagination.offset]);
-    const mangaLibrary = mangaRows.map(mapMangaListRow);
+    const mangaLibrary = mangaRows.map((row) => {
+      const mapped = mapMangaListRow(row);
+      return {
+        ...mapped,
+        isAdult: shouldExposeAdultMarker(row)
+      };
+    });
     const hasFilters = Boolean(q || selectedStatus || include.length || filteredExclude.length);
     const seoTitleQuery = normalizeSeoText(q, 55);
     const seoTitle = seoTitleQuery
@@ -8413,6 +8562,7 @@ app.get(
 app.get(
   "/manga/:slug",
   asyncHandler(async (req, res) => {
+    res.vary("Cookie");
     res.set("Cache-Control", FAST_NAV_PAGE_CACHE_CONTROL);
     await ensureChapterViewSchemaReady();
 
@@ -8426,19 +8576,15 @@ app.get(
         `${listQueryBase} WHERE m.slug LIKE ? AND COALESCE(m.is_hidden, 0) = 0`,
         [`%-${requestedSlug}`]
       );
-      if (fallbackRows.length === 1) {
-        return res.redirect(301, `/manga/${fallbackRows[0].slug}`);
+      const visibleFallbackRows = fallbackRows.filter((row) => !isAdultMangaBlockedForRequest(req, row));
+      if (visibleFallbackRows.length === 1) {
+        return res.redirect(301, `/manga/${visibleFallbackRows[0].slug}`);
       }
-      return res.status(404).render("not-found", {
-        title: "Không tìm thấy",
-        team,
-        seo: buildSeoPayload(req, {
-          title: "Không tìm thấy",
-          description: siteNotFoundDescription,
-          robots: SEO_ROBOTS_NOINDEX,
-          canonicalPath: ensureLeadingSlash(req.path || "/")
-        })
-      });
+      return renderNotFoundPage(req, res);
+    }
+
+    if (isAdultMangaBlockedForRequest(req, mangaRow)) {
+      return renderNotFoundPage(req, res);
     }
 
     const chapterSummary = await dbGet(
@@ -8542,7 +8688,10 @@ app.get(
       };
     }
 
-    const mappedManga = mapMangaRow(mangaRow);
+    const mappedManga = {
+      ...mapMangaRow(mangaRow),
+      isAdult: shouldExposeAdultMarker(mangaRow)
+    };
     const groupTeamLinks = await listGroupTeamLinks(mangaRow.group_name || "");
     const commentsLoadUrl = `/manga/${encodeURIComponent(mangaRow.slug)}?comments=1`;
     const authUserId =
@@ -8636,6 +8785,7 @@ app.get(
 app.get(
   "/amp/manga/:slug",
   asyncHandler(async (req, res) => {
+    res.vary("Cookie");
     const requestedSlug = (req.params.slug || "").trim();
     let mangaRow = await dbGet(
       `${listQueryBase} WHERE m.slug = ? AND COALESCE(m.is_hidden, 0) = 0`,
@@ -8647,19 +8797,15 @@ app.get(
         `${listQueryBase} WHERE m.slug LIKE ? AND COALESCE(m.is_hidden, 0) = 0`,
         [`%-${requestedSlug}`]
       );
-      if (fallbackRows.length === 1) {
-        return res.redirect(301, `/amp/manga/${fallbackRows[0].slug}`);
+      const visibleFallbackRows = fallbackRows.filter((row) => !isAdultMangaBlockedForRequest(req, row));
+      if (visibleFallbackRows.length === 1) {
+        return res.redirect(301, `/amp/manga/${visibleFallbackRows[0].slug}`);
       }
-      return res.status(404).render("not-found", {
-        title: "Không tìm thấy",
-        team,
-        seo: buildSeoPayload(req, {
-          title: "Không tìm thấy",
-          description: siteNotFoundDescription,
-          robots: SEO_ROBOTS_NOINDEX,
-          canonicalPath: ensureLeadingSlash(req.path || "/")
-        })
-      });
+      return renderNotFoundPage(req, res);
+    }
+
+    if (isAdultMangaBlockedForRequest(req, mangaRow)) {
+      return renderNotFoundPage(req, res);
     }
 
     const chapterRows = await dbAll(
@@ -8693,7 +8839,10 @@ app.get(
     const latestChapterForSeoText = latestChapterNumber || "?";
     const mangaSeoTitle = `${mangaRow.title} [Tới Chap ${latestChapterForSeoText}]`;
 
-    const mappedManga = mapMangaRow(mangaRow);
+    const mappedManga = {
+      ...mapMangaRow(mangaRow),
+      isAdult: shouldExposeAdultMarker(mangaRow)
+    };
     const groupTeamLinks = await listGroupTeamLinks(mangaRow.group_name || "");
     const canonicalPath = `/manga/${encodeURIComponent(mangaRow.slug)}`;
     const mangaDescription = normalizeSeoText(
@@ -8761,19 +8910,11 @@ app.get(
 app.get(
   "/manga/:slug/chapters/:number",
   asyncHandler(async (req, res) => {
+    res.vary("Cookie");
     await ensureChapterViewSchemaReady();
     const chapterNumber = Number(req.params.number);
     if (!Number.isFinite(chapterNumber)) {
-      return res.status(404).render("not-found", {
-        title: "Không tìm thấy",
-        team,
-        seo: buildSeoPayload(req, {
-          title: "Không tìm thấy",
-          description: siteNotFoundDescription,
-          robots: SEO_ROBOTS_NOINDEX,
-          canonicalPath: ensureLeadingSlash(req.path || "/")
-        })
-      });
+      return renderNotFoundPage(req, res);
     }
 
     const requestedSlug = (req.params.slug || "").trim();
@@ -8786,19 +8927,15 @@ app.get(
         `${listQueryBase} WHERE m.slug LIKE ? AND COALESCE(m.is_hidden, 0) = 0`,
         [`%-${requestedSlug}`]
       );
-      if (fallbackRows.length === 1) {
-        return res.redirect(301, `/manga/${fallbackRows[0].slug}/chapters/${chapterNumber}`);
+      const visibleFallbackRows = fallbackRows.filter((row) => !isAdultMangaBlockedForRequest(req, row));
+      if (visibleFallbackRows.length === 1) {
+        return res.redirect(301, `/manga/${visibleFallbackRows[0].slug}/chapters/${chapterNumber}`);
       }
-      return res.status(404).render("not-found", {
-        title: "Không tìm thấy",
-        team,
-        seo: buildSeoPayload(req, {
-          title: "Không tìm thấy",
-          description: siteNotFoundDescription,
-          robots: SEO_ROBOTS_NOINDEX,
-          canonicalPath: ensureLeadingSlash(req.path || "/")
-        })
-      });
+      return renderNotFoundPage(req, res);
+    }
+
+    if (isAdultMangaBlockedForRequest(req, mangaRow)) {
+      return renderNotFoundPage(req, res);
     }
 
     const chapterRow = await dbGet(
@@ -8828,16 +8965,7 @@ app.get(
     );
 
     if (!chapterRow) {
-      return res.status(404).render("not-found", {
-        title: "Không tìm thấy",
-        team,
-        seo: buildSeoPayload(req, {
-          title: "Không tìm thấy",
-          description: siteNotFoundDescription,
-          robots: SEO_ROBOTS_NOINDEX,
-          canonicalPath: ensureLeadingSlash(req.path || "/")
-        })
-      });
+      return renderNotFoundPage(req, res);
     }
 
     const unlockQuery = (req.query && req.query.unlock ? String(req.query.unlock) : "").trim().toLowerCase();
@@ -9033,7 +9161,10 @@ app.get(
       !requiresChapterPassword &&
       Boolean(req && req.session && req.session.authUserId && String(req.session.authUserId).trim());
 
-    const mappedManga = mapMangaRow(mangaRow);
+    const mappedManga = {
+      ...mapMangaRow(mangaRow),
+      isAdult: shouldExposeAdultMarker(mangaRow)
+    };
     const chapterTitle = (chapterRow.title || "").toString().trim();
     const chapterSeoNumber = formatChapterNumberValue(chapterRow.number);
     const chapterSeoTitle = `${mangaRow.title} Chap ${chapterSeoNumber} - ${SEO_SITE_NAME}`;
@@ -9159,7 +9290,8 @@ app.post(
           c.password_hash,
           c.password_salt,
           c.password_updated_at,
-          m.slug
+          m.slug,
+          ${MANGA_HAS_ADULT_GENRE_SQL} AS is_adult
         FROM chapters c
         JOIN manga m ON m.id = c.manga_id
         WHERE m.slug = ?
@@ -9184,6 +9316,13 @@ app.post(
           canonicalPath: ensureLeadingSlash(req.path || "/")
         })
       });
+    }
+
+    if (isAdultMangaBlockedForRequest(req, chapterLookup)) {
+      if (wantsJson(req)) {
+        return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+      }
+      return renderNotFoundPage(req, res);
     }
 
     const chapterPath = `/manga/${encodeURIComponent(
@@ -9288,6 +9427,7 @@ app.post(
           c.password_hash,
           c.password_salt,
           c.password_updated_at,
+          ${MANGA_HAS_ADULT_GENRE_SQL} AS is_adult,
           COALESCE(v.view_count, 0) as view_count
         FROM chapters c
         JOIN manga m ON m.id = c.manga_id
@@ -9301,6 +9441,10 @@ app.post(
     );
 
     if (!chapterLookup || !chapterLookup.id) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+    }
+
+    if (isAdultMangaBlockedForRequest(req, chapterLookup)) {
       return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
     }
 
@@ -9779,7 +9923,8 @@ app.post(
       return res.status(403).send(message);
     }
 
-    const content = await censorCommentContentByForbiddenWords(req.body.content);
+    const contentRaw = await censorCommentContentByForbiddenWords(req.body.content);
+    const content = (contentRaw == null ? "" : String(contentRaw)).trim();
     const imageUrl = readSafeUploadedImageUrl(req.body && req.body.imageUrl ? req.body.imageUrl : "");
     const mangaCommentContext = buildCommentChapterContext({
       chapterNumber: commentScope.chapterNumber,
@@ -10198,7 +10343,8 @@ app.post(
       return res.status(403).send(message);
     }
 
-    const content = await censorCommentContentByForbiddenWords(req.body.content);
+    const contentRaw = await censorCommentContentByForbiddenWords(req.body.content);
+    const content = (contentRaw == null ? "" : String(contentRaw)).trim();
     const imageUrl = readSafeUploadedImageUrl(req.body && req.body.imageUrl ? req.body.imageUrl : "");
     const commentRequestId = readCommentRequestId(req);
     if (!commentRequestId) {
