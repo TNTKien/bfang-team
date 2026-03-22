@@ -460,6 +460,19 @@ const browserImageCompressionAssetPath = path.join(
   "dist",
   "browser-image-compression.js"
 );
+const browserImageCompressionFallbackAssetPath = path.join(
+  publicDir,
+  "vendor",
+  "browser-image-compression",
+  "browser-image-compression.js"
+);
+
+const sendBrowserImageCompressionFallback = (res) => {
+  if (fs.existsSync(browserImageCompressionFallbackAssetPath)) {
+    return res.sendFile(browserImageCompressionFallbackAssetPath);
+  }
+  return res.send("window.imageCompression = window.imageCompression || null;");
+};
 app.use(requireSameOriginForAdminWrites);
   app.use("/vendor/emoji-mart", express.static(path.join(appRootDir, "node_modules", "emoji-mart")));
   app.use(
@@ -471,12 +484,12 @@ app.get("/vendor/browser-image-compression/browser-image-compression.js", (req, 
   res.type("application/javascript; charset=utf-8");
 
   if (!fs.existsSync(browserImageCompressionAssetPath)) {
-    return res.status(503).send("window.imageCompression = window.imageCompression || null;");
+    return sendBrowserImageCompressionFallback(res);
   }
 
   return res.sendFile(browserImageCompressionAssetPath, (error) => {
     if (error && !res.headersSent) {
-      res.status(error.statusCode || 500).send("window.imageCompression = window.imageCompression || null;");
+      sendBrowserImageCompressionFallback(res);
     }
   });
 });
