@@ -19,6 +19,11 @@
   const homepageTopRankingSource = topRankings && typeof topRankings === "object" ? topRankings : {};
   const homepageTopRankingPeriods = [
     {
+      key: "day",
+      label: "Ngày",
+      items: Array.isArray(homepageTopRankingSource.day) ? homepageTopRankingSource.day : []
+    },
+    {
       key: "week",
       label: "Tuần",
       items: Array.isArray(homepageTopRankingSource.week) ? homepageTopRankingSource.week : []
@@ -35,9 +40,10 @@
     }
   ];
   const homepageTopRankingDefaultPeriod =
-    (homepageTopRankingPeriods.find((period) => period.key === "week" && period.items.length > 0) ||
+    (homepageTopRankingPeriods.find((period) => period.key === "day" && period.items.length > 0) ||
+      homepageTopRankingPeriods.find((period) => period.key === "week" && period.items.length > 0) ||
       homepageTopRankingPeriods.find((period) => period.items.length > 0) ||
-      { key: "week" }).key;
+      { key: "day" }).key;
   const hasHomepageTopRankings = homepageTopRankingPeriods.some((period) => period.items.length > 0);
   const homepageRecentComments = Array.isArray(recentComments) ? recentComments : [];
   const isForumHomepageEnabled = Boolean(forumPageEnabled);

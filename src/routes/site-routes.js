@@ -146,6 +146,7 @@ const registerSiteRoutes = (app, deps) => {
   const HOMEPAGE_FORUM_REQUEST_ID_LIKE = "forum-%";
   const HOMEPAGE_LATEST_LIMIT = 18;
   const HOMEPAGE_RANKING_LIMIT = 10;
+  const HOMEPAGE_RANKING_DAY_DAYS = 1;
   const HOMEPAGE_RANKING_WEEK_DAYS = 7;
   const HOMEPAGE_RANKING_MONTH_DAYS = 30;
   const HOMEPAGE_RECENT_COMMENT_LIMIT = 6;
@@ -9640,7 +9641,11 @@ const registerSiteRoutes = (app, deps) => {
         `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${HOMEPAGE_LATEST_LIMIT}`
       );
       await ensureMangaDailyViewBaselineSynced();
-      const [topRankingWeekRows, topRankingMonthRows, topRankingTotalRows] = await Promise.all([
+      const [topRankingDayRows, topRankingWeekRows, topRankingMonthRows, topRankingTotalRows] = await Promise.all([
+        resolveHomepageTopRankingByPeriod({
+          includeAdult,
+          daysWindow: HOMEPAGE_RANKING_DAY_DAYS
+        }),
         resolveHomepageTopRankingByPeriod({
           includeAdult,
           daysWindow: HOMEPAGE_RANKING_WEEK_DAYS
@@ -9814,6 +9819,7 @@ const registerSiteRoutes = (app, deps) => {
         };
       });
       const mappedTopRankings = {
+        day: topRankingDayRows,
         week: topRankingWeekRows,
         month: topRankingMonthRows,
         total: topRankingTotalRows

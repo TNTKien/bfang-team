@@ -651,6 +651,16 @@ const parseJsonArrayOfStrings = (value) => {
 const chapterProcessingQueue = [];
 const chapterProcessingQueued = new Set();
 let chapterProcessingRunning = false;
+let chapterProcessingActiveWorkers = 0;
+
+const chapterProcessingConcurrency = Math.max(
+  1,
+  Math.min(4, Math.floor(Number(process.env.CHAPTER_PROCESSING_CONCURRENCY) || 2))
+);
+const chapterProcessingStaleMs = Math.max(
+  2 * 60 * 1000,
+  Math.floor(Number(process.env.CHAPTER_PROCESSING_STALE_MS) || 10 * 60 * 1000)
+);
 
 const adminJobs = new Map();
 const adminJobsQueue = [];
@@ -887,6 +897,140 @@ const clearChapterProcessing = async (chapterId) => {
   );
 };
 
+const buildChapterProcessingFinalPrefix = (mangaId, chapterNumber) => {
+  const config = getB2Config();
+  const safeMangaId = Number(mangaId);
+  if (!Number.isFinite(safeMangaId) || safeMangaId <= 0) return "";
+  const chapterNumberKey = String(chapterNumber == null ? "" : chapterNumber).trim();
+  if (!chapterNumberKey) return "";
+  return `${config.chapterPrefix}/manga-${Math.floor(safeMangaId)}/ch-${chapterNumberKey}`;
+};
+
+const getLatestChapterPagesByNumber = async ({ prefix, pageFilePrefix }) => {
+  const prefixDir = buildB2DirPrefix(prefix);
+  if (!prefixDir) return new Map();
+
+  const files = await b2ListFileNamesByPrefix(prefixDir);
+  const latestByPage = new Map();
+  files.forEach((file) => {
+    const fileName = file && typeof file.fileName === "string" ? file.fileName : "";
+    const page = parseChapterPageNumberFromFileName(prefixDir, fileName, pageFilePrefix);
+    if (page == null) return;
+
+    const ts = file && file.uploadTimestamp != null ? Number(file.uploadTimestamp) : 0;
+    const prev = latestByPage.get(page);
+    const prevTs = prev && prev.uploadTimestamp != null ? Number(prev.uploadTimestamp) : 0;
+    if (!prev || ts >= prevTs) {
+      latestByPage.set(page, {
+        fileName,
+        uploadTimestamp: Number.isFinite(ts) ? ts : 0
+      });
+    }
+  });
+
+  return latestByPage;
+};
+
+const finalizeChapterProcessingSuccess = async ({ chapterId, pageCount, finalPrefix, completedAt }) => {
+  const doneAt = Number.isFinite(Number(completedAt)) && Number(completedAt) > 0 ? Number(completedAt) : Date.now();
+  const doneDate = new Date(doneAt).toISOString();
+  await dbRun(
+    `
+    UPDATE chapters
+    SET
+      pages = ?,
+      pages_prefix = ?,
+      pages_ext = ?,
+      pages_updated_at = ?,
+      date = ?,
+      processing_state = NULL,
+      processing_error = NULL,
+      processing_draft_token = NULL,
+      processing_pages_json = NULL,
+      processing_updated_at = ?
+    WHERE id = ?
+  `,
+    [pageCount, finalPrefix, "webp", doneAt, doneDate, doneAt, chapterId]
+  );
+};
+
+const tryReconcileStaleChapterProcessing = async ({ chapterRow, pageIds, pageFilePrefix, draftPrefix, token }) => {
+  const processingUpdatedAt = Number(chapterRow && chapterRow.processing_updated_at);
+  if (!Number.isFinite(processingUpdatedAt) || processingUpdatedAt <= 0) return false;
+  if (Date.now() - processingUpdatedAt < chapterProcessingStaleMs) return false;
+
+  const expectedCount = pageIds.length;
+  if (!expectedCount) return false;
+
+  const finalPrefix = buildChapterProcessingFinalPrefix(chapterRow.manga_id, chapterRow.number);
+  if (!finalPrefix) return false;
+
+  const currentPrefix = normalizeJsonString(chapterRow.pages_prefix);
+  const currentPages = Number(chapterRow.pages);
+  const isAlreadyAlignedWithCurrentPages =
+    currentPrefix && currentPrefix === finalPrefix && Number.isFinite(currentPages) && currentPages === expectedCount;
+  if (isAlreadyAlignedWithCurrentPages) return false;
+
+  let latestByPage = new Map();
+  try {
+    latestByPage = await getLatestChapterPagesByNumber({ prefix: finalPrefix, pageFilePrefix });
+  } catch (_err) {
+    return false;
+  }
+
+  for (let page = 1; page <= expectedCount; page += 1) {
+    if (!latestByPage.has(page)) return false;
+  }
+
+  await finalizeChapterProcessingSuccess({
+    chapterId: chapterRow.id,
+    pageCount: expectedCount,
+    finalPrefix,
+    completedAt: Date.now()
+  });
+
+  try {
+    await b2DeleteChapterExtraPages({ prefix: finalPrefix, keepPages: expectedCount, pageFilePrefix });
+  } catch (err) {
+    console.warn("Chapter extra page cleanup failed during reconcile", err);
+  }
+
+  const previousPrefix = normalizeJsonString(chapterRow.pages_prefix);
+  if (previousPrefix && previousPrefix !== finalPrefix) {
+    try {
+      await b2DeleteAllByPrefix(previousPrefix);
+    } catch (err) {
+      console.warn("Failed to delete old chapter prefix during reconcile", err);
+    }
+  }
+
+  if (draftPrefix) {
+    let draftCleared = false;
+    try {
+      await b2DeleteAllByPrefix(draftPrefix);
+      draftCleared = true;
+    } catch (err) {
+      console.warn("Failed to delete chapter draft prefix during reconcile", err);
+    }
+
+    if (draftCleared) {
+      try {
+        await deleteChapterDraftRow(token);
+      } catch (err) {
+        console.warn("Failed to delete chapter draft row during reconcile", err);
+      }
+    } else {
+      try {
+        await touchChapterDraft(token);
+      } catch (err) {
+        console.warn("Failed to touch chapter draft row during reconcile", err);
+      }
+    }
+  }
+
+  return true;
+};
+
 const runChapterProcessingJob = async (chapterId) => {
   const id = Number(chapterId);
   if (!Number.isFinite(id) || id <= 0) return;
@@ -902,7 +1046,8 @@ const runChapterProcessingJob = async (chapterId) => {
       pages_file_prefix,
       processing_state,
       processing_draft_token,
-      processing_pages_json
+      processing_pages_json,
+      processing_updated_at
     FROM chapters
     WHERE id = ?
   `,
@@ -1001,10 +1146,32 @@ const runChapterProcessingJob = async (chapterId) => {
   await updateChapterProcessing({ chapterId: chapterRow.id, state: "processing", error: "" });
   await touchChapterDraft(token);
 
-  const chapterNumberKey = String(chapterRow.number);
-  const finalPrefix = `${config.chapterPrefix}/manga-${chapterRow.manga_id}/ch-${chapterNumberKey}`;
+  const finalPrefix = buildChapterProcessingFinalPrefix(chapterRow.manga_id, chapterRow.number);
+  if (!finalPrefix) {
+    await updateChapterProcessing({
+      chapterId: chapterRow.id,
+      state: "failed",
+      error: "Đường dẫn ảnh chương không hợp lệ."
+    });
+    return;
+  }
   const pageFilePrefix = normalizeChapterPageFilePrefix(chapterRow.pages_file_prefix);
   const padLength = Math.max(3, Math.min(6, String(pageIds.length).length));
+
+  try {
+    const reconciled = await tryReconcileStaleChapterProcessing({
+      chapterRow,
+      pageIds,
+      pageFilePrefix,
+      draftPrefix,
+      token
+    });
+    if (reconciled) {
+      return;
+    }
+  } catch (err) {
+    console.warn("Chapter stale reconciliation failed", err);
+  }
 
   let available = [];
   try {
@@ -1110,25 +1277,21 @@ const runChapterProcessingJob = async (chapterId) => {
   }
 
   const doneAt = Date.now();
-  const doneDate = new Date(doneAt).toISOString();
-  await dbRun(
-    `
-    UPDATE chapters
-    SET
-      pages = ?,
-      pages_prefix = ?,
-      pages_ext = ?,
-      pages_updated_at = ?,
-      date = ?,
-      processing_state = NULL,
-      processing_error = NULL,
-      processing_draft_token = NULL,
-      processing_pages_json = NULL,
-      processing_updated_at = ?
-    WHERE id = ?
-  `,
-    [pageIds.length, finalPrefix, "webp", doneAt, doneDate, doneAt, chapterRow.id]
-  );
+  try {
+    await finalizeChapterProcessingSuccess({
+      chapterId: chapterRow.id,
+      pageCount: pageIds.length,
+      finalPrefix,
+      completedAt: doneAt
+    });
+  } catch (_err) {
+    await updateChapterProcessing({
+      chapterId: chapterRow.id,
+      state: "failed",
+      error: "Lưu trạng thái hoàn tất thất bại. Vui lòng thử lại."
+    });
+    return;
+  }
   // Cleanup any leftover pages from previous uploads/edits.
   try {
     await b2DeleteChapterExtraPages({ prefix: finalPrefix, keepPages: pageIds.length, pageFilePrefix });
@@ -1169,20 +1332,53 @@ const runChapterProcessingJob = async (chapterId) => {
 };
 
 const runChapterProcessingQueue = async () => {
-  if (chapterProcessingRunning) return;
+  if (chapterProcessingRunning && chapterProcessingActiveWorkers >= chapterProcessingConcurrency) return;
   chapterProcessingRunning = true;
-  try {
-    while (chapterProcessingQueue.length) {
-      const nextId = chapterProcessingQueue.shift();
-      try {
-        await runChapterProcessingJob(nextId);
-      } catch (err) {
-        console.warn("Chapter processing job crashed", err);
-      } finally {
+
+  while (chapterProcessingActiveWorkers < chapterProcessingConcurrency && chapterProcessingQueue.length) {
+    const nextId = chapterProcessingQueue.shift();
+    chapterProcessingActiveWorkers += 1;
+
+    Promise.resolve()
+      .then(async () => {
+        try {
+          await runChapterProcessingJob(nextId);
+        } catch (err) {
+          console.warn("Chapter processing job crashed", err);
+          const safeId = Number(nextId);
+          if (Number.isFinite(safeId) && safeId > 0) {
+            try {
+              await updateChapterProcessing({
+                chapterId: Math.floor(safeId),
+                state: "failed",
+                error: "Xử lý ảnh chương thất bại."
+              });
+            } catch (updateErr) {
+              console.warn("Failed to persist chapter processing crash status", updateErr);
+            }
+          }
+        } finally {
+          chapterProcessingQueued.delete(nextId);
+          chapterProcessingActiveWorkers = Math.max(0, chapterProcessingActiveWorkers - 1);
+
+          if (chapterProcessingQueue.length) {
+            runChapterProcessingQueue();
+          } else if (chapterProcessingActiveWorkers === 0) {
+            chapterProcessingRunning = false;
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn("Chapter processing worker launch failed", err);
         chapterProcessingQueued.delete(nextId);
-      }
-    }
-  } finally {
+        chapterProcessingActiveWorkers = Math.max(0, chapterProcessingActiveWorkers - 1);
+        if (!chapterProcessingQueue.length && chapterProcessingActiveWorkers === 0) {
+          chapterProcessingRunning = false;
+        }
+      });
+  }
+
+  if (!chapterProcessingQueue.length && chapterProcessingActiveWorkers === 0) {
     chapterProcessingRunning = false;
   }
 };
@@ -1198,15 +1394,29 @@ const enqueueChapterProcessing = (chapterId) => {
 };
 
 const resumeChapterProcessingJobs = async () => {
-  const rows = await dbAll(
-    "SELECT id FROM chapters WHERE processing_state = 'processing' ORDER BY id ASC LIMIT 60"
-  );
-  rows.forEach((row) => {
-    const id = row ? Number(row.id) : 0;
-    if (Number.isFinite(id) && id > 0) {
-      enqueueChapterProcessing(Math.floor(id));
-    }
-  });
+  const batchSize = 200;
+  let lastId = 0;
+
+  while (true) {
+    const rows = await dbAll(
+      "SELECT id FROM chapters WHERE processing_state = 'processing' AND id > ? ORDER BY id ASC LIMIT ?",
+      [lastId, batchSize]
+    );
+
+    if (!rows.length) break;
+
+    rows.forEach((row) => {
+      const id = row ? Number(row.id) : 0;
+      if (!Number.isFinite(id) || id <= 0) return;
+      const safeId = Math.floor(id);
+      enqueueChapterProcessing(safeId);
+      if (safeId > lastId) {
+        lastId = safeId;
+      }
+    });
+
+    if (rows.length < batchSize) break;
+  }
 };
 
 const chapterPageMaxHeight = 1800;
