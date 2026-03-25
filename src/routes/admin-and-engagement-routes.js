@@ -91,6 +91,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     parseChapterNumberInput,
     path,
     publishNotificationStreamUpdate,
+    reconcileStaleChapterProcessingById,
     regenerateSession,
     removeNotificationStreamClient,
     requireAdmin,
@@ -2121,6 +2122,8 @@ app.get(
           COALESCE(is_oneshot, false) as is_oneshot,
           processing_state,
           processing_error,
+          processing_done_pages,
+          processing_total_pages,
           CASE
             WHEN COALESCE(password_hash, '') <> '' AND COALESCE(password_salt, '') <> '' THEN true
             ELSE false
@@ -2335,32 +2338,85 @@ app.get(
     }
 
     const placeholders = ids.map(() => "?").join(",");
-    const rows = teamManageScope
-      ? await dbAll(
-        `
-          SELECT c.id, c.processing_state, c.processing_error
-          FROM chapters c
-          JOIN manga m ON m.id = c.manga_id
-          WHERE c.id IN (${placeholders})
-            AND ${buildTeamGroupNameMatchSql("m.group_name")}
-        `,
-        [...ids, teamManageScope.teamName, teamManageScope.teamName]
-      )
-      : await dbAll(
-        `
-          SELECT id, processing_state, processing_error
-          FROM chapters
-          WHERE id IN (${placeholders})
-        `,
-        ids
-      );
+    const loadRows = async () =>
+      teamManageScope
+        ? dbAll(
+            `
+            SELECT
+              c.id,
+              c.processing_state,
+              c.processing_error,
+              c.processing_done_pages,
+              c.processing_total_pages
+            FROM chapters c
+            JOIN manga m ON m.id = c.manga_id
+            WHERE c.id IN (${placeholders})
+              AND ${buildTeamGroupNameMatchSql("m.group_name")}
+          `,
+            [...ids, teamManageScope.teamName, teamManageScope.teamName]
+          )
+        : dbAll(
+            `
+            SELECT
+              id,
+              processing_state,
+              processing_error,
+              processing_done_pages,
+              processing_total_pages
+            FROM chapters
+            WHERE id IN (${placeholders})
+          `,
+            ids
+          );
+
+    let rows = await loadRows();
+
+    const processingRows = rows.filter(
+      (row) => (row && row.processing_state ? String(row.processing_state).trim() : "") === "processing"
+    );
+
+    if (processingRows.length) {
+      let reconciledAny = false;
+      for (const row of processingRows) {
+        const chapterId = row && row.id != null ? Number(row.id) : 0;
+        if (!Number.isFinite(chapterId) || chapterId <= 0) continue;
+        const reconciled = await reconcileStaleChapterProcessingById(Math.floor(chapterId));
+        if (reconciled) {
+          reconciledAny = true;
+        }
+      }
+
+      if (reconciledAny) {
+        rows = await loadRows();
+      }
+    }
 
     return res.json({
       ok: true,
       chapters: rows.map((row) => ({
         id: row.id,
         processingState: (row.processing_state || "").toString(),
-        processingError: (row.processing_error || "").toString()
+        processingError: (row.processing_error || "").toString(),
+        processingDonePages:
+          Number.isFinite(Number(row.processing_done_pages)) && Number(row.processing_done_pages) >= 0
+            ? Math.floor(Number(row.processing_done_pages))
+            : 0,
+        processingTotalPages:
+          Number.isFinite(Number(row.processing_total_pages)) && Number(row.processing_total_pages) > 0
+            ? Math.floor(Number(row.processing_total_pages))
+            : 0,
+        processingPercent: (() => {
+          const done =
+            Number.isFinite(Number(row.processing_done_pages)) && Number(row.processing_done_pages) >= 0
+              ? Math.floor(Number(row.processing_done_pages))
+              : 0;
+          const total =
+            Number.isFinite(Number(row.processing_total_pages)) && Number(row.processing_total_pages) > 0
+              ? Math.floor(Number(row.processing_total_pages))
+              : 0;
+          if (!total) return 0;
+          return Math.min(100, Math.max(0, Math.floor((done / total) * 100)));
+        })()
       }))
     });
   })
@@ -2773,9 +2829,11 @@ app.post(
         processing_error,
         processing_draft_token,
         processing_pages_json,
+        processing_done_pages,
+        processing_total_pages,
         processing_updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         mangaRow.id,
@@ -2793,6 +2851,8 @@ app.post(
         "",
         token,
         processingPagesJson,
+        0,
+        pageIds.length,
         processingStamp
       ]
     );
@@ -3275,6 +3335,8 @@ app.post(
       "  processing_error = ?,",
       "  processing_draft_token = ?,",
       "  processing_pages_json = ?,",
+      "  processing_done_pages = ?,",
+      "  processing_total_pages = ?,",
       "  processing_updated_at = ?"
     ];
     const processingUpdateParams = [
@@ -3286,6 +3348,8 @@ app.post(
       "",
       token,
       JSON.stringify(pageIds),
+      0,
+      pageIds.length,
       processingStamp
     ];
     if (chapterPasswordPayload.shouldUpdate) {
@@ -3415,6 +3479,8 @@ app.post(
         processing_error = NULL,
         processing_draft_token = NULL,
         processing_pages_json = NULL,
+        processing_done_pages = NULL,
+        processing_total_pages = NULL,
         processing_updated_at = ?
       WHERE id = ?
     `,
@@ -3564,6 +3630,8 @@ app.post(
         processing_error = NULL,
         processing_draft_token = NULL,
         processing_pages_json = NULL,
+        processing_done_pages = NULL,
+        processing_total_pages = NULL,
         processing_updated_at = ?
       WHERE id = ?
     `,
@@ -3616,7 +3684,7 @@ app.post(
     }
 
     const chapterRow = await dbGet(
-      "SELECT id, manga_id, processing_state, processing_draft_token, processing_pages_json FROM chapters WHERE id = ?",
+      "SELECT id, manga_id, processing_state, processing_draft_token, processing_pages_json, processing_done_pages, processing_total_pages FROM chapters WHERE id = ?",
       [Math.floor(chapterId)]
     );
     if (!chapterRow) {
@@ -3634,7 +3702,22 @@ app.post(
       return res.status(400).send("Không thể thử lại: thiếu dữ liệu xử lý.");
     }
 
-    await updateChapterProcessing({ chapterId: chapterRow.id, state: "processing", error: "" });
+    let retryTotalPages = Number(chapterRow.processing_total_pages);
+    if (!Number.isFinite(retryTotalPages) || retryTotalPages <= 0) {
+      try {
+        const parsedPages = JSON.parse(pagesJson);
+        retryTotalPages = Array.isArray(parsedPages) ? parsedPages.length : 0;
+      } catch (_err) {
+        retryTotalPages = 0;
+      }
+    }
+    await updateChapterProcessing({
+      chapterId: chapterRow.id,
+      state: "processing",
+      error: "",
+      donePages: 0,
+      totalPages: Number.isFinite(retryTotalPages) && retryTotalPages > 0 ? Math.floor(retryTotalPages) : undefined
+    });
     enqueueChapterProcessing(chapterRow.id);
     return res.redirect(`/admin/manga/${chapterRow.manga_id}/chapters?status=processing`);
   })

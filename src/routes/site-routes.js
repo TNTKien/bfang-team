@@ -89,6 +89,7 @@ const registerSiteRoutes = (app, deps) => {
     passport,
     path,
     publishNotificationStreamUpdate,
+    reconcileStaleChapterProcessingById,
     readAuthNextPath,
     readCommentRequestId,
     regenerateSession,
@@ -6671,6 +6672,47 @@ const registerSiteRoutes = (app, deps) => {
     error: { tone: "error", text: "Không thể cập nhật nhóm dịch lúc này." }
   };
 
+  const buildTeamCanonicalRedirectPath = (req, teamId, teamSlug) => {
+    const canonicalPath = buildTeamPublicPath(teamId, teamSlug);
+    if (!canonicalPath) return "";
+
+    const originalUrl = req && typeof req.originalUrl === "string" ? req.originalUrl : "";
+    const queryIndex = originalUrl.indexOf("?");
+    if (queryIndex < 0) return canonicalPath;
+
+    const queryText = originalUrl.slice(queryIndex);
+    return queryText ? `${canonicalPath}${queryText}` : canonicalPath;
+  };
+
+  app.get(
+    "/team/:id",
+    asyncHandler(async (req, res) => {
+      const teamId = Number(req.params.id);
+      if (!Number.isFinite(teamId) || teamId <= 0) {
+        return res.status(404).render("not-found", { title: "Không tìm thấy", team });
+      }
+
+      const teamRow = await dbGet(
+        `
+        SELECT id, slug
+        FROM translation_teams
+        WHERE id = ?
+        LIMIT 1
+      `,
+        [Math.floor(teamId)]
+      );
+      if (!teamRow) {
+        return res.status(404).render("not-found", { title: "Không tìm thấy", team });
+      }
+
+      const canonicalTarget = buildTeamCanonicalRedirectPath(req, teamRow.id, (teamRow.slug || "").toString().trim());
+      if (!canonicalTarget) {
+        return res.status(404).render("not-found", { title: "Không tìm thấy", team });
+      }
+      return res.redirect(301, canonicalTarget);
+    })
+  );
+
   app.get(
     "/team/:id/:slug",
     asyncHandler(async (req, res) => {
@@ -6696,7 +6738,11 @@ const registerSiteRoutes = (app, deps) => {
       }
       const canonicalSlug = (teamRow.slug || "").toString().trim();
       if (requestedSlug !== canonicalSlug) {
-        return res.redirect(301, `/team/${encodeURIComponent(String(teamRow.id))}/${encodeURIComponent(canonicalSlug)}`);
+        const canonicalTarget = buildTeamCanonicalRedirectPath(req, teamRow.id, canonicalSlug);
+        if (!canonicalTarget) {
+          return res.status(404).render("not-found", { title: "Không tìm thấy", team });
+        }
+        return res.redirect(301, canonicalTarget);
       }
 
       const currentUserId = viewer && viewer.id ? String(viewer.id).trim() : "";
@@ -11137,6 +11183,103 @@ const registerSiteRoutes = (app, deps) => {
   );
 
   app.get(
+    "/manga/:slug/chapters/:number/processing-status",
+    asyncHandler(async (req, res) => {
+      if (!wantsJson(req)) {
+        return res.status(406).json({ ok: false, error: "Yêu cầu JSON." });
+      }
+
+      const chapterNumber = Number(req.params.number);
+      if (!Number.isFinite(chapterNumber)) {
+        return res.status(400).json({ ok: false, error: "Số chương không hợp lệ." });
+      }
+
+      const mangaResolution = await resolveMangaRowByRouteSlug(req.params.slug);
+      const mangaRow = mangaResolution.mangaRow;
+      if (!mangaRow || isAdultMangaBlockedForRequest(req, mangaRow)) {
+        return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+      }
+
+      const loadChapterProcessingRow = async () =>
+        dbGet(
+          `
+          SELECT
+            c.id,
+            c.pages,
+            c.pages_prefix,
+            c.pages_ext,
+            c.processing_state,
+            c.processing_error,
+            c.processing_done_pages,
+            c.processing_total_pages
+          FROM chapters c
+          WHERE c.manga_id = ? AND c.number = ?
+          LIMIT 1
+        `,
+          [mangaRow.id, chapterNumber]
+        );
+
+      let chapterRow = await loadChapterProcessingRow();
+
+      if (!chapterRow || !chapterRow.id) {
+        return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+      }
+
+      const maybeProcessingState = (chapterRow.processing_state || "").toString().trim();
+      if (maybeProcessingState === "processing") {
+        const reconciled = await reconcileStaleChapterProcessingById(chapterRow.id);
+        if (reconciled) {
+          chapterRow = await loadChapterProcessingRow();
+          if (!chapterRow || !chapterRow.id) {
+            return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+          }
+        }
+      }
+
+      const processingState = (chapterRow.processing_state || "").toString().trim();
+      const processingError = (chapterRow.processing_error || "").toString().trim();
+      const doneRaw = Number(chapterRow.processing_done_pages);
+      const totalRaw = Number(chapterRow.processing_total_pages);
+      const fallbackTotalRaw = Number(chapterRow.pages);
+      const processingDonePages = Number.isFinite(doneRaw) && doneRaw >= 0 ? Math.floor(doneRaw) : 0;
+      const processingTotalPages =
+        Number.isFinite(totalRaw) && totalRaw > 0
+          ? Math.floor(totalRaw)
+          : Number.isFinite(fallbackTotalRaw) && fallbackTotalRaw > 0
+            ? Math.floor(fallbackTotalRaw)
+            : 0;
+      const processingPercent =
+        processingTotalPages > 0
+          ? Math.min(
+            100,
+            Math.max(
+              0,
+              Math.floor((Math.min(processingDonePages, processingTotalPages) / processingTotalPages) * 100)
+            )
+          )
+          : 0;
+
+      const status =
+        processingState === "processing"
+          ? "processing"
+          : processingState === "failed"
+            ? "failed"
+            : "done";
+
+      return res.json({
+        ok: true,
+        status,
+        ready: status === "done",
+        processingState,
+        processingError,
+        processingDonePages,
+        processingTotalPages,
+        processingPercent
+      });
+    })
+  );
+
+  app.get(
     "/manga/:slug/chapters/:number",
     asyncHandler(async (req, res) => {
       res.vary("Cookie");
@@ -11174,6 +11317,8 @@ const registerSiteRoutes = (app, deps) => {
           c.pages_updated_at,
           c.processing_state,
           c.processing_error,
+          c.processing_done_pages,
+          c.processing_total_pages,
           c.password_hash,
           c.password_salt,
           c.password_updated_at,
@@ -11278,6 +11423,19 @@ const registerSiteRoutes = (app, deps) => {
 
       const cdnBaseUrl = getB2Config().cdnBaseUrl;
       const processingState = (chapterRow.processing_state || "").toString().trim();
+      const processingDonePagesRaw = Number(chapterRow.processing_done_pages);
+      const processingTotalPagesRaw = Number(chapterRow.processing_total_pages);
+      const processingDonePages =
+        Number.isFinite(processingDonePagesRaw) && processingDonePagesRaw >= 0
+          ? Math.floor(processingDonePagesRaw)
+          : 0;
+      const processingTotalPages =
+        Number.isFinite(processingTotalPagesRaw) && processingTotalPagesRaw > 0
+          ? Math.floor(processingTotalPagesRaw)
+          : 0;
+      const processingPercent = processingTotalPages
+        ? Math.min(100, Math.max(0, Math.floor((Math.min(processingDonePages, processingTotalPages) / processingTotalPages) * 100)))
+        : 0;
       const isProcessing = processingState === "processing";
       const canRenderPages = Boolean(
         !requiresChapterPassword && !isProcessing && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
@@ -11462,7 +11620,10 @@ const registerSiteRoutes = (app, deps) => {
         chapter: {
           ...chapterRow,
           is_oneshot: isOneshotChapter,
-          view_count: toSafeChapterViewCount(chapterRow && chapterRow.view_count)
+          view_count: toSafeChapterViewCount(chapterRow && chapterRow.view_count),
+          processing_done_pages: processingDonePages,
+          processing_total_pages: processingTotalPages,
+          processing_percent: processingPercent
         },
         prevChapter,
         nextChapter,
@@ -11480,6 +11641,7 @@ const registerSiteRoutes = (app, deps) => {
         chapterUnlockError,
         chapterUnlockRetryAfterMs,
         chapterUnlockPath: `${chapterPath}/unlock`,
+        chapterProcessingStatusPath: `${chapterPath}/processing-status`,
         chapterPasswordMinLength: CHAPTER_PASSWORD_MIN_LENGTH,
         chapterPasswordMaxLength: CHAPTER_PASSWORD_MAX_LENGTH,
         seo: buildSeoPayload(req, {

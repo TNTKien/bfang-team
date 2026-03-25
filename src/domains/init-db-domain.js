@@ -1363,6 +1363,8 @@ const initDb = async () => {
       processing_error TEXT,
       processing_draft_token TEXT,
       processing_pages_json TEXT,
+      processing_done_pages INTEGER,
+      processing_total_pages INTEGER,
       processing_updated_at BIGINT
     )
   `
@@ -1381,6 +1383,8 @@ const initDb = async () => {
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_error TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_draft_token TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_pages_json TEXT");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_done_pages INTEGER");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_total_pages INTEGER");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_updated_at BIGINT");
   await dbRun(
     `

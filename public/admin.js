@@ -7433,14 +7433,53 @@
     }
   };
 
-  const updateRow = ({ id, processingState, processingError }) => {
+  const normalizeProgressValue = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return Math.floor(parsed);
+  };
+
+  const formatProcessingChipLabel = ({ donePages, totalPages, percent }) => {
+    const safeTotal = normalizeProgressValue(totalPages);
+    if (safeTotal <= 0) return "Đang xử lý";
+
+    const safeDone = Math.min(normalizeProgressValue(donePages), safeTotal);
+    let safePercent = Number(percent);
+    if (!Number.isFinite(safePercent) || safePercent < 0) {
+      safePercent = Math.floor((safeDone / safeTotal) * 100);
+    }
+    safePercent = Math.min(100, Math.max(0, Math.floor(safePercent)));
+    return `Đang xử lý ${safeDone}/${safeTotal} (${safePercent}%)`;
+  };
+
+  const updateRow = ({
+    id,
+    processingState,
+    processingError,
+    processingDonePages,
+    processingTotalPages,
+    processingPercent
+  }) => {
     const row = rowById.get(id);
     if (!row) return;
 
     const nextState = (processingState || "").toString().trim();
     const nextError = (processingError || "").toString().trim();
+    const nextDonePages = normalizeProgressValue(
+      processingDonePages != null ? processingDonePages : row.dataset.processingDonePages
+    );
+    const nextTotalPages = normalizeProgressValue(
+      processingTotalPages != null ? processingTotalPages : row.dataset.processingTotalPages
+    );
+    const nextPercent = Number.isFinite(Number(processingPercent))
+      ? Math.floor(Number(processingPercent))
+      : nextTotalPages > 0
+        ? Math.floor((Math.min(nextDonePages, nextTotalPages) / nextTotalPages) * 100)
+        : 0;
     const prevState = (row.dataset.processingState || "").toString().trim();
     row.dataset.processingState = nextState;
+    row.dataset.processingDonePages = String(nextDonePages);
+    row.dataset.processingTotalPages = String(nextTotalPages);
 
     const chipEl = row.querySelector("[data-processing-chip]");
     const errorEl = row.querySelector("[data-processing-error]");
@@ -7449,7 +7488,11 @@
     const retryForm = row.querySelector("[data-action-retry]");
 
     if (nextState === "processing") {
-      setChip(chipEl, "chip--processing", "Đang xử lý");
+      setChip(chipEl, "chip--processing", formatProcessingChipLabel({
+        donePages: nextDonePages,
+        totalPages: nextTotalPages,
+        percent: nextPercent
+      }));
       if (errorEl) {
         errorEl.hidden = true;
         errorEl.textContent = "";
@@ -7523,7 +7566,10 @@
         updateRow({
           id: Number(item.id),
           processingState: item.processingState,
-          processingError: item.processingError
+          processingError: item.processingError,
+          processingDonePages: item.processingDonePages,
+          processingTotalPages: item.processingTotalPages,
+          processingPercent: item.processingPercent
         });
       });
     } catch (_err) {

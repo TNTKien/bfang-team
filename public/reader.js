@@ -249,6 +249,162 @@ const READER_COMMENTS_LAYOUT_EVENT = "bfang:reader-comments-layout";
   });
 })();
 
+(() => {
+  const processingBox = document.querySelector("[data-chapter-processing-box]");
+  if (!(processingBox instanceof HTMLElement)) return;
+  if (typeof window.fetch !== "function") return;
+
+  const statusUrl = (processingBox.dataset.processingStatusUrl || "").toString().trim();
+  if (!statusUrl) return;
+
+  const progressEl = processingBox.querySelector("[data-chapter-processing-progress]");
+  const summaryEl = document.querySelector("[data-chapter-processing-summary]");
+  const reloadEl = processingBox.querySelector("[data-chapter-processing-reload]");
+
+  let pollingTimerId = 0;
+  let polling = false;
+  let stopped = false;
+  let reloading = false;
+
+  const toSafeInt = (value, fallback = 0) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return Math.max(0, Math.floor(Number(fallback) || 0));
+    return Math.floor(parsed);
+  };
+
+  const toSafePercent = (value, donePages, totalPages) => {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(100, Math.max(0, Math.floor(parsed)));
+    }
+    const safeDone = toSafeInt(donePages);
+    const safeTotal = toSafeInt(totalPages);
+    if (safeTotal <= 0) return 0;
+    return Math.min(100, Math.max(0, Math.floor((Math.min(safeDone, safeTotal) / safeTotal) * 100)));
+  };
+
+  const renderProgressText = ({ donePages, totalPages, percent }) => {
+    const safeDone = toSafeInt(donePages);
+    const safeTotal = toSafeInt(totalPages);
+    if (safeTotal <= 0) {
+      return "Hệ thống đang chuẩn hóa ảnh và đồng bộ trang đọc. Vui lòng quay lại sau ít phút.";
+    }
+    const safePercent = toSafePercent(percent, safeDone, safeTotal);
+    return `Tiến độ hiện tại: ${Math.min(safeDone, safeTotal)}/${safeTotal} trang (${safePercent}%).`;
+  };
+
+  const renderSummaryText = ({ donePages, totalPages, percent }) => {
+    const safeDone = toSafeInt(donePages);
+    const safeTotal = toSafeInt(totalPages);
+    if (safeTotal <= 0) {
+      return "Chương đang xử lý ảnh. Vui lòng quay lại sau.";
+    }
+    const safePercent = toSafePercent(percent, safeDone, safeTotal);
+    return `Chương đang xử lý ảnh — ${Math.min(safeDone, safeTotal)}/${safeTotal} (${safePercent}%). Vui lòng quay lại sau.`;
+  };
+
+  const setText = (element, text) => {
+    if (!(element instanceof HTMLElement)) return;
+    element.textContent = (text || "").toString().trim();
+  };
+
+  const stopPolling = () => {
+    stopped = true;
+    if (pollingTimerId) {
+      window.clearTimeout(pollingTimerId);
+      pollingTimerId = 0;
+    }
+  };
+
+  const schedulePoll = (delayMs = 2000) => {
+    if (stopped) return;
+    if (pollingTimerId) {
+      window.clearTimeout(pollingTimerId);
+    }
+    const delay = Number.isFinite(Number(delayMs)) ? Math.max(0, Math.floor(Number(delayMs))) : 2000;
+    pollingTimerId = window.setTimeout(pollStatus, delay);
+  };
+
+  const setFailedState = (errorText) => {
+    const safeError = (errorText || "").toString().trim();
+    const failureMessage = safeError
+      ? `Xử lý ảnh thất bại: ${safeError}`
+      : "Xử lý ảnh thất bại. Vui lòng thử lại sau.";
+    setText(progressEl, failureMessage);
+    setText(summaryEl, failureMessage);
+    if (reloadEl instanceof HTMLElement) {
+      reloadEl.hidden = true;
+      reloadEl.textContent = "";
+    }
+  };
+
+  const triggerReload = () => {
+    if (reloading) return;
+    reloading = true;
+    stopPolling();
+
+    if (reloadEl instanceof HTMLElement) {
+      reloadEl.hidden = false;
+      reloadEl.textContent = "Đã xử lý xong, đang tải lại trang để hiển thị ảnh…";
+    }
+
+    window.setTimeout(() => {
+      window.location.reload();
+    }, 180);
+  };
+
+  async function pollStatus() {
+    if (stopped || polling) return;
+    polling = true;
+    let shouldContinuePolling = true;
+
+    try {
+      const response = await fetch(statusUrl, {
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        credentials: "same-origin"
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || data.ok !== true) {
+        shouldContinuePolling = true;
+      } else {
+        const status = (data.status || "").toString().trim().toLowerCase();
+        const donePages = toSafeInt(data.processingDonePages);
+        const totalPages = toSafeInt(data.processingTotalPages);
+        const percent = toSafePercent(data.processingPercent, donePages, totalPages);
+
+        if (status === "processing") {
+          setText(progressEl, renderProgressText({ donePages, totalPages, percent }));
+          setText(summaryEl, renderSummaryText({ donePages, totalPages, percent }));
+          shouldContinuePolling = true;
+        } else if (status === "failed") {
+          setFailedState(data.processingError || "");
+          shouldContinuePolling = false;
+          stopPolling();
+        } else {
+          setText(progressEl, renderProgressText({ donePages: totalPages || donePages, totalPages, percent: 100 }));
+          setText(summaryEl, "Chương đã xử lý xong. Đang tải lại để hiển thị ảnh…");
+          shouldContinuePolling = false;
+          triggerReload();
+        }
+      }
+    } catch (_err) {
+      shouldContinuePolling = true;
+    } finally {
+      polling = false;
+      if (!stopped && shouldContinuePolling) {
+        schedulePoll(2000);
+      }
+    }
+  }
+
+  window.addEventListener("beforeunload", stopPolling, { once: true });
+  schedulePoll(0);
+})();
+
 const isElementVisible = (element) => {
   if (!element) return false;
   const rect = element.getBoundingClientRect();

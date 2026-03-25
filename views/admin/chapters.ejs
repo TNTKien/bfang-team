@@ -113,18 +113,29 @@
                     <% chapters.forEach((chapter) => { %>
                       <% const processingState = (chapter.processing_state || "").toString().trim(); %>
                       <% const processingError = (chapter.processing_error || "").toString().trim(); %>
+                      <% const processingDonePagesRaw = Number(chapter.processing_done_pages); %>
+                      <% const processingTotalPagesRaw = Number(chapter.processing_total_pages); %>
+                      <% const processingDonePages = Number.isFinite(processingDonePagesRaw) && processingDonePagesRaw >= 0 ? Math.floor(processingDonePagesRaw) : 0; %>
+                      <% const processingTotalPages = Number.isFinite(processingTotalPagesRaw) && processingTotalPagesRaw > 0 ? Math.floor(processingTotalPagesRaw) : 0; %>
+                      <% const processingPercent = processingTotalPages > 0 ? Math.min(100, Math.max(0, Math.floor((processingDonePages / processingTotalPages) * 100))) : 0; %>
                       <% const isOneshot = Boolean(chapter && chapter.is_oneshot); %>
                       <% const chapterLabel = isOneshot ? "Oneshot" : `Chương ${chapter.number}`; %>
                       <% let chipText = ""; %>
                       <% let chipClass = ""; %>
                       <% if (processingState === "processing") { %>
-                        <% chipText = "Đang xử lý"; %>
+                        <% chipText = processingTotalPages > 0 ? `Đang xử lý ${processingDonePages}/${processingTotalPages} (${processingPercent}%)` : "Đang xử lý"; %>
                         <% chipClass = "chip--processing"; %>
                       <% } else if (processingState === "failed") { %>
                         <% chipText = "Lỗi xử lý"; %>
                         <% chipClass = "chip--warn"; %>
                       <% } %>
-                      <tr data-chapter-row data-chapter-id="<%= chapter.id %>" data-processing-state="<%= processingState %>">
+                      <tr
+                        data-chapter-row
+                        data-chapter-id="<%= chapter.id %>"
+                        data-processing-state="<%= processingState %>"
+                        data-processing-done-pages="<%= processingDonePages %>"
+                        data-processing-total-pages="<%= processingTotalPages %>"
+                      >
                         <td data-label="Chọn">
                           <% if (allowDeleteChapter) { %>
                             <input

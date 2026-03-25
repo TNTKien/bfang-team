@@ -1008,8 +1008,21 @@
       event.preventDefault();
       if (busy || apiKeyBusy) return;
 
+      const submitButton =
+        event.submitter && event.submitter instanceof HTMLButtonElement
+          ? event.submitter
+          : saveBtn;
+      const clearSubmitButtonState = () => {
+        if (!submitButton || !(submitButton instanceof HTMLButtonElement)) return;
+        submitButton.disabled = false;
+        submitButton.classList.remove("is-loading");
+        submitButton.removeAttribute("data-button-auto-loading");
+        submitButton.removeAttribute("aria-busy");
+      };
+
       if (!window.BfangAuth || !window.BfangAuth.client) {
         setStatus("Không tải được hệ thống đăng nhập. Vui lòng thử lại.", "error");
+        clearSubmitButtonState();
         return;
       }
 
@@ -1017,6 +1030,7 @@
       if (!session || !session.user) {
         setLocked(true);
         setStatus("Vui lòng đăng nhập để lưu thay đổi.", "error");
+        clearSubmitButtonState();
         return;
       }
 
@@ -1030,6 +1044,7 @@
       if (!facebookParsed.ok) {
         setStatus("Link Facebook phải có dạng facebook.com/*.", "error");
         if (facebookInput) facebookInput.focus();
+        clearSubmitButtonState();
         return;
       }
 
@@ -1042,6 +1057,7 @@
       if (!discordParsed.ok) {
         setStatus("Link Discord phải có dạng discord.gg/*.", "error");
         if (discordInput) discordInput.focus();
+        clearSubmitButtonState();
         return;
       }
 
@@ -1051,6 +1067,7 @@
       if (nextBio.length > ACCOUNT_BIO_MAX_LENGTH) {
         setStatus(`Thông tin bản thân tối đa ${ACCOUNT_BIO_MAX_LENGTH} ký tự.`, "error");
         if (bioInput) bioInput.focus();
+        clearSubmitButtonState();
         return;
       }
       const willUploadAvatar = Boolean(pendingAvatarFile);
@@ -1079,7 +1096,10 @@
         variant: "default",
         metaItems
       });
-      if (!ok) return;
+      if (!ok) {
+        clearSubmitButtonState();
+        return;
+      }
 
       busy = true;
       setStatus("Đang lưu...", "");
@@ -1087,7 +1107,7 @@
 
       if (avatarFileInput) avatarFileInput.disabled = true;
       if (resetBtn) resetBtn.disabled = true;
-      setButtonBusy(saveBtn, willUploadAvatar ? "Đang upload..." : "Đang lưu...");
+      setButtonBusy(submitButton, willUploadAvatar ? "Đang upload..." : "Đang lưu...");
 
       try {
         const token = String(session.access_token || "").trim();
@@ -1145,7 +1165,7 @@
         setStatus(message, "error");
       } finally {
         busy = false;
-        restoreButton(saveBtn);
+        restoreButton(submitButton);
         if (avatarFileInput) avatarFileInput.disabled = false;
         if (resetBtn) resetBtn.disabled = false;
       }

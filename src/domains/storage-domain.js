@@ -659,7 +659,7 @@ const chapterProcessingConcurrency = Math.max(
 );
 const chapterProcessingStaleMs = Math.max(
   2 * 60 * 1000,
-  Math.floor(Number(process.env.CHAPTER_PROCESSING_STALE_MS) || 10 * 60 * 1000)
+  Math.floor(Number(process.env.CHAPTER_PROCESSING_STALE_MS) || 2 * 60 * 1000)
 );
 
 const adminJobs = new Map();
@@ -868,15 +868,43 @@ const deleteMangaAndCleanupStorage = async (mangaId) => {
   await dbRun("DELETE FROM manga WHERE id = ?", [safeMangaId]);
 };
 
-const updateChapterProcessing = async ({ chapterId, state, error }) => {
+const updateChapterProcessing = async ({ chapterId, state, error, donePages, totalPages }) => {
   const id = Number(chapterId);
   if (!Number.isFinite(id) || id <= 0) return;
   const safeState = (state || "").toString().trim();
   const safeError = (error || "").toString().trim();
-  await dbRun(
-    "UPDATE chapters SET processing_state = ?, processing_error = ?, processing_updated_at = ? WHERE id = ?",
-    [safeState, safeError, Date.now(), Math.floor(id)]
-  );
+
+  const hasDonePages = donePages !== undefined;
+  const hasTotalPages = totalPages !== undefined;
+  const normalizedDonePages = hasDonePages
+    ? Number.isFinite(Number(donePages)) && Number(donePages) >= 0
+      ? Math.floor(Number(donePages))
+      : null
+    : null;
+  const normalizedTotalPages = hasTotalPages
+    ? Number.isFinite(Number(totalPages)) && Number(totalPages) >= 0
+      ? Math.floor(Number(totalPages))
+      : null
+    : null;
+
+  const updateSql = [
+    "UPDATE chapters",
+    "SET processing_state = ?, processing_error = ?, processing_updated_at = ?"
+  ];
+  const params = [safeState, safeError, Date.now()];
+
+  if (hasDonePages) {
+    updateSql.push(", processing_done_pages = ?");
+    params.push(normalizedDonePages);
+  }
+  if (hasTotalPages) {
+    updateSql.push(", processing_total_pages = ?");
+    params.push(normalizedTotalPages);
+  }
+
+  updateSql.push("WHERE id = ?");
+  params.push(Math.floor(id));
+  await dbRun(updateSql.join(" "), params);
 };
 
 const clearChapterProcessing = async (chapterId) => {
@@ -890,6 +918,8 @@ const clearChapterProcessing = async (chapterId) => {
       processing_error = NULL,
       processing_draft_token = NULL,
       processing_pages_json = NULL,
+      processing_done_pages = NULL,
+      processing_total_pages = NULL,
       processing_updated_at = ?
     WHERE id = ?
   `,
@@ -947,6 +977,8 @@ const finalizeChapterProcessingSuccess = async ({ chapterId, pageCount, finalPre
       processing_error = NULL,
       processing_draft_token = NULL,
       processing_pages_json = NULL,
+      processing_done_pages = NULL,
+      processing_total_pages = NULL,
       processing_updated_at = ?
     WHERE id = ?
   `,
@@ -1047,6 +1079,8 @@ const runChapterProcessingJob = async (chapterId) => {
       processing_state,
       processing_draft_token,
       processing_pages_json,
+      processing_done_pages,
+      processing_total_pages,
       processing_updated_at
     FROM chapters
     WHERE id = ?
@@ -1143,7 +1177,13 @@ const runChapterProcessingJob = async (chapterId) => {
     return;
   }
 
-  await updateChapterProcessing({ chapterId: chapterRow.id, state: "processing", error: "" });
+  await updateChapterProcessing({
+    chapterId: chapterRow.id,
+    state: "processing",
+    error: "",
+    donePages: 0,
+    totalPages: pageIds.length
+  });
   await touchChapterDraft(token);
 
   const finalPrefix = buildChapterProcessingFinalPrefix(chapterRow.manga_id, chapterRow.number);
@@ -1224,6 +1264,9 @@ const runChapterProcessingJob = async (chapterId) => {
     });
   }
 
+  let donePages = 0;
+  const totalPages = pageIds.length;
+
   try {
     for (let index = 0; index < pageIds.length; index += 1) {
       if (index > 0 && index % 10 === 0) {
@@ -1266,12 +1309,22 @@ const runChapterProcessingJob = async (chapterId) => {
       }
       const destinationName = `${finalPrefix}/${pageFileName}`;
       await b2CopyFile({ sourceFileId, destinationFileName: destinationName });
+      donePages = index + 1;
+      await updateChapterProcessing({
+        chapterId: chapterRow.id,
+        state: "processing",
+        error: "",
+        donePages,
+        totalPages
+      });
     }
   } catch (err) {
     await updateChapterProcessing({
       chapterId: chapterRow.id,
       state: "failed",
-      error: (err && err.message) || "Xử lý ảnh chương thất bại."
+      error: (err && err.message) || "Xử lý ảnh chương thất bại.",
+      donePages,
+      totalPages
     });
     return;
   }
@@ -1419,6 +1472,82 @@ const resumeChapterProcessingJobs = async () => {
   }
 };
 
+const reconcileStaleChapterProcessingById = async (chapterId) => {
+  const id = Number(chapterId);
+  if (!Number.isFinite(id) || id <= 0) return false;
+
+  const chapterRow = await dbGet(
+    `
+    SELECT
+      id,
+      manga_id,
+      number,
+      pages,
+      pages_prefix,
+      pages_file_prefix,
+      processing_state,
+      processing_draft_token,
+      processing_pages_json,
+      processing_total_pages,
+      processing_updated_at
+    FROM chapters
+    WHERE id = ?
+    LIMIT 1
+  `,
+    [Math.floor(id)]
+  );
+
+  if (!chapterRow || !chapterRow.id) return false;
+  const state = normalizeJsonString(chapterRow.processing_state);
+  if (state !== "processing") return false;
+
+  let pageIds = parseJsonArrayOfStrings(chapterRow.processing_pages_json);
+  if (!pageIds.length) {
+    const fallbackTotalRaw = Number(chapterRow.processing_total_pages);
+    const fallbackTotalFromPagesRaw = Number(chapterRow.pages);
+    const fallbackTotal =
+      Number.isFinite(fallbackTotalRaw) && fallbackTotalRaw > 0
+        ? Math.floor(fallbackTotalRaw)
+        : Number.isFinite(fallbackTotalFromPagesRaw) && fallbackTotalFromPagesRaw > 0
+          ? Math.floor(fallbackTotalFromPagesRaw)
+          : 0;
+
+    if (fallbackTotal > 0) {
+      pageIds = Array.from({ length: fallbackTotal }, (_value, index) => `reconcile-${index + 1}`);
+    }
+  }
+
+  if (!pageIds.length) return false;
+
+  const token = normalizeJsonString(chapterRow.processing_draft_token);
+  let draftPrefix = "";
+  if (isChapterDraftTokenValid(token)) {
+    const draftRow = await getChapterDraft(token);
+    draftPrefix = normalizeJsonString(draftRow && draftRow.pages_prefix);
+  }
+
+  const processingUpdatedAt = Number(chapterRow.processing_updated_at);
+  const safeChapterRow =
+    Number.isFinite(processingUpdatedAt) && processingUpdatedAt > 0
+      ? chapterRow
+      : {
+          ...chapterRow,
+          processing_updated_at: Date.now() - chapterProcessingStaleMs - 1000
+        };
+
+  try {
+    return await tryReconcileStaleChapterProcessing({
+      chapterRow: safeChapterRow,
+      pageIds,
+      pageFilePrefix: chapterRow.pages_file_prefix,
+      draftPrefix,
+      token
+    });
+  } catch (_err) {
+    return false;
+  }
+};
+
 const chapterPageMaxHeight = 1800;
 const chapterPageWebpQuality = 77;
 
@@ -1483,6 +1612,7 @@ const convertChapterPageToWebp = async (inputBuffer) => {
     parseChapterPageNumberFromFileName,
     parseJsonArrayOfStrings,
     pruneAdminJobs,
+    reconcileStaleChapterProcessingById,
     resumeChapterProcessingJobs,
     runAdminJobsQueue,
     runChapterProcessingJob,
