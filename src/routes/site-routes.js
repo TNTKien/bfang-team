@@ -8823,6 +8823,8 @@ const registerSiteRoutes = (app, deps) => {
         };
       });
 
+      homepageCacheByAudience.clear();
+
       return res.json({
         ok: true,
         mangaId: Number(mangaRow.id) || 0,
@@ -9703,6 +9705,108 @@ const registerSiteRoutes = (app, deps) => {
       }));
   };
 
+  const resolveBookmarkUserCountByMangaId = async (mangaIds) => {
+    const safeMangaIds = Array.from(
+      new Set(
+        (Array.isArray(mangaIds) ? mangaIds : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.floor(value))
+      )
+    );
+
+    if (!safeMangaIds.length) {
+      return new Map();
+    }
+
+    const placeholders = safeMangaIds.map(() => "?").join(",");
+    const rows = await dbAll(
+      `
+        SELECT
+          source.manga_id,
+          COUNT(DISTINCT source.user_id)::bigint AS bookmark_user_count
+        FROM (
+          SELECT
+            mb.manga_id,
+            mb.user_id
+          FROM manga_bookmarks mb
+          WHERE mb.manga_id IN (${placeholders})
+
+          UNION
+
+          SELECT
+            li.manga_id,
+            l.user_id
+          FROM manga_bookmark_list_items li
+          JOIN manga_bookmark_lists l ON l.id = li.list_id
+          WHERE li.manga_id IN (${placeholders})
+        ) source
+        WHERE source.user_id IS NOT NULL
+          AND TRIM(source.user_id) <> ''
+        GROUP BY source.manga_id
+      `,
+      [...safeMangaIds, ...safeMangaIds]
+    );
+
+    const countByMangaId = new Map();
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const mangaId = Number(row && row.manga_id);
+      if (!Number.isFinite(mangaId) || mangaId <= 0) return;
+      const bookmarkUserCount = Number(row && row.bookmark_user_count);
+      countByMangaId.set(
+        Math.floor(mangaId),
+        Number.isFinite(bookmarkUserCount) && bookmarkUserCount > 0 ? Math.floor(bookmarkUserCount) : 0
+      );
+    });
+
+    return countByMangaId;
+  };
+
+  const applyBookmarkCountToMangaList = (mangaList, bookmarkCountByMangaId) => {
+    const safeList = Array.isArray(mangaList) ? mangaList : [];
+    const safeCountByMangaId = bookmarkCountByMangaId instanceof Map ? bookmarkCountByMangaId : new Map();
+
+    return safeList.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const mangaId = Number(item.id);
+      const bookmarkCount = Number.isFinite(mangaId)
+        ? Number(safeCountByMangaId.get(Math.floor(mangaId))) || 0
+        : 0;
+      return {
+        ...item,
+        bookmarkCount,
+        bookmark_count: bookmarkCount
+      };
+    });
+  };
+
+  const refreshHomepageBookmarkCounts = async (homepagePayload) => {
+    if (!homepagePayload || typeof homepagePayload !== "object") {
+      return homepagePayload;
+    }
+
+    const featuredList = Array.isArray(homepagePayload.featured) ? homepagePayload.featured : [];
+    const latestList = Array.isArray(homepagePayload.latest) ? homepagePayload.latest : [];
+    const mangaIds = Array.from(
+      new Set(
+        featuredList
+          .concat(latestList)
+          .map((item) => Number(item && item.id))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.floor(value))
+      )
+    );
+
+    if (!mangaIds.length) {
+      return homepagePayload;
+    }
+
+    const bookmarkCountByMangaId = await resolveBookmarkUserCountByMangaId(mangaIds);
+    homepagePayload.featured = applyBookmarkCountToMangaList(featuredList, bookmarkCountByMangaId);
+    homepagePayload.latest = applyBookmarkCountToMangaList(latestList, bookmarkCountByMangaId);
+    return homepagePayload;
+  };
+
   const resolveHomepagePayload = async (options = {}) => {
     const forceFresh = Boolean(options && options.forceFresh);
     const includeAdult = Boolean(options && options.includeAdult);
@@ -10051,6 +10155,7 @@ const registerSiteRoutes = (app, deps) => {
       });
     }
 
+    homepagePayload = await refreshHomepageBookmarkCounts(homepagePayload);
     return homepagePayload;
   };
 
@@ -10757,10 +10862,21 @@ const registerSiteRoutes = (app, deps) => {
 
       const query = `${listQueryBase} ${whereClause} ${listQueryOrder} LIMIT ? OFFSET ?`;
       const mangaRows = await dbAll(query, [...params, pagination.perPage, pagination.offset]);
+      const mangaIdsForBookmarkCount = mangaRows
+        .map((row) => Number(row && row.id))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.floor(value));
+      const bookmarkUserCountByMangaId = await resolveBookmarkUserCountByMangaId(mangaIdsForBookmarkCount);
       const mangaLibrary = mangaRows.map((row) => {
         const mapped = mapMangaListRow(row);
+        const mappedMangaId = Number(mapped && mapped.id);
+        const bookmarkCount = Number.isFinite(mappedMangaId)
+          ? Number(bookmarkUserCountByMangaId.get(Math.floor(mappedMangaId))) || 0
+          : 0;
         return {
           ...mapped,
+          bookmarkCount,
+          bookmark_count: bookmarkCount,
           isAdult: shouldExposeAdultMarker(row)
         };
       });
@@ -10963,6 +11079,8 @@ const registerSiteRoutes = (app, deps) => {
         ...mapMangaRow(mangaRow),
         isAdult: shouldExposeAdultMarker(mangaRow)
       };
+      const bookmarkCountByMangaId = await resolveBookmarkUserCountByMangaId([mangaRow.id]);
+      const mangaBookmarkCount = Number(bookmarkCountByMangaId.get(Math.floor(Number(mangaRow.id)))) || 0;
       const groupTeamLinks = await listGroupTeamLinks(mangaRow.group_name || "");
       const commentsLoadUrl = `/manga/${encodeURIComponent(mangaRow.slug)}?comments=1`;
       const authUserId =
@@ -11033,6 +11151,8 @@ const registerSiteRoutes = (app, deps) => {
         },
         manga: {
           ...mappedManga,
+          bookmarkCount: mangaBookmarkCount,
+          bookmark_count: mangaBookmarkCount,
           chapters,
           latestChapterNumber,
           firstChapterNumber,

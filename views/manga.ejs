@@ -188,6 +188,7 @@
                       <h3 title="<%= manga.title %>"><%= cardTitle %></h3>
                       <div class="manga-list-meta" aria-label="Thông tin truyện">
                         <span><i class="fa-regular fa-eye" aria-hidden="true"></i> <%= Number((manga.totalViews ?? manga.total_views) || 0).toLocaleString("vi-VN") %> lượt xem</span>
+                        <span><i class="fa-regular fa-bookmark" aria-hidden="true"></i> <%= Number((manga.bookmarkCount ?? manga.bookmark_count) || 0).toLocaleString("vi-VN") %> lượt lưu</span>
                         <span><i class="fa-regular fa-comments" aria-hidden="true"></i> <%= Number((manga.commentCount ?? manga.comment_count) || 0).toLocaleString("vi-VN") %> bình luận</span>
                       </div>
                     </div>
