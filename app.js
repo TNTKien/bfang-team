@@ -2403,6 +2403,7 @@ const mapCommentRow = (row, session) => {
     id: row.id,
     author: row.author,
     authorUserId,
+    authorUsername: row && row.author_username ? String(row.author_username).trim().toLowerCase() : "",
     badges: finalBadges,
     userColor,
     avatarUrl,
@@ -2964,8 +2965,10 @@ const getPaginatedCommentTree = async ({ mangaId, chapterNumber, page, perPage, 
         c.report_count,
         c.chapter_number,
         COALESCE(ch.title, '') as chapter_title,
-        COALESCE(ch.is_oneshot, false) as chapter_is_oneshot
+        COALESCE(ch.is_oneshot, false) as chapter_is_oneshot,
+        COALESCE(u.username, '') as author_username
       FROM comments c
+      LEFT JOIN users u ON u.id = c.author_user_id
       LEFT JOIN chapters ch ON ch.manga_id = c.manga_id
         AND (
           ch.number = c.chapter_number
@@ -2986,8 +2989,10 @@ const getPaginatedCommentTree = async ({ mangaId, chapterNumber, page, perPage, 
         child.report_count,
         child.chapter_number,
         COALESCE(ch_child.title, '') as chapter_title,
-        COALESCE(ch_child.is_oneshot, false) as chapter_is_oneshot
+        COALESCE(ch_child.is_oneshot, false) as chapter_is_oneshot,
+        COALESCE(u_child.username, '') as author_username
       FROM comments child
+      LEFT JOIN users u_child ON u_child.id = child.author_user_id
       LEFT JOIN chapters ch_child ON ch_child.manga_id = child.manga_id
         AND (
           ch_child.number = child.chapter_number
@@ -3601,6 +3606,7 @@ const initDbDomain = createInitDbDomain({
   dbAll,
   dbGet,
   dbRun,
+  withTransaction,
   ensureHomepageDefaults,
   migrateLegacyGenres,
   migrateMangaSlugs,

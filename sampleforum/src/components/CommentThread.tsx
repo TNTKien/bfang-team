@@ -11,6 +11,7 @@ import { RoleBadge } from "@/components/UserInfo";
 
 const REPLY_COLLAPSED_PREVIEW_COUNT = 3;
 const REPLY_EXPAND_PAGE_SIZE = 10;
+const FORUM_MENTION_USERNAME_PATTERN = /^[a-z0-9_]{1,24}$/i;
 const SPOILER_HTML_PATTERN =
   /<span\b[^>]*class\s*=\s*(["'])[^"']*\bspoiler\b[^"']*\1[^>]*>[\s\S]*?<\/span>/gi;
 const STICKER_HTML_PATTERN = /<img\b[^>]*src\s*=\s*(["'])\/stickers\/[^"']+\1[^>]*>/gi;
@@ -131,6 +132,13 @@ const SingleComment = memo(function SingleComment({
       : comment.author.role === "moderator"
         ? !hasModBadge
         : false;
+  const replyMentionUsernameRaw = String(comment.author && comment.author.username ? comment.author.username : "")
+    .trim()
+    .toLowerCase();
+  const replyMentionUsername = FORUM_MENTION_USERNAME_PATTERN.test(replyMentionUsernameRaw)
+    ? replyMentionUsernameRaw
+    : "";
+  const replyInitialContent = depth > 0 && replyMentionUsername ? `@${replyMentionUsername} ` : "";
   const compactCreatedAt = compactForumRelativeTime(comment.createdAt);
 
   useEffect(() => {
@@ -333,7 +341,7 @@ const SingleComment = memo(function SingleComment({
                 <span className="hidden sm:inline">Thích</span>
                 <span className="text-muted-foreground">{comment.upvotes || 0}</span>
               </button>
-              {depth === 0 && canReplyHere && (
+              {canReplyHere && (
                 <button
                   onClick={onReplyToggle}
                   className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground font-medium transition-colors"
@@ -388,10 +396,13 @@ const SingleComment = memo(function SingleComment({
           )}
         </div>
 
-        {showReply && depth === 0 && canReplyHere && (
-          <div className="mt-1.5">
+        {showReply && canReplyHere && (
+          <div className={depth > 0 ? "mt-1.5 -ml-9" : "mt-1.5"}>
             <CommentInput
               placeholder={`Trả lời ${comment.author.displayName || comment.author.username}...`}
+              initialContent={replyInitialContent}
+              focusAtEndOnMount={depth > 0 && Boolean(replyMentionUsername)}
+              appendSpaceOnMount={depth > 0 && Boolean(replyMentionUsername)}
               onSubmit={(content, imageFile) => {
                 if (typeof onReplySubmit === "function") {
                   onReplySubmit(comment.id, content, imageFile);

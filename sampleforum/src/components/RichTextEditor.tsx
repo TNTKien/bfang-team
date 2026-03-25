@@ -7,6 +7,7 @@ import TiptapImage from "@tiptap/extension-image";
 import TextAlign from "@tiptap/extension-text-align";
 import Placeholder from "@tiptap/extension-placeholder";
 import { NodeSelection } from "@tiptap/pm/state";
+import { TextSelection } from "@tiptap/pm/state";
 import { useCallback, useEffect, useRef, useState, memo, type ChangeEvent } from "react";
 import {
   Bold, Italic, Underline as UnderlineIcon,
@@ -345,6 +346,8 @@ interface RichTextEditorProps {
   mentionRootCommentId?: number;
   compactToolbarExtra?: React.ReactNode;
   footerContent?: React.ReactNode;
+  focusAtEndOnMount?: boolean;
+  appendSpaceOnMount?: boolean;
 }
 
 const ToolBtn = memo(function ToolBtn({ active, onClick, children, title, disabled = false }: {
@@ -377,6 +380,8 @@ export const RichTextEditor = memo(function RichTextEditor({
   mentionRootCommentId,
   compactToolbarExtra,
   footerContent,
+  focusAtEndOnMount = false,
+  appendSpaceOnMount = false,
 }: RichTextEditorProps) {
   const [showEmoji, setShowEmoji] = useState(false);
   const [emojiTab, setEmojiTab] = useState<"emoji" | "sticker">("emoji");
@@ -393,6 +398,7 @@ export const RichTextEditor = memo(function RichTextEditor({
   const [linkError, setLinkError] = useState("");
   const [hasTextSelection, setHasTextSelection] = useState(false);
   const draftTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const mountFocusHandledRef = useRef(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -505,7 +511,7 @@ export const RichTextEditor = memo(function RichTextEditor({
       Placeholder.configure({ placeholder }),
     ],
     content: initialContent,
-    autofocus: autoFocus,
+    autofocus: focusAtEndOnMount ? false : autoFocus,
     onUpdate: ({ editor }) => {
       const html = editor.getHTML();
       onUpdate?.(html);
@@ -717,6 +723,46 @@ export const RichTextEditor = memo(function RichTextEditor({
     if (!editor) return;
     onUpdate?.(editor.getHTML());
   }, [editor, onUpdate]);
+
+  useEffect(() => {
+    if (!editor) return;
+    if (!focusAtEndOnMount) return;
+    if (mountFocusHandledRef.current) return;
+
+    mountFocusHandledRef.current = true;
+    const moveCursorToEnd = () => {
+      if (!editor || editor.isDestroyed) return;
+      editor.chain().focus("end").run();
+      const endPosition = Math.max(0, Number(editor.state.doc.content.size) || 0);
+      const selection = TextSelection.create(editor.state.doc, endPosition);
+      editor.view.dispatch(editor.state.tr.setSelection(selection).scrollIntoView());
+    };
+
+    window.requestAnimationFrame(() => {
+      if (!editor || editor.isDestroyed) return;
+
+      moveCursorToEnd();
+
+      if (!appendSpaceOnMount) {
+        window.requestAnimationFrame(() => {
+          moveCursorToEnd();
+        });
+        return;
+      }
+
+      const currentText = editor.state.doc.textBetween(0, editor.state.doc.content.size, "\n", "\n");
+      if (currentText && !/\s$/.test(currentText)) {
+        editor.chain().focus("end").insertContent(" ").run();
+      }
+
+      window.requestAnimationFrame(() => {
+        moveCursorToEnd();
+        window.setTimeout(() => {
+          moveCursorToEnd();
+        }, 0);
+      });
+    });
+  }, [appendSpaceOnMount, editor, focusAtEndOnMount]);
 
   useEffect(() => {
     return () => {

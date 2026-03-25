@@ -5201,12 +5201,18 @@ const buildTeamBadgeCode = (teamId, role) => {
 const resolveTeamBadgePriority = async (dbGetFn = dbGet) => {
   const row = await dbGetFn(
     `
-      SELECT
-        MAX(CASE WHEN lower(code) = 'admin' THEN priority END) as admin_priority,
-        MAX(CASE WHEN lower(code) = 'mod' THEN priority END) as mod_priority,
-        MAX(CASE WHEN lower(code) NOT IN ('admin', 'mod') THEN priority END) as other_priority
-      FROM badges
-    `
+    SELECT
+      MAX(CASE WHEN lower(code) = 'admin' THEN priority END) as admin_priority,
+      MAX(CASE WHEN lower(code) = 'mod' THEN priority END) as mod_priority,
+      MAX(
+        CASE
+          WHEN lower(code) NOT IN ('admin', 'mod')
+            AND code !~* '^team_[0-9]+_(leader|member)$'
+          THEN priority
+        END
+      ) as other_priority
+    FROM badges
+  `
   );
 
   const adminPriority = row && row.admin_priority != null ? Number(row.admin_priority) : NaN;

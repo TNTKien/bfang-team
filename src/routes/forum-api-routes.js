@@ -946,16 +946,34 @@ const registerForumApiRoutes = (app, deps) => {
         return res.status(403).json({ ok: false, error: "Chủ đề này đã bị khóa. Bạn không thể bình luận." });
       }
 
-      const parentId = parentIdInput || postId;
-      const parentRow = await loadVisibleForumCommentById(parentId);
+      const requestedParentId = parentIdInput || postId;
+      const parentRow = await loadVisibleForumCommentById(requestedParentId);
       if (!parentRow) {
         return res.status(404).json({ ok: false, error: "Không tìm thấy bình luận cha." });
       }
 
-      const parentParentId = Number(parentRow && parentRow.parent_id) || 0;
-      if (parentId !== postId && parentParentId !== postId) {
-        return res.status(400).json({ ok: false, error: "Phản hồi không thuộc chủ đề này." });
+      const parentParentIdRaw = Number(parentRow && parentRow.parent_id);
+      const parentParentId = Number.isFinite(parentParentIdRaw) && parentParentIdRaw > 0
+        ? Math.floor(parentParentIdRaw)
+        : 0;
+
+      let writeParentId = requestedParentId;
+      if (requestedParentId === postId) {
+        writeParentId = postId;
+      } else if (parentParentId === postId) {
+        writeParentId = requestedParentId;
+      } else {
+        const rootCommentRow = await loadVisibleForumCommentById(parentParentId);
+        const rootCommentParentIdRaw = Number(rootCommentRow && rootCommentRow.parent_id);
+        const rootCommentParentId = Number.isFinite(rootCommentParentIdRaw) && rootCommentParentIdRaw > 0
+          ? Math.floor(rootCommentParentIdRaw)
+          : 0;
+        if (!rootCommentRow || rootCommentParentId !== postId) {
+          return res.status(400).json({ ok: false, error: "Phản hồi không thuộc chủ đề này." });
+        }
+        writeParentId = parentParentId;
       }
+
       const parentAuthorUserId = toText(parentRow && parentRow.author_user_id);
 
       const requestId = normalizeForumRequestId(req.body && req.body.requestId);
@@ -963,7 +981,7 @@ const registerForumApiRoutes = (app, deps) => {
       const createdAt = new Date().toISOString();
 
       const createdCommentId = await insertForumComment({
-        parentId,
+        parentId: writeParentId,
         authorIdentity,
         content,
         imageUrl,
@@ -975,7 +993,7 @@ const registerForumApiRoutes = (app, deps) => {
       try {
         const interactionNotificationResult = await createCommentInteractionNotifications({
           postId,
-          parentId,
+          parentId: requestedParentId,
           parentAuthorUserId,
           authorUserId: viewer.userId,
           commentId: createdCommentId,

@@ -6,6 +6,7 @@ const createInitDbDomain = (deps) => {
     dbAll,
     dbGet,
     dbRun,
+    withTransaction,
     ensureHomepageDefaults,
     migrateLegacyGenres,
     migrateMangaSlugs,
@@ -26,13 +27,21 @@ const createInitDbDomain = (deps) => {
     return `team_${Math.floor(id)}_${safeRole}`;
   };
 
-  const resolveTeamBadgePriority = async () => {
-    const row = await dbGet(
+  const resolveTeamBadgePriority = async (dbApi = null) => {
+    const scopedDbGet = dbApi && typeof dbApi.dbGet === "function" ? dbApi.dbGet : dbGet;
+
+    const row = await scopedDbGet(
       `
         SELECT
           MAX(CASE WHEN lower(code) = 'admin' THEN priority END) as admin_priority,
           MAX(CASE WHEN lower(code) = 'mod' THEN priority END) as mod_priority,
-          MAX(CASE WHEN lower(code) NOT IN ('admin', 'mod') THEN priority END) as other_priority
+          MAX(
+            CASE
+              WHEN lower(code) NOT IN ('admin', 'mod')
+                AND code !~* '^team_[0-9]+_(leader|member)$'
+              THEN priority
+            END
+          ) as other_priority
         FROM badges
       `
     );
@@ -70,7 +79,9 @@ const createInitDbDomain = (deps) => {
     };
   };
 
-  const upsertTeamRoleBadge = async ({ teamId, teamName, role }) => {
+  const upsertTeamRoleBadge = async ({ teamId, teamName, role }, dbApi = null) => {
+    const scopedDbRun = dbApi && typeof dbApi.dbRun === "function" ? dbApi.dbRun : dbRun;
+    const scopedDbGet = dbApi && typeof dbApi.dbGet === "function" ? dbApi.dbGet : dbGet;
     const safeTeamId = Number(teamId);
     if (!Number.isFinite(safeTeamId) || safeTeamId <= 0) return 0;
 
@@ -82,10 +93,10 @@ const createInitDbDomain = (deps) => {
     const now = Date.now();
     const label = safeRole === "leader" ? `Leader ${safeTeamName}` : safeTeamName;
     const color = safeRole === "leader" ? TEAM_LEADER_BADGE_COLOR : TEAM_MEMBER_BADGE_COLOR;
-    const priorities = await resolveTeamBadgePriority();
+    const priorities = await resolveTeamBadgePriority({ dbGet: scopedDbGet });
     const priority = safeRole === "leader" ? priorities.leaderPriority : priorities.memberPriority;
 
-    const result = await dbRun(
+    const result = await scopedDbRun(
       `
         INSERT INTO badges (
           code,
@@ -118,9 +129,211 @@ const createInitDbDomain = (deps) => {
       return Math.floor(id);
     }
 
-    const row = await dbGet("SELECT id FROM badges WHERE lower(code) = lower(?) LIMIT 1", [code]);
+    const row = await scopedDbGet("SELECT id FROM badges WHERE lower(code) = lower(?) LIMIT 1", [code]);
     const fallbackId = row && row.id != null ? Number(row.id) : 0;
     return Number.isFinite(fallbackId) && fallbackId > 0 ? Math.floor(fallbackId) : 0;
+  };
+
+  const syncTranslationTeamRoleBadgesByDiff = async () => {
+    const runSync = async (dbApi = null) => {
+      const scopedDbRun = dbApi && typeof dbApi.dbRun === "function" ? dbApi.dbRun : dbRun;
+      const scopedDbGet = dbApi && typeof dbApi.dbGet === "function" ? dbApi.dbGet : dbGet;
+      const scopedDbAll = dbApi && typeof dbApi.dbAll === "function" ? dbApi.dbAll : dbAll;
+
+      await scopedDbRun(
+        `
+          WITH ranked AS (
+            SELECT
+              team_id,
+              user_id,
+              ROW_NUMBER() OVER (
+                PARTITION BY team_id
+                ORDER BY COALESCE(reviewed_at, requested_at, 0) DESC, requested_at DESC, user_id ASC
+              ) AS rn
+            FROM translation_team_members
+            WHERE role = 'leader'
+              AND status = 'approved'
+          )
+          UPDATE translation_team_members tm
+          SET role = 'member'
+          FROM ranked r
+          WHERE tm.team_id = r.team_id
+            AND tm.user_id = r.user_id
+            AND r.rn > 1
+        `
+      );
+
+      await scopedDbRun(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_translation_team_single_approved_leader ON translation_team_members(team_id) WHERE role = 'leader' AND status = 'approved'"
+      );
+
+      const membershipRows = await scopedDbAll(
+        `
+          SELECT
+            tm.team_id,
+            tm.user_id,
+            tm.role,
+            tm.status as member_status,
+            t.name as team_name,
+            t.status as team_status
+          FROM translation_team_members tm
+          JOIN translation_teams t ON t.id = tm.team_id
+          WHERE tm.user_id IS NOT NULL
+            AND TRIM(tm.user_id) <> ''
+        `
+      );
+
+      const desiredAssignmentsByKey = new Map();
+      const desiredBadgeMetaByCode = new Map();
+      const usersWithDesiredTeamBadges = new Set();
+
+      for (const row of membershipRows) {
+        const teamId = row && row.team_id != null ? Number(row.team_id) : 0;
+        const userId = row && row.user_id ? String(row.user_id).trim() : "";
+        if (!Number.isFinite(teamId) || teamId <= 0 || !userId) continue;
+
+        const teamStatus = (row && row.team_status ? String(row.team_status) : "").trim().toLowerCase();
+        const memberStatus = (row && row.member_status ? String(row.member_status) : "").trim().toLowerCase();
+        const isApproved = teamStatus === "approved" && memberStatus === "approved";
+        if (!isApproved) continue;
+
+        const normalizedRole = (row && row.role ? String(row.role) : "").trim().toLowerCase() === "leader"
+          ? "leader"
+          : "member";
+        const badgeCode = buildTeamBadgeCode(Math.floor(teamId), normalizedRole);
+        if (!badgeCode) continue;
+
+        const assignmentKey = `${userId}::${badgeCode}`;
+        desiredAssignmentsByKey.set(assignmentKey, {
+          userId,
+          badgeCode
+        });
+        usersWithDesiredTeamBadges.add(userId);
+
+        if (!desiredBadgeMetaByCode.has(badgeCode)) {
+          desiredBadgeMetaByCode.set(badgeCode, {
+            teamId: Math.floor(teamId),
+            teamName: row && row.team_name ? row.team_name : "",
+            role: normalizedRole,
+            badgeCode
+          });
+        }
+      }
+
+      const badgeIdByCode = new Map();
+      for (const meta of desiredBadgeMetaByCode.values()) {
+        const badgeId = await upsertTeamRoleBadge(
+          {
+            teamId: meta.teamId,
+            teamName: meta.teamName,
+            role: meta.role
+          },
+          {
+            dbRun: scopedDbRun,
+            dbGet: scopedDbGet
+          }
+        );
+        if (badgeId) {
+          badgeIdByCode.set(meta.badgeCode, badgeId);
+        }
+      }
+
+      const currentRows = await scopedDbAll(
+        `
+          SELECT
+            ub.user_id,
+            b.code as badge_code
+          FROM user_badges ub
+          JOIN badges b ON b.id = ub.badge_id
+          WHERE b.code ~* '^team_[0-9]+_(leader|member)$'
+        `
+      );
+
+      const currentAssignmentsByKey = new Map();
+      const usersWithCurrentTeamBadges = new Set();
+
+      for (const row of currentRows) {
+        const userId = row && row.user_id ? String(row.user_id).trim() : "";
+        const badgeCode = row && row.badge_code ? String(row.badge_code).trim().toLowerCase() : "";
+        if (!userId || !badgeCode) continue;
+        const assignmentKey = `${userId}::${badgeCode}`;
+        currentAssignmentsByKey.set(assignmentKey, {
+          userId,
+          badgeCode
+        });
+        usersWithCurrentTeamBadges.add(userId);
+      }
+
+      for (const [assignmentKey, currentAssignment] of currentAssignmentsByKey.entries()) {
+        if (desiredAssignmentsByKey.has(assignmentKey)) continue;
+        await scopedDbRun(
+          `
+            DELETE FROM user_badges ub
+            USING badges b
+            WHERE ub.badge_id = b.id
+              AND ub.user_id = ?
+              AND lower(b.code) = lower(?)
+          `,
+          [currentAssignment.userId, currentAssignment.badgeCode]
+        );
+      }
+
+      const now = Date.now();
+      for (const [assignmentKey, desiredAssignment] of desiredAssignmentsByKey.entries()) {
+        if (currentAssignmentsByKey.has(assignmentKey)) continue;
+
+        let badgeId = Number(badgeIdByCode.get(desiredAssignment.badgeCode) || 0);
+        if (!Number.isFinite(badgeId) || badgeId <= 0) {
+          const badgeRow = await scopedDbGet("SELECT id FROM badges WHERE lower(code) = lower(?) LIMIT 1", [
+            desiredAssignment.badgeCode
+          ]);
+          badgeId = badgeRow && badgeRow.id != null ? Number(badgeRow.id) : 0;
+        }
+
+        if (!Number.isFinite(badgeId) || badgeId <= 0) continue;
+
+        await scopedDbRun(
+          "INSERT INTO user_badges (user_id, badge_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+          [desiredAssignment.userId, Math.floor(badgeId), now]
+        );
+      }
+
+      const affectedUserIds = new Set([
+        ...usersWithCurrentTeamBadges,
+        ...usersWithDesiredTeamBadges
+      ]);
+
+      for (const userId of affectedUserIds) {
+        if (!userId) continue;
+
+        const primaryBadgeRow = await scopedDbGet(
+          `
+            SELECT b.label
+            FROM user_badges ub
+            JOIN badges b ON b.id = ub.badge_id
+            WHERE ub.user_id = ?
+            ORDER BY b.priority DESC, b.id ASC
+            LIMIT 1
+          `,
+          [userId]
+        );
+
+        const nextBadgeLabel = (primaryBadgeRow && primaryBadgeRow.label ? String(primaryBadgeRow.label) : "")
+          .toString()
+          .trim() || "Member";
+
+        await scopedDbRun("UPDATE users SET badge = ? WHERE id = ?", [nextBadgeLabel, userId]);
+      }
+    };
+
+    if (typeof withTransaction === "function") {
+      await withTransaction(async (dbApi) => {
+        await runSync(dbApi);
+      });
+      return;
+    }
+
+    await runSync(null);
   };
 
   const clearTeamBadgesForUser = async ({ teamId, userId }) => {
@@ -2233,74 +2446,7 @@ const initDb = async () => {
   await runInitMigrationOnce("remove_forum_tags_from_stored_comments_v1", removeForumTagsFromStoredComments);
   await runInitMigrationOnce("migrate_manga_bookmarks_to_bookmark_lists_v1", migrateBookmarkListDataV1);
 
-  await dbRun(
-    `
-      WITH ranked AS (
-        SELECT
-          team_id,
-          user_id,
-          ROW_NUMBER() OVER (
-            PARTITION BY team_id
-            ORDER BY COALESCE(reviewed_at, requested_at, 0) DESC, requested_at DESC, user_id ASC
-          ) AS rn
-        FROM translation_team_members
-        WHERE role = 'leader'
-          AND status = 'approved'
-      )
-      UPDATE translation_team_members tm
-      SET role = 'member'
-      FROM ranked r
-      WHERE tm.team_id = r.team_id
-        AND tm.user_id = r.user_id
-        AND r.rn > 1
-    `
-  );
-
-  await dbRun(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_translation_team_single_approved_leader ON translation_team_members(team_id) WHERE role = 'leader' AND status = 'approved'"
-  );
-
-  await dbRun(
-    `
-      DELETE FROM user_badges ub
-      USING badges b
-      WHERE ub.badge_id = b.id
-        AND b.code ~* '^team_[0-9]+_(leader|member)$'
-    `
-  );
-
-  const membershipRows = await dbAll(
-    `
-      SELECT
-        tm.team_id,
-        tm.user_id,
-        tm.role,
-        tm.status as member_status,
-        t.name as team_name,
-        t.status as team_status
-      FROM translation_team_members tm
-      JOIN translation_teams t ON t.id = tm.team_id
-      WHERE tm.user_id IS NOT NULL
-        AND TRIM(tm.user_id) <> ''
-    `
-  );
-
-  for (const row of membershipRows) {
-    const teamId = row && row.team_id != null ? Number(row.team_id) : 0;
-    const userId = row && row.user_id ? String(row.user_id).trim() : "";
-    if (!Number.isFinite(teamId) || teamId <= 0 || !userId) continue;
-
-    const teamStatus = (row && row.team_status ? String(row.team_status) : "").trim().toLowerCase();
-    const memberStatus = (row && row.member_status ? String(row.member_status) : "").trim().toLowerCase();
-    const isApproved = teamStatus === "approved" && memberStatus === "approved";
-    await syncTeamBadgeForMember({
-      teamId: Math.floor(teamId),
-      teamName: row && row.team_name ? row.team_name : "",
-      userId,
-      role: row && row.role ? row.role : "member",
-      isApproved
-    });
-  }
+  await syncTranslationTeamRoleBadgesByDiff();
 
   if (forumSampleSeedEnabled) {
     await cleanupForumSampleSeedData();

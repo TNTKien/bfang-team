@@ -114,6 +114,7 @@
           class="comment-item"
           data-comment-id="<%= comment.id %>"
           data-comment-author-id="<%= comment.authorUserId || "" %>"
+          data-comment-author-username="<%= comment.authorUsername ? String(comment.authorUsername).trim().toLowerCase() : "" %>"
           data-comment-parent-author-id=""
         >
           <div
@@ -284,6 +285,7 @@
                     class="comment-item comment-item--reply"
                     data-comment-id="<%= reply.id %>"
                     data-comment-author-id="<%= reply.authorUserId || "" %>"
+                    data-comment-author-username="<%= reply.authorUsername ? String(reply.authorUsername).trim().toLowerCase() : "" %>"
                     data-comment-parent-author-id="<%= comment.authorUserId || "" %>"
                   >
                     <div
@@ -395,6 +397,18 @@
                               <% } %>
                             </button>
                           </form>
+                          <% const replyMentionUsername = reply.authorUsername ? String(reply.authorUsername).trim().toLowerCase() : ""; %>
+                          <% if (commentComposerEnabledFlag) { %>
+                            <button
+                              class="comment-action comment-action--reply"
+                              type="button"
+                              data-comment-reply
+                              <% if (replyMentionUsername) { %>data-comment-reply-mention-username="<%= replyMentionUsername %>"<% } %>
+                            >
+                              <i class="fa-solid fa-reply" aria-hidden="true"></i>
+                              Trả lời
+                            </button>
+                          <% } %>
                           <form method="post" action="/comments/<%= reply.id %>/report">
                             <button
                               class="comment-action comment-action--report <%= reply.reported ? "is-muted" : "" %>"
@@ -422,6 +436,24 @@
                           </button>
                         </div>
                       </div>
+                      <% if (commentComposerEnabledFlag) { %>
+                        <div class="comment-reply">
+                          <form class="comment-form comment-form--reply" method="post" action="<%= resolvedCommentCreateAction %>">
+                            <input type="hidden" name="parent_id" value="<%= comment.id %>" />
+                            <textarea
+                              class="comment-textarea"
+                              name="content"
+                              rows="2"
+                              maxlength="500"
+                              placeholder="Viết trả lời..."
+                              required
+                            ></textarea>
+                            <div class="comment-submit">
+                              <button class="button" type="submit">Gửi trả lời</button>
+                            </div>
+                          </form>
+                        </div>
+                      <% } %>
                     </div>
                   </li>
                 <% }) %>

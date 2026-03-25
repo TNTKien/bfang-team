@@ -3296,11 +3296,15 @@ const buildReportForm = (comment) => {
   return form;
 };
 
-const buildReplyButton = () => {
+const buildReplyButton = (mentionUsername) => {
+  const safeMentionUsername = toSafeText(mentionUsername).toLowerCase();
   const button = document.createElement("button");
   button.type = "button";
   button.className = "comment-action comment-action--reply";
   button.setAttribute("data-comment-reply", "");
+  if (commentProfileUsernamePattern.test(safeMentionUsername)) {
+    button.setAttribute("data-comment-reply-mention-username", safeMentionUsername);
+  }
   button.innerHTML = `${icons.reply}Trả lời`;
   return button;
 };
@@ -3515,7 +3519,15 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
   item.id = `comment-${comment.id}`;
   item.dataset.commentId = comment.id;
   item.dataset.commentAuthorId = authorUserId;
+  item.dataset.commentAuthorUsername = authorUsername;
   item.dataset.commentParentAuthorId = parentAuthorUserId;
+
+  const commentIdValue = Number(comment && comment.id);
+  const safeCommentId = Number.isFinite(commentIdValue) && commentIdValue > 0 ? Math.floor(commentIdValue) : 0;
+  const parentIdValue = Number(comment && comment.parentId);
+  const safeParentId = Number.isFinite(parentIdValue) && parentIdValue > 0 ? Math.floor(parentIdValue) : 0;
+  const replyParentId = isReply && safeParentId ? safeParentId : safeCommentId;
+  const replyMentionUsername = isReply && commentProfileUsernamePattern.test(authorUsername) ? authorUsername : "";
 
   const avatar = buildAvatar(comment.avatarUrl, {
     userId: authorUserId,
@@ -3626,9 +3638,7 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
 
   actions.appendChild(buildLikeForm(comment));
 
-  if (!isReply) {
-    actions.appendChild(buildReplyButton());
-  }
+  actions.appendChild(buildReplyButton(replyMentionUsername));
 
   actions.appendChild(buildReportForm(comment));
 
@@ -3649,8 +3659,8 @@ const buildCommentItem = (comment, actionBase, isReply, options) => {
   body.appendChild(bubble);
   body.appendChild(meta);
 
-  if (!isReply) {
-    body.appendChild(buildReplyForm(actionBase, comment.id));
+  if (replyParentId > 0) {
+    body.appendChild(buildReplyForm(actionBase, String(replyParentId)));
   }
 
   item.appendChild(avatar);
@@ -5068,8 +5078,18 @@ document.addEventListener("click", (event) => {
   replyForm.classList.toggle("is-open");
   if (replyForm.classList.contains("is-open")) {
     const textarea = replyForm.querySelector("textarea");
-    if (textarea) {
+    if (textarea instanceof HTMLTextAreaElement) {
+      const mentionUsername = toSafeText(replyButton.getAttribute("data-comment-reply-mention-username")).toLowerCase();
+      if (
+        commentProfileUsernamePattern.test(mentionUsername) &&
+        String(textarea.value || "").trim() === ""
+      ) {
+        textarea.value = `@${mentionUsername} `;
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       textarea.focus();
+      const textLength = String(textarea.value || "").length;
+      textarea.setSelectionRange(textLength, textLength);
     }
   }
 });

@@ -1177,6 +1177,7 @@ const registerSiteRoutes = (app, deps) => {
     if (!parentProvided || !Number.isFinite(parentId) || parentId <= 0) {
       return {
         parentId: null,
+        interactionParentId: 0,
         parentAuthorUserId: "",
         rootCommentId: 0,
         parentProvided,
@@ -1202,6 +1203,7 @@ const registerSiteRoutes = (app, deps) => {
     if (!parentRow) {
       return {
         parentId: null,
+        interactionParentId: 0,
         parentAuthorUserId: "",
         rootCommentId: 0,
         parentProvided,
@@ -1217,10 +1219,38 @@ const registerSiteRoutes = (app, deps) => {
       ? Math.floor(directParentIdRaw)
       : 0;
 
+    if (!directParentId) {
+      return {
+        parentId,
+        interactionParentId: parentId,
+        parentAuthorUserId,
+        rootCommentId: parentId,
+        parentProvided,
+        invalidParent: false,
+      };
+    }
+
     if (!isForumRequest) {
-      if (directParentId) {
+      const rootRow = await dbGet(
+        `
+          SELECT
+            c.id,
+            c.parent_id
+          FROM ${targetTable} c
+          WHERE c.id = ?
+            AND ${commentScope.whereWithoutStatus}
+        `,
+        [directParentId, ...commentScope.params]
+      );
+
+      const rootParentIdRaw = rootRow ? Number(rootRow.parent_id) : NaN;
+      const rootParentId = Number.isFinite(rootParentIdRaw) && rootParentIdRaw > 0
+        ? Math.floor(rootParentIdRaw)
+        : 0;
+      if (!rootRow || rootParentId) {
         return {
           parentId: null,
+          interactionParentId: 0,
           parentAuthorUserId: "",
           rootCommentId: 0,
           parentProvided,
@@ -1229,25 +1259,16 @@ const registerSiteRoutes = (app, deps) => {
       }
 
       return {
-        parentId,
+        parentId: directParentId,
+        interactionParentId: parentId,
         parentAuthorUserId,
-        rootCommentId: parentId,
+        rootCommentId: directParentId,
         parentProvided,
         invalidParent: false,
       };
     }
 
-    if (!directParentId) {
-      return {
-        parentId,
-        parentAuthorUserId,
-        rootCommentId: parentId,
-        parentProvided,
-        invalidParent: false,
-      };
-    }
-
-    const rootRow = await dbGet(
+    const directParentRow = await dbGet(
       `
         SELECT
           c.id,
@@ -1258,14 +1279,52 @@ const registerSiteRoutes = (app, deps) => {
       `,
       [directParentId, ...commentScope.params]
     );
-
-    const rootParentIdRaw = rootRow ? Number(rootRow.parent_id) : NaN;
-    const rootParentId = Number.isFinite(rootParentIdRaw) && rootParentIdRaw > 0
-      ? Math.floor(rootParentIdRaw)
+    const directParentParentIdRaw = directParentRow ? Number(directParentRow.parent_id) : NaN;
+    const directParentParentId = Number.isFinite(directParentParentIdRaw) && directParentParentIdRaw > 0
+      ? Math.floor(directParentParentIdRaw)
       : 0;
-    if (!rootRow || rootParentId) {
+    if (!directParentRow) {
       return {
         parentId: null,
+        interactionParentId: 0,
+        parentAuthorUserId: "",
+        rootCommentId: 0,
+        parentProvided,
+        invalidParent: true,
+      };
+    }
+
+    if (!directParentParentId) {
+      return {
+        parentId,
+        interactionParentId: parentId,
+        parentAuthorUserId,
+        rootCommentId: directParentId,
+        parentProvided,
+        invalidParent: false,
+      };
+    }
+
+    const rootPostRow = await dbGet(
+      `
+        SELECT
+          c.id,
+          c.parent_id
+        FROM ${targetTable} c
+        WHERE c.id = ?
+          AND ${commentScope.whereWithoutStatus}
+      `,
+      [directParentParentId, ...commentScope.params]
+    );
+
+    const rootPostParentIdRaw = rootPostRow ? Number(rootPostRow.parent_id) : NaN;
+    const rootPostParentId = Number.isFinite(rootPostParentIdRaw) && rootPostParentIdRaw > 0
+      ? Math.floor(rootPostParentIdRaw)
+      : 0;
+    if (!rootPostRow || rootPostParentId) {
+      return {
+        parentId: null,
+        interactionParentId: 0,
         parentAuthorUserId: "",
         rootCommentId: 0,
         parentProvided,
@@ -1274,9 +1333,10 @@ const registerSiteRoutes = (app, deps) => {
     }
 
     return {
-      parentId,
+      parentId: directParentId,
+      interactionParentId: parentId,
       parentAuthorUserId,
-      rootCommentId: directParentId,
+      rootCommentId: directParentParentId,
       parentProvided,
       invalidParent: false,
     };
@@ -2720,13 +2780,19 @@ const registerSiteRoutes = (app, deps) => {
   const resolveTeamBadgePriority = async (dbGetFn = dbGet) => {
     const row = await dbGetFn(
       `
-        SELECT
-          MAX(CASE WHEN lower(code) = 'admin' THEN priority END) as admin_priority,
-          MAX(CASE WHEN lower(code) = 'mod' THEN priority END) as mod_priority,
-          MAX(CASE WHEN lower(code) NOT IN ('admin', 'mod') THEN priority END) as other_priority
-        FROM badges
-      `
-    );
+      SELECT
+        MAX(CASE WHEN lower(code) = 'admin' THEN priority END) as admin_priority,
+        MAX(CASE WHEN lower(code) = 'mod' THEN priority END) as mod_priority,
+        MAX(
+          CASE
+            WHEN lower(code) NOT IN ('admin', 'mod')
+              AND code !~* '^team_[0-9]+_(leader|member)$'
+            THEN priority
+          END
+        ) as other_priority
+      FROM badges
+    `
+  );
 
     const adminPriority = row && row.admin_priority != null ? Number(row.admin_priority) : NaN;
     const modPriority = row && row.mod_priority != null ? Number(row.mod_priority) : NaN;
@@ -12124,6 +12190,7 @@ const registerSiteRoutes = (app, deps) => {
 
       const author = buildCommentAuthorFromAuthUser(user);
       const authorUserId = String(user.id || "").trim();
+      const authorUsername = user && user.username ? String(user.username).trim().toLowerCase() : "";
       const authorEmail = user.email ? String(user.email).trim() : "";
       let authorAvatarUrl = buildAvatarUrlFromAuthUser(
         user,
@@ -12181,6 +12248,9 @@ const registerSiteRoutes = (app, deps) => {
         isForumRequest,
       });
       const parentId = parentContext.parentId;
+      const interactionParentId = Number(parentContext.interactionParentId) > 0
+        ? Math.floor(Number(parentContext.interactionParentId))
+        : parentId;
       const parentAuthorUserId = parentContext.parentAuthorUserId;
       const rootCommentId = parentContext.rootCommentId;
       const canCreateAnnouncement = canCreateAnnouncementFromBadgeContext(badgeContext);
@@ -12410,7 +12480,7 @@ const registerSiteRoutes = (app, deps) => {
       try {
         const interactionNotificationResult = await createCommentInteractionNotifications({
           isForumRequest,
-          parentId,
+          parentId: interactionParentId,
           rootCommentId,
           parentAuthorUserId,
           authorUserId,
@@ -12471,6 +12541,7 @@ const registerSiteRoutes = (app, deps) => {
             id: result.lastID,
             author,
             authorUserId,
+            authorUsername,
             badges: badgeContext.badges,
             userColor: badgeContext.userColor,
             avatarUrl: authorAvatarUrl,
@@ -12558,6 +12629,7 @@ const registerSiteRoutes = (app, deps) => {
 
       const author = buildCommentAuthorFromAuthUser(user);
       const authorUserId = String(user.id || "").trim();
+      const authorUsername = user && user.username ? String(user.username).trim().toLowerCase() : "";
       const authorEmail = user.email ? String(user.email).trim() : "";
       let authorAvatarUrl = buildAvatarUrlFromAuthUser(
         user,
@@ -12609,6 +12681,9 @@ const registerSiteRoutes = (app, deps) => {
         isForumRequest,
       });
       const parentId = parentContext.parentId;
+      const interactionParentId = Number(parentContext.interactionParentId) > 0
+        ? Math.floor(Number(parentContext.interactionParentId))
+        : parentId;
       const parentAuthorUserId = parentContext.parentAuthorUserId;
       const rootCommentId = parentContext.rootCommentId;
       const canCreateAnnouncement = canCreateAnnouncementFromBadgeContext(badgeContext);
@@ -12838,7 +12913,7 @@ const registerSiteRoutes = (app, deps) => {
       try {
         const interactionNotificationResult = await createCommentInteractionNotifications({
           isForumRequest,
-          parentId,
+          parentId: interactionParentId,
           rootCommentId,
           parentAuthorUserId,
           authorUserId,
@@ -12899,6 +12974,7 @@ const registerSiteRoutes = (app, deps) => {
             id: result.lastID,
             author,
             authorUserId,
+            authorUsername,
             badges: badgeContext.badges,
             userColor: badgeContext.userColor,
             avatarUrl: authorAvatarUrl,

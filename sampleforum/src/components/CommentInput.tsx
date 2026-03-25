@@ -17,6 +17,9 @@ const FORUM_COMMENT_IMAGE_ALLOWED_MIME_TYPES = new Set([
 
 interface CommentInputProps {
   placeholder?: string;
+  initialContent?: string;
+  focusAtEndOnMount?: boolean;
+  appendSpaceOnMount?: boolean;
   onSubmit: (content: string, imageFile?: File | null) => void;
   onCancel?: () => void;
   autoFocus?: boolean;
@@ -27,6 +30,9 @@ interface CommentInputProps {
 
 export const CommentInput = memo(function CommentInput({
   placeholder = "Viết bình luận...",
+  initialContent = "",
+  focusAtEndOnMount = false,
+  appendSpaceOnMount = false,
   onSubmit,
   onCancel,
   autoFocus,
@@ -34,7 +40,7 @@ export const CommentInput = memo(function CommentInput({
   submitting = false,
   imageUploadsEnabled = false,
 }: CommentInputProps) {
-  const [content, setContent] = useState("");
+  const [content, setContent] = useState(() => String(initialContent || ""));
   const [expanded, setExpanded] = useState(autoFocus || false);
   const [sessionUser, setSessionUser] = useState<AuthSessionUser | null>(null);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
@@ -78,6 +84,16 @@ export const CommentInput = memo(function CommentInput({
       }
     };
   }, [pendingImagePreviewUrl]);
+
+  useEffect(() => {
+    const seededInitial = String(initialContent || "");
+    if (!seededInitial.trim()) return;
+
+    setContent((previous) => {
+      if (String(previous || "").trim()) return previous;
+      return seededInitial;
+    });
+  }, [initialContent]);
 
   const avatarUrl = useMemo(() => {
     const fallback = "https://api.dicebear.com/7.x/avataaars/svg?seed=currentuser";
@@ -211,6 +227,8 @@ export const CommentInput = memo(function CommentInput({
               placeholder={placeholder}
               compact
               autoFocus={autoFocus}
+              focusAtEndOnMount={focusAtEndOnMount}
+              appendSpaceOnMount={appendSpaceOnMount}
               minHeight="32px"
               mentionRootCommentId={mentionRootCommentId}
               compactToolbarExtra={

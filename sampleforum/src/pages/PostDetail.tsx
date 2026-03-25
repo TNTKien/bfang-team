@@ -1725,7 +1725,27 @@ const PostDetail = () => {
       return;
     }
 
-    const safeParentCommentId = String(Math.floor(safeParentId));
+    const normalizedParentId = Math.floor(safeParentId);
+    const safePostId = Number(detail.post.id);
+    const normalizedPostId = Number.isFinite(safePostId) && safePostId > 0 ? Math.floor(safePostId) : 0;
+    const parentComment = Array.isArray(detail.comments)
+      ? detail.comments.find((item) => Number(item && item.id) === normalizedParentId)
+      : null;
+    const directParentIdRaw = parentComment && parentComment.parentId != null
+      ? Number(parentComment.parentId)
+      : NaN;
+    const directParentId = Number.isFinite(directParentIdRaw) && directParentIdRaw > 0
+      ? Math.floor(directParentIdRaw)
+      : 0;
+    const rootParentIdRaw =
+      directParentId && normalizedPostId && directParentId !== normalizedPostId
+        ? directParentId
+        : normalizedParentId;
+    const rootParentId = Number.isFinite(rootParentIdRaw) && rootParentIdRaw > 0
+      ? Math.floor(rootParentIdRaw)
+      : normalizedParentId;
+
+    const safeParentCommentId = String(rootParentId);
     setForceExpandedReplyParentIds((prev) => {
       const next = new Set(prev);
       next.add(safeParentCommentId);
@@ -1756,7 +1776,7 @@ const PostDetail = () => {
       const payload = await submitForumReply({
         postId: detail.post.id,
         content: normalizedContent,
-        parentId: Math.floor(safeParentId),
+        parentId: normalizedParentId,
         imageUrl,
       });
 
