@@ -147,6 +147,74 @@
   margin: 0.15rem 0;
   line-height: 1.6;
 }
+.forum-rich-content ul,
+.forum-rich-content ol {
+  margin: 0.3rem 0;
+  padding-left: 1.35rem;
+}
+.forum-rich-content ul {
+  list-style-type: disc;
+}
+.forum-rich-content ol {
+  list-style-type: decimal;
+}
+.forum-rich-content ul ul {
+  list-style-type: circle;
+}
+.forum-rich-content ul ul ul {
+  list-style-type: square;
+}
+.forum-rich-content ol ol {
+  list-style-type: lower-alpha;
+}
+.forum-rich-content ol ol ol {
+  list-style-type: lower-roman;
+}
+.forum-rich-content li {
+  margin: 0.1rem 0;
+}
+.forum-rich-content li > p {
+  margin: 0.1rem 0;
+}
+.forum-rich-content h1,
+.forum-rich-content h2,
+.forum-rich-content h3,
+.forum-rich-content h4,
+.forum-rich-content h5,
+.forum-rich-content h6 {
+  line-height: 1.35;
+  color: hsl(var(--foreground));
+}
+.forum-rich-content h1 {
+  margin: 0.6rem 0 0.3rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+.forum-rich-content h2 {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.forum-rich-content h3 {
+  margin: 0.4rem 0 0.2rem;
+  font-size: 1.08rem;
+  font-weight: 600;
+}
+.forum-rich-content h4 {
+  margin: 0.35rem 0 0.18rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.forum-rich-content h5 {
+  margin: 0.32rem 0 0.15rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.forum-rich-content h6 {
+  margin: 0.3rem 0 0.12rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
 .forum-rich-content p:empty {
   min-height: 1.25rem;
 }
@@ -155,6 +223,9 @@
 .forum-rich-content h1,
 .forum-rich-content h2,
 .forum-rich-content h3,
+.forum-rich-content h4,
+.forum-rich-content h5,
+.forum-rich-content h6,
 .forum-rich-content blockquote {
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -192,6 +263,11 @@
   margin: 0.15rem 0;
   font-size: 1em;
   line-height: var(--forum-card-preview-line-height);
+}
+.forum-card-preview-collapsed ul,
+.forum-card-preview-collapsed ol {
+  margin: 0.15rem 0;
+  padding-left: 1.15rem;
 }
 .forum-card-preview-collapsed pre,
 .forum-card-preview-collapsed blockquote {
