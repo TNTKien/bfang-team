@@ -10,8 +10,8 @@ const collator = new Intl.Collator("vi", { numeric: true, sensitivity: "base" })
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 const MAX_PAGES_PER_CHAPTER = 220;
-const PAGE_UPLOAD_PARALLELISM = 2;
-const SOURCE_PAGE_UPLOAD_PARALLELISM = 2;
+const PAGE_UPLOAD_PARALLELISM = 3;
+const SOURCE_PAGE_UPLOAD_PARALLELISM = 3;
 const MIN_INTEGER_INPUT = 2;
 const DEFAULT_RETRY_COUNT = 3;
 const DEFAULT_DELAY_MS = 900;
