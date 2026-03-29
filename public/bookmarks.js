@@ -16,6 +16,7 @@
   const BOOKMARK_SORT_AZ = "az";
   const BOOKMARK_SORT_ZA = "za";
   const BOOKMARK_SEARCH_MAX_LENGTH = 80;
+  const BOOKMARK_PAGE_SEARCH_DEBOUNCE_MS = 320;
 
   const toText = (value) => (value == null ? "" : String(value)).trim();
   const normalizeBookmarkSearchTerm = (value) =>
@@ -101,26 +102,34 @@
     }
   };
 
-  const requestBookmarkApi = async ({ url, method = "GET", body = null, token = "" } = {}) => {
+  const requestBookmarkApi = async ({ url, method = "GET", body = null, token = "", signal = undefined } = {}) => {
     const headers = { Accept: "application/json" };
     if (method !== "GET") headers["Content-Type"] = "application/json";
     if (token) headers.Authorization = `Bearer ${token}`;
 
-    const response = await fetch(url, {
-      method,
-      cache: "no-store",
-      credentials: "same-origin",
-      headers,
-      body: method === "GET" ? undefined : JSON.stringify(body && typeof body === "object" ? body : {})
-    }).catch(() => null);
+    try {
+      const response = await fetch(url, {
+        method,
+        cache: "no-store",
+        credentials: "same-origin",
+        headers,
+        signal,
+        body: method === "GET" ? undefined : JSON.stringify(body && typeof body === "object" ? body : {})
+      });
 
-    const data = response ? await response.json().catch(() => null) : null;
-    if (!response || !response.ok || !data || data.ok !== true) {
-      const errorText = data && data.error ? toText(data.error) : "Không thể xử lý mục đã lưu.";
-      return { ok: false, error: errorText || "Không thể xử lý mục đã lưu." };
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || data.ok !== true) {
+        const errorText = data && data.error ? toText(data.error) : "Không thể xử lý mục đã lưu.";
+        return { ok: false, error: errorText || "Không thể xử lý mục đã lưu." };
+      }
+
+      return { ok: true, data };
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        return { ok: false, aborted: true, error: "" };
+      }
+      return { ok: false, error: "Không thể xử lý mục đã lưu." };
     }
-
-    return { ok: true, data };
   };
 
   const dispatchBookmarkUpdated = ({ mangaId, mangaSlug, bookmarked }) => {
@@ -780,8 +789,11 @@
   let pageSortOrder = BOOKMARK_SORT_NEW;
   let pagePerPage = BOOKMARKS_PER_PAGE_WIDE;
   let pageSearchDebounceTimer = null;
+  let pageSearchInputComposing = false;
   let pageResizeDebounceTimer = null;
   let pageResizeBound = false;
+  let pageLoadRequestId = 0;
+  let pageLoadController = null;
 
   const setPageLocked = (locked) => {
     if (pageLocked) pageLocked.hidden = !locked;
@@ -916,7 +928,11 @@
     pageSearchTerm = resolvedSearch;
     pageSortOrder = resolvedSort;
 
-    if (pageSearchInput && pageSearchInput.value !== resolvedSearch) {
+    const canSyncSearchInput =
+      pageSearchInput &&
+      document.activeElement !== pageSearchInput &&
+      !pageSearchInputComposing;
+    if (canSyncSearchInput && pageSearchInput.value !== resolvedSearch) {
       pageSearchInput.value = resolvedSearch;
     }
     if (pageSortSelect && pageSortSelect.value !== resolvedSort) {
@@ -1277,8 +1293,58 @@
     if (pageDeleteBtn) pageDeleteBtn.hidden = !canManage;
   };
 
+  const clearPageSearchDebounce = () => {
+    if (!pageSearchDebounceTimer) return;
+    window.clearTimeout(pageSearchDebounceTimer);
+    pageSearchDebounceTimer = null;
+  };
+
+  const shouldRunPageSearch = (nextRawValue) => {
+    const previousSearch = pageSearchTerm;
+    const nextSearch = normalizeBookmarkSearchTerm(nextRawValue || "");
+    if (nextSearch === pageSearchTerm) return false;
+
+    pageSearchTerm = nextSearch;
+
+    const skipInitialShortQuery =
+      nextSearch.length > 0 &&
+      nextSearch.length < 2 &&
+      previousSearch.length < 2;
+    return !skipInitialShortQuery;
+  };
+
+  const schedulePageSearchLoad = () => {
+    clearPageSearchDebounce();
+    pageSearchDebounceTimer = window.setTimeout(() => {
+      pageSearchDebounceTimer = null;
+      loadBookmarkPage({
+        page: 1,
+        listId: pageCurrentListId,
+        search: pageSearchTerm,
+        sort: pageSortOrder
+      }).catch(() => {
+        setPageStatus("Không thể tải danh sách đã lưu.", "error");
+      });
+    }, BOOKMARK_PAGE_SEARCH_DEBOUNCE_MS);
+  };
+
   const loadBookmarkPage = async ({ page, listId, search, sort, keepStatus = false } = {}) => {
-    if (!pageRoot || pageLoading) return;
+    if (!pageRoot) return;
+
+    pageLoadRequestId += 1;
+    const requestId = pageLoadRequestId;
+    if (pageLoadController) {
+      try {
+        pageLoadController.abort();
+      } catch (_err) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    pageLoadController = controller;
+    const isStaleRequest = () => requestId !== pageLoadRequestId;
+
     pageLoading = true;
     if (!keepStatus) setPageStatus("");
 
@@ -1292,7 +1358,11 @@
       pageSortOrder = safeSort;
       pagePerPage = safeLimit;
 
-      if (pageSearchInput && pageSearchInput.value !== safeSearch) {
+      const canSyncSearchInput =
+        pageSearchInput &&
+        document.activeElement !== pageSearchInput &&
+        !pageSearchInputComposing;
+      if (canSyncSearchInput && pageSearchInput.value !== safeSearch) {
         pageSearchInput.value = safeSearch;
       }
       if (pageSortSelect && pageSortSelect.value !== safeSort) {
@@ -1310,11 +1380,14 @@
 
         const result = await requestBookmarkApi({
           url: `${BOOKMARKS_PUBLIC_ENDPOINT_PREFIX}/${encodeURIComponent(pagePublicToken)}?${publicQuery.toString()}`,
-          method: "GET"
+          method: "GET",
+          signal: controller ? controller.signal : undefined
         });
+        if (isStaleRequest()) return;
         if (!result.ok) {
-          setPageStatus(result.error || "Không tải được danh sách công khai.", "error");
-          pageLoading = false;
+          if (!result.aborted) {
+            setPageStatus(result.error || "Không tải được danh sách công khai.", "error");
+          }
           return;
         }
         const data = result.data || {};
@@ -1348,11 +1421,11 @@
           search: queryState.search,
           sort: queryState.sort
         });
-        pageLoading = false;
         return;
       }
 
       const session = await getSessionSafe();
+      if (isStaleRequest()) return;
       if (!session) {
         setPageLocked(true);
         if (pageList) pageList.innerHTML = "";
@@ -1360,7 +1433,6 @@
           pagePagination.hidden = true;
           pagePagination.innerHTML = "";
         }
-        pageLoading = false;
         return;
       }
 
@@ -1377,11 +1449,14 @@
       const result = await requestBookmarkApi({
         url: `${BOOKMARKS_ENDPOINT}?${query.toString()}`,
         method: "GET",
-        token
+        token,
+        signal: controller ? controller.signal : undefined
       });
+      if (isStaleRequest()) return;
       if (!result.ok) {
-        setPageStatus(result.error || "Không tải được danh sách đã lưu.", "error");
-        pageLoading = false;
+        if (!result.aborted) {
+          setPageStatus(result.error || "Không tải được danh sách đã lưu.", "error");
+        }
         return;
       }
 
@@ -1410,8 +1485,13 @@
         sort: queryState.sort
       });
     } finally {
-      pageLoading = false;
-      scheduleBookmarkResizeSync();
+      if (pageLoadController === controller) {
+        pageLoadController = null;
+      }
+      if (requestId === pageLoadRequestId) {
+        pageLoading = false;
+        scheduleBookmarkResizeSync();
+      }
     }
   };
 
@@ -1731,6 +1811,7 @@
         const nextListId = Number(target.value || "0");
         if (!Number.isFinite(nextListId) || nextListId <= 0) return;
         setMobileListPickerOpen(false);
+        clearPageSearchDebounce();
         loadBookmarkPage({ page: 1, listId: Math.floor(nextListId) }).catch(() => {
           setPageStatus("Không thể tải danh mục.", "error");
         });
@@ -1749,33 +1830,22 @@
 
     if (pageSearchInput && pageSearchInput.getAttribute("data-bookmark-search-bound") !== "1") {
       pageSearchInput.setAttribute("data-bookmark-search-bound", "1");
+      pageSearchInput.addEventListener("compositionstart", () => {
+        pageSearchInputComposing = true;
+      });
+      pageSearchInput.addEventListener("compositionend", (event) => {
+        pageSearchInputComposing = false;
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) return;
+        if (!shouldRunPageSearch(target.value || "")) return;
+        schedulePageSearchLoad();
+      });
       pageSearchInput.addEventListener("input", (event) => {
         const target = event.target;
         if (!(target instanceof HTMLInputElement)) return;
-        const previousSearch = pageSearchTerm;
-        const nextSearch = normalizeBookmarkSearchTerm(target.value || "");
-        if (nextSearch === pageSearchTerm) return;
-        pageSearchTerm = nextSearch;
-
-        const skipInitialShortQuery =
-          nextSearch.length > 0 &&
-          nextSearch.length < 2 &&
-          previousSearch.length < 2;
-        if (skipInitialShortQuery) return;
-
-        if (pageSearchDebounceTimer) {
-          window.clearTimeout(pageSearchDebounceTimer);
-        }
-        pageSearchDebounceTimer = window.setTimeout(() => {
-          loadBookmarkPage({
-            page: 1,
-            listId: pageCurrentListId,
-            search: pageSearchTerm,
-            sort: pageSortOrder
-          }).catch(() => {
-            setPageStatus("Không thể tải danh sách đã lưu.", "error");
-          });
-        }, 320);
+        if (event.isComposing || pageSearchInputComposing) return;
+        if (!shouldRunPageSearch(target.value || "")) return;
+        schedulePageSearchLoad();
       });
     }
 
@@ -1787,6 +1857,7 @@
         const nextSort = normalizeBookmarkSortOrder(target.value || "");
         if (nextSort === pageSortOrder) return;
         pageSortOrder = nextSort;
+        clearPageSearchDebounce();
         loadBookmarkPage({
           page: 1,
           listId: pageCurrentListId,
@@ -1862,6 +1933,7 @@
           const nextListId = Number(mobileOptionButton.getAttribute("data-list-id") || "0");
           setMobileListPickerOpen(false);
           if (!Number.isFinite(nextListId) || nextListId <= 0) return;
+          clearPageSearchDebounce();
           loadBookmarkPage({ page: 1, listId: Math.floor(nextListId) }).catch(() => {
             setPageStatus("Không thể tải danh mục.", "error");
           });
@@ -1912,6 +1984,7 @@
           setMobileListPickerOpen(false);
           const nextListId = Number(listButton.getAttribute("data-list-id") || "0");
           if (!Number.isFinite(nextListId) || nextListId <= 0) return;
+          clearPageSearchDebounce();
           loadBookmarkPage({ page: 1, listId: Math.floor(nextListId) }).catch(() => {
             setPageStatus("Không thể tải danh mục.", "error");
           });
@@ -1941,6 +2014,7 @@
           setMobileListPickerOpen(false);
           const targetPage = Number(pageButton.getAttribute("data-page") || "1");
           if (!Number.isFinite(targetPage) || targetPage <= 0) return;
+          clearPageSearchDebounce();
           loadBookmarkPage({ page: Math.floor(targetPage), listId: pageCurrentListId }).catch(() => {
             setPageStatus("Không thể tải trang đã lưu.", "error");
           });
