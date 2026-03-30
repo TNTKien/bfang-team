@@ -295,9 +295,30 @@
                         Danh sách chương
                       </h2>
                     </div>
-                    <% if (manga.chapters.length===0) { %>
-                      <p class="note">Chưa có chương nào được đăng.</p>
-                      <% } else { %>
+                     <% if (manga.chapters.length===0) { %>
+                       <p class="note">Chưa có chương nào được đăng.</p>
+                       <% } else { %>
+                        <% const chapterVisiblePageNumbers=[]; %>
+                          <% if (chapterTotalPages <=6) { %>
+                            <% for (let i=1; i <=chapterTotalPages; i +=1) { chapterVisiblePageNumbers.push(i); } %>
+                              <% } else if (chapterPage <=3) { %>
+                                <% chapterVisiblePageNumbers.push(1, 2, 3, 4, "..." , chapterTotalPages); %>
+                                  <% } else if (chapterPage>= chapterTotalPages - 2) { %>
+                                    <% chapterVisiblePageNumbers.push(1, "..." , chapterTotalPages - 3,
+                                      chapterTotalPages - 2, chapterTotalPages - 1, chapterTotalPages); %>
+                                      <% } else { %>
+                                        <% chapterVisiblePageNumbers.push(1, "..." , chapterPage - 1, chapterPage,
+                                          chapterPage + 1, "..." , chapterTotalPages); %>
+                                          <% } %>
+                                            <% if (chapterTotalPages> 1) { %>
+                                              <%- include("partials/chapter-list-pagination", {
+                                                chapterPagination,
+                                                chapterPageHref,
+                                                chapterPage,
+                                                chapterVisiblePageNumbers,
+                                                chapterPaginationClass: "chapter-list-pagination chapter-list-pagination--top"
+                                              }) %>
+                                                <% } %>
                         <div class="chapter-table">
                           <% const endChapterNumber=Number(manga && manga.latestChapterNumber ?
                             manga.latestChapterNumber : 0); %>
@@ -391,58 +412,14 @@
                             </ul>
                         </div>
                         <% if (chapterTotalPages> 1) { %>
-                          <% const chapterVisiblePageNumbers=[]; %>
-                            <% if (chapterTotalPages <=6) { %>
-                              <% for (let i=1; i <=chapterTotalPages; i +=1) { chapterVisiblePageNumbers.push(i); } %>
-                                <% } else if (chapterPage <=3) { %>
-                                  <% chapterVisiblePageNumbers.push(1, 2, 3, 4, "..." , chapterTotalPages); %>
-                                    <% } else if (chapterPage>= chapterTotalPages - 2) { %>
-                                      <% chapterVisiblePageNumbers.push(1, "..." , chapterTotalPages - 3,
-                                        chapterTotalPages - 2, chapterTotalPages - 1, chapterTotalPages); %>
-                                        <% } else { %>
-                                          <% chapterVisiblePageNumbers.push(1, "..." , chapterPage - 1, chapterPage,
-                                            chapterPage + 1, "..." , chapterTotalPages); %>
-                                            <% } %>
-
-                                              <nav class="admin-pagination" aria-label="Phân trang chương truyện">
-                                                <a class="button button--ghost <%= chapterPagination && chapterPagination.hasPrev ? '' : 'is-disabled' %>"
-                                                  href="<%= chapterPagination && chapterPagination.hasPrev ?
-                                                    chapterPageHref(chapterPagination.prevPage) : " #" %>"
-                                                  aria-label="Trang chương trước"
-                                                  <%= chapterPagination && chapterPagination.hasPrev ? ""
-                                                    : 'tabindex="-1" aria-disabled="true"' %>
-                                                    >
-                                                    Trước
-                                                </a>
-
-                                                <div class="admin-pagination__numbers">
-                                                  <% chapterVisiblePageNumbers.forEach((num)=> { %>
-                                                    <% if (num==="..." ) { %>
-                                                      <span class="admin-pagination__dots">...</span>
-                                                      <% } else if (num===chapterPage) { %>
-                                                        <span class="chip">
-                                                          <%= num %>
-                                                        </span>
-                                                        <% } else { %>
-                                                          <a class="button button--ghost"
-                                                            href="<%= chapterPageHref(num) %>">
-                                                            <%= num %>
-                                                          </a>
-                                                          <% } %>
-                                                            <% }) %>
-                                                </div>
-
-                                                <a class="button button--ghost <%= chapterPagination && chapterPagination.hasNext ? '' : 'is-disabled' %>"
-                                                  href="<%= chapterPagination && chapterPagination.hasNext ?
-                                                    chapterPageHref(chapterPagination.nextPage) : " #" %>"
-                                                  aria-label="Trang chương sau"
-                                                  <%= chapterPagination && chapterPagination.hasNext ? ""
-                                                    : 'tabindex="-1" aria-disabled="true"' %>
-                                                    >
-                                                    Sau
-                                                </a>
-                                              </nav>
-                                              <% } %>
+                          <%- include("partials/chapter-list-pagination", {
+                            chapterPagination,
+                            chapterPageHref,
+                            chapterPage,
+                            chapterVisiblePageNumbers,
+                            chapterPaginationClass: "chapter-list-pagination chapter-list-pagination--bottom"
+                          }) %>
+                            <% } %>
                                                 <% } %>
           </section>
 

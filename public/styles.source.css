@@ -141,7 +141,21 @@
   line-height: 1.2;
 }
 
+.chapter-list-pagination--top {
+  margin-top: 0.3rem !important;
+  margin-bottom: 1rem !important;
+}
+
+.chapter-list-pagination--bottom {
+  margin-top: 1rem !important;
+}
+
 @media (max-width: 640px) {
+  .chapter-list-pagination--top {
+    margin-top: 0.2rem !important;
+    margin-bottom: 0.8rem !important;
+  }
+
   .chapter .chapter-link {
     display: flex !important;
     flex-direction: column;

@@ -1,0 +1,27 @@
+<nav class="admin-pagination <%= typeof chapterPaginationClass === 'string' ? chapterPaginationClass : '' %>" aria-label="Phân trang chương truyện">
+  <a class="button button--ghost <%= chapterPagination && chapterPagination.hasPrev ? '' : 'is-disabled' %>"
+    href="<%= chapterPagination && chapterPagination.hasPrev ? chapterPageHref(chapterPagination.prevPage) : '#' %>"
+    aria-label="Trang chương trước"
+    <%= chapterPagination && chapterPagination.hasPrev ? '' : 'tabindex="-1" aria-disabled="true"' %>>
+    Trước
+  </a>
+
+  <div class="admin-pagination__numbers">
+    <% chapterVisiblePageNumbers.forEach((num) => { %>
+      <% if (num === "...") { %>
+        <span class="admin-pagination__dots">...</span>
+      <% } else if (num === chapterPage) { %>
+        <span class="chip"><%= num %></span>
+      <% } else { %>
+        <a class="button button--ghost" href="<%= chapterPageHref(num) %>"><%= num %></a>
+      <% } %>
+    <% }) %>
+  </div>
+
+  <a class="button button--ghost <%= chapterPagination && chapterPagination.hasNext ? '' : 'is-disabled' %>"
+    href="<%= chapterPagination && chapterPagination.hasNext ? chapterPageHref(chapterPagination.nextPage) : '#' %>"
+    aria-label="Trang chương sau"
+    <%= chapterPagination && chapterPagination.hasNext ? '' : 'tabindex="-1" aria-disabled="true"' %>>
+    Sau
+  </a>
+</nav>
