@@ -222,7 +222,7 @@ Phần này trả lời câu hỏi "lấy từng biến ở đâu".
 - `SESSION_SECRET`: tự sinh chuỗi ngẫu nhiên dài (>= 32 ký tự).
 - `ADMIN_USER`, `ADMIN_PASS`: do bạn tự đặt.
 
-### 7.1.1 Redis cache (tối ưu SQL)
+### 7.1.1 Redis cache (key nghiệp vụ)
 
 Điền trực tiếp vào file **`.env` ở thư mục gốc web** (`web1/.env`):
 
@@ -233,12 +233,12 @@ Phần này trả lời câu hỏi "lấy từng biến ở đâu".
 - `REDIS_CONNECT_TIMEOUT_MS`: timeout kết nối Redis
 - `REDIS_RECONNECT_RETRY_MS`: chu kỳ retry reconnect
 
-Biến chuyên cho SQL read-through cache:
+Biến bật/tắt business-key cache + version invalidation:
 
-- `SQL_REDIS_CACHE_ENABLED`
-- `SQL_REDIS_CACHE_TTL_SECONDS`
-- `SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES`
-- `SQL_REDIS_CACHE_VERSION_REFRESH_MS`
+- `REDIS_BUSINESS_CACHE_ENABLED`
+- `REDIS_CACHE_VERSION_REFRESH_MS`
+
+> Tương thích ngược: có thể dùng biến cũ `SQL_REDIS_CACHE_ENABLED` và `SQL_REDIS_CACHE_VERSION_REFRESH_MS`.
 
 Biến TTL endpoint-level cache (nghiệp vụ):
 
@@ -258,10 +258,8 @@ REDIS_DEFAULT_TTL_SECONDS=30
 REDIS_CONNECT_TIMEOUT_MS=5000
 REDIS_RECONNECT_RETRY_MS=15000
 
-SQL_REDIS_CACHE_ENABLED=true
-SQL_REDIS_CACHE_TTL_SECONDS=5
-SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES=524288
-SQL_REDIS_CACHE_VERSION_REFRESH_MS=1500
+REDIS_BUSINESS_CACHE_ENABLED=true
+REDIS_CACHE_VERSION_REFRESH_MS=1500
 
 ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS=30
 ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS=20

@@ -430,23 +430,16 @@ const isNewsDatabaseConfigured = Boolean(newsPgPool);
 
 const sqlRedisCache = createRedisCache({ logger: console });
 const sqlRedisCacheEnabled =
-  parseEnvBoolean(process.env.SQL_REDIS_CACHE_ENABLED, true) && sqlRedisCache.enabled;
-const SQL_REDIS_CACHE_DEFAULT_TTL_SECONDS = (() => {
-  const parsed = Number(process.env.SQL_REDIS_CACHE_TTL_SECONDS);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 5;
-  return Math.floor(parsed);
-})();
-const SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES = (() => {
-  const parsed = Number(process.env.SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 512 * 1024;
-  return Math.floor(parsed);
-})();
-const SQL_REDIS_CACHE_VERSION_REFRESH_MS = (() => {
-  const parsed = Number(process.env.SQL_REDIS_CACHE_VERSION_REFRESH_MS);
+  parseEnvBoolean(
+    process.env.REDIS_BUSINESS_CACHE_ENABLED,
+    parseEnvBoolean(process.env.SQL_REDIS_CACHE_ENABLED, true)
+  ) && sqlRedisCache.enabled;
+const REDIS_BUSINESS_CACHE_VERSION_REFRESH_MS = (() => {
+  const parsed = Number(process.env.REDIS_CACHE_VERSION_REFRESH_MS || process.env.SQL_REDIS_CACHE_VERSION_REFRESH_MS);
   if (!Number.isFinite(parsed) || parsed <= 0) return 1500;
   return Math.floor(parsed);
 })();
-const SQL_REDIS_CACHE_VERSION_KEY = sqlRedisCache.buildCacheKey("sql-cache-version", "global-v1");
+const SQL_REDIS_CACHE_VERSION_KEY = sqlRedisCache.buildCacheKey("business-cache-version", "global-v1");
 const sqlRedisCacheVersionState = {
   value: "0",
   expiresAt: 0
@@ -467,17 +460,6 @@ const isMutatingSql = (sql) => {
   return false;
 };
 
-const isCacheableReadSql = (sql) => {
-  const normalized = normalizeSqlTextForCache(sql).toLowerCase();
-  if (!normalized) return false;
-  if (/\bfor\s+update\b/.test(normalized)) return false;
-  if (/^select\b/.test(normalized)) return true;
-  if (/^with\b/.test(normalized)) {
-    return !/\b(insert|update|delete|merge|upsert|alter|create|drop|truncate)\b/.test(normalized);
-  }
-  return false;
-};
-
 const getSqlRedisCacheVersion = async () => {
   if (!sqlRedisCacheEnabled) return "0";
   const now = Date.now();
@@ -491,7 +473,7 @@ const getSqlRedisCacheVersion = async () => {
     await sqlRedisCache.setText(SQL_REDIS_CACHE_VERSION_KEY, nextValue);
   }
   sqlRedisCacheVersionState.value = nextValue;
-  sqlRedisCacheVersionState.expiresAt = now + SQL_REDIS_CACHE_VERSION_REFRESH_MS;
+  sqlRedisCacheVersionState.expiresAt = now + REDIS_BUSINESS_CACHE_VERSION_REFRESH_MS;
   return nextValue;
 };
 
@@ -506,23 +488,8 @@ const bumpSqlRedisCacheVersion = async () => {
     await sqlRedisCache.setText(SQL_REDIS_CACHE_VERSION_KEY, nextValue);
   }
   sqlRedisCacheVersionState.value = nextValue;
-  sqlRedisCacheVersionState.expiresAt = Date.now() + SQL_REDIS_CACHE_VERSION_REFRESH_MS;
+  sqlRedisCacheVersionState.expiresAt = Date.now() + REDIS_BUSINESS_CACHE_VERSION_REFRESH_MS;
   return nextValue;
-};
-
-const buildSqlReadCacheKey = async (sql, params = []) => {
-  const normalizedSql = normalizeSqlTextForCache(sql);
-  if (!normalizedSql) return "";
-
-  let serializedParams = "[]";
-  try {
-    serializedParams = JSON.stringify(Array.isArray(params) ? params : []);
-  } catch (_error) {
-    return "";
-  }
-
-  const version = await getSqlRedisCacheVersion();
-  return sqlRedisCache.buildCacheKey("sql-read", `${version}|${normalizedSql}|${serializedParams}`);
 };
 
 if (!newsPgPool) {
@@ -583,41 +550,8 @@ const dbGet = async (sql, params = [], client = null) => {
 };
 
 const dbAll = async (sql, params = [], client = null) => {
-  const canReadThroughCache =
-    sqlRedisCacheEnabled
-    && !client
-    && isCacheableReadSql(sql);
-
-  let cacheKey = "";
-  if (canReadThroughCache) {
-    cacheKey = await buildSqlReadCacheKey(sql, params);
-    if (cacheKey) {
-      const cachedRows = await sqlRedisCache.getJson(cacheKey);
-      if (Array.isArray(cachedRows)) {
-        return cachedRows;
-      }
-    }
-  }
-
   const result = await dbQuery(sql, params, client);
-  const rows = result.rows || [];
-
-  if (canReadThroughCache && cacheKey) {
-    let canStorePayload = false;
-    try {
-      const serializedRows = JSON.stringify(rows);
-      const payloadSize = Buffer.byteLength(serializedRows || "[]", "utf8");
-      canStorePayload = payloadSize <= SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES;
-    } catch (_error) {
-      canStorePayload = false;
-    }
-
-    if (canStorePayload) {
-      await sqlRedisCache.setJson(cacheKey, rows, SQL_REDIS_CACHE_DEFAULT_TTL_SECONDS);
-    }
-  }
-
-  return rows;
+  return result.rows || [];
 };
 
 const newsDbQuery = async (sql, params = [], client = null) => {
