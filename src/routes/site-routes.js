@@ -143,6 +143,7 @@ const registerSiteRoutes = (app, deps) => {
   const TEAM_BADGE_LEADER_PRIORITY_FALLBACK = 55;
   const TEAM_BADGE_MEMBER_PRIORITY_FALLBACK = 45;
   const HOMEPAGE_CACHE_TTL_MS = 45 * 1000;
+  const HOMEPAGE_META_PROBE_INTERVAL_MS = 2 * 1000;
   const HOMEPAGE_FORUM_POST_LIMIT = 5;
   const HOMEPAGE_FORUM_REQUEST_ID_LIKE = "forum-%";
   const HOMEPAGE_LATEST_LIMIT = 18;
@@ -155,6 +156,7 @@ const registerSiteRoutes = (app, deps) => {
   const HOMEPAGE_CACHE_AUDIENCE_SIGNED_IN = "signed-in";
   const HOMEPAGE_CACHE_AUDIENCE_SIGNED_OUT = "signed-out";
   const homepageCacheByAudience = new Map();
+  const homepageCacheRefreshInFlightByAudience = new Map();
   const COMMENT_PANEL_PER_PAGE = 20;
   const NOTIFICATION_TYPE_TEAM_JOIN_REQUEST = "team_join_request";
   const NOTIFICATION_TYPE_TEAM_JOIN_APPROVED = "team_join_approved";
@@ -9573,6 +9575,58 @@ const registerSiteRoutes = (app, deps) => {
     return String(headerValue || "").trim() === "1" || String(queryValue || "").trim() === "1";
   };
 
+  const shouldForceFreshHomepagePayload = (req) => {
+    const headerValue = req && req.get ? req.get("X-BFANG-Force-Homepage-Refresh") : "";
+    const queryValue = req && req.query ? req.query.force_homepage_refresh : "";
+    return String(headerValue || "").trim() === "1" || String(queryValue || "").trim() === "1";
+  };
+
+  const buildHomepageFreshnessToken = (row) => {
+    const homepageUpdatedAt = row && row.homepage_updated_at ? String(row.homepage_updated_at).trim() : "";
+    const latestMangaUpdatedAt = row && row.latest_manga_updated_at ? String(row.latest_manga_updated_at).trim() : "";
+    const latestChapterId = row && row.latest_chapter_id != null ? String(row.latest_chapter_id).trim() : "";
+    return `${homepageUpdatedAt}::${latestMangaUpdatedAt}::${latestChapterId}`;
+  };
+
+  const readHomepageFreshnessToken = async () => {
+    const row = await dbGet(
+      `
+        SELECT
+          COALESCE(
+            (
+              SELECT h.updated_at
+              FROM homepage h
+              WHERE h.id = 1
+            ),
+            ''
+          ) AS homepage_updated_at,
+          COALESCE(
+            (
+              SELECT m.updated_at
+              FROM manga m
+              WHERE COALESCE(m.is_hidden, 0) = 0
+                AND ${MANGA_HAS_CHAPTER_SQL}
+              ORDER BY m.updated_at DESC, m.id DESC
+              LIMIT 1
+            ),
+            ''
+          ) AS latest_manga_updated_at,
+          COALESCE(
+            (
+              SELECT c.id::text
+              FROM chapters c
+              JOIN manga m ON m.id = c.manga_id
+              WHERE COALESCE(m.is_hidden, 0) = 0
+              ORDER BY c.id DESC
+              LIMIT 1
+            ),
+            ''
+          ) AS latest_chapter_id
+      `
+    );
+    return buildHomepageFreshnessToken(row);
+  };
+
   const buildHomepagePayloadSignature = (homepagePayload) => {
     const safePayload = homepagePayload && typeof homepagePayload === "object"
       ? {
@@ -9805,7 +9859,7 @@ const registerSiteRoutes = (app, deps) => {
           FROM manga_bookmarks mb
           WHERE mb.manga_id IN (${placeholders})
 
-          UNION
+          UNION ALL
 
           SELECT
             li.manga_id,
@@ -9893,342 +9947,362 @@ const registerSiteRoutes = (app, deps) => {
     }
 
     if (homepagePayload && cachedState && cachedState.expiresAt > now) {
-      const homepageMetaRow = await dbGet("SELECT updated_at FROM homepage WHERE id = 1");
-      const latestUpdatedAt = homepageMetaRow && homepageMetaRow.updated_at
-        ? String(homepageMetaRow.updated_at).trim()
-        : "";
-      if (latestUpdatedAt !== (cachedState.updatedAt || "")) {
-        homepagePayload = null;
+      const nextMetaProbeAt = Number(cachedState.metaProbeAt) || 0;
+      if (nextMetaProbeAt <= now) {
+        const latestFreshnessToken = await readHomepageFreshnessToken();
+        cachedState.metaProbeAt = now + HOMEPAGE_META_PROBE_INTERVAL_MS;
+        if (latestFreshnessToken !== (cachedState.freshnessToken || "")) {
+          homepagePayload = null;
+        }
       }
     }
 
     if (!homepagePayload || !cachedState || cachedState.expiresAt <= now) {
-      const homepageRow = await dbGet("SELECT * FROM homepage WHERE id = 1");
-      const homepageData = normalizeHomepageRow(homepageRow);
-      const notices = buildHomepageNotices(homepageData);
-      const featuredIds = homepageData.featuredIds.slice(0, 4);
-      const adultVisibilityClause = includeAdult ? "" : ` AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})`;
-      let featuredRows = [];
+      const inFlightRefresh = homepageCacheRefreshInFlightByAudience.get(audienceKey);
+      if (inFlightRefresh) {
+        homepagePayload = await inFlightRefresh;
+      } else {
+        const refreshPromise = (async () => {
+          const homepageRow = await dbGet("SELECT * FROM homepage WHERE id = 1");
+          const homepageData = normalizeHomepageRow(homepageRow);
+          const notices = buildHomepageNotices(homepageData);
+          const featuredIds = homepageData.featuredIds.slice(0, 4);
+          const adultVisibilityClause = includeAdult ? "" : ` AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})`;
+          let featuredRows = [];
 
-      if (featuredIds.length > 0) {
-        const placeholders = featuredIds.map(() => "?").join(",");
-        const rows = await dbAll(
-          `${listQueryBase} WHERE m.id IN (${placeholders}) AND COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`,
-          featuredIds
-        );
-        const rowMap = new Map(rows.map((row) => [row.id, row]));
-        featuredRows = featuredIds.map((id) => rowMap.get(id)).filter(Boolean);
-      }
+          if (featuredIds.length > 0) {
+            const placeholders = featuredIds.map(() => "?").join(",");
+            const rows = await dbAll(
+              `${listQueryBase} WHERE m.id IN (${placeholders}) AND COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`,
+              featuredIds
+            );
+            const rowMap = new Map(rows.map((row) => [row.id, row]));
+            featuredRows = featuredIds.map((id) => rowMap.get(id)).filter(Boolean);
+          }
 
-      if (featuredRows.length === 0) {
-        featuredRows = await dbAll(
-          `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT 4`
-        );
-      }
+          if (featuredRows.length === 0) {
+            featuredRows = await dbAll(
+              `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT 4`
+            );
+          }
 
-      const latestRows = await dbAll(
-        `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${HOMEPAGE_LATEST_LIMIT}`
-      );
-      await ensureMangaDailyViewBaselineSynced();
-      const [topRankingDayRows, topRankingWeekRows, topRankingMonthRows, topRankingTotalRows] = await Promise.all([
-        resolveHomepageTopRankingByPeriod({
-          includeAdult,
-          daysWindow: HOMEPAGE_RANKING_DAY_DAYS
-        }),
-        resolveHomepageTopRankingByPeriod({
-          includeAdult,
-          daysWindow: HOMEPAGE_RANKING_WEEK_DAYS
-        }),
-        resolveHomepageTopRankingByPeriod({
-          includeAdult,
-          daysWindow: HOMEPAGE_RANKING_MONTH_DAYS
-        }),
-        resolveHomepageTopRankingByPeriod({
-          includeAdult,
-          daysWindow: 0
-        })
-      ]);
-      const recentCommentRows = await dbAll(
-        `
-          SELECT
-            c.id,
-            c.manga_id,
-            c.author,
-            c.content,
-            c.created_at,
-            c.chapter_number,
-            (
-              FLOOR(
-                COUNT(*) FILTER (
-                  WHERE c_scope.id > c.id
-                )::numeric / ${COMMENT_PANEL_PER_PAGE}
-              )::int + 1
-            ) AS comment_page,
-            COALESCE(c.author_avatar_url, '') AS author_avatar_url,
-            COALESCE(
-              NULLIF(trim(COALESCE(c.author_user_id, '')), ''),
-              u_primary.id::text,
-              u_guess.id::text,
-              ''
-            ) AS author_user_id,
-            COALESCE(
-              NULLIF(trim(COALESCE(u_primary.username, '')), ''),
-              NULLIF(trim(COALESCE(u_guess.username, '')), ''),
-              ''
-            ) AS author_username,
-            m.slug AS manga_slug,
-            m.title AS manga_title
-          FROM comments c
-          JOIN manga m ON m.id = c.manga_id
-          LEFT JOIN comments c_scope
-            ON c_scope.status = 'visible'
-            AND c_scope.parent_id IS NULL
-            AND COALESCE(c_scope.client_request_id, '') NOT ILIKE 'forum-%'
-            AND c_scope.manga_id = c.manga_id
-            AND (
-              (c.chapter_number IS NULL AND c_scope.chapter_number IS NULL)
-              OR (c.chapter_number IS NOT NULL AND c_scope.chapter_number = c.chapter_number)
-            )
-          LEFT JOIN users u_primary
-            ON NULLIF(trim(COALESCE(c.author_user_id, '')), '') IS NOT NULL
-            AND u_primary.id::text = trim(COALESCE(c.author_user_id, ''))
-          LEFT JOIN LATERAL (
-            SELECT u_lookup.id, u_lookup.username
-            FROM users u_lookup
-            WHERE (
-              NULLIF(trim(COALESCE(c.author_user_id, '')), '') IS NULL
-              OR u_primary.id IS NULL
-            )
-              AND (
-                lower(trim(COALESCE(u_lookup.username, ''))) = lower(regexp_replace(trim(COALESCE(c.author, '')), '^@+', ''))
-                OR lower(trim(COALESCE(u_lookup.display_name, ''))) = lower(trim(COALESCE(c.author, '')))
-                OR lower(trim(COALESCE(u_lookup.display_name, ''))) = lower(regexp_replace(trim(COALESCE(c.author, '')), '^@+', ''))
-              )
-            ORDER BY
-              CASE
-                WHEN lower(trim(COALESCE(u_lookup.display_name, ''))) = lower(trim(COALESCE(c.author, ''))) THEN 0
-                ELSE 1
-              END,
-              u_lookup.id
-            LIMIT 1
-          ) u_guess ON TRUE
-          WHERE c.status = 'visible'
-            AND c.parent_id IS NULL
-            AND COALESCE(c.client_request_id, '') NOT ILIKE 'forum-%'
-            AND COALESCE(m.is_hidden, 0) = 0
-            ${adultVisibilityClause}
-          GROUP BY
-            c.id,
-            c.manga_id,
-            c.author,
-            c.content,
-            c.created_at,
-            c.chapter_number,
-            c.author_avatar_url,
-            c.author_user_id,
-            u_primary.id,
-            u_primary.username,
-            u_guess.id,
-            u_guess.username,
-            m.slug,
-            m.title
-          ORDER BY c.id DESC
-          LIMIT ${HOMEPAGE_RECENT_COMMENT_LIMIT}
-        `
-      );
-      const totalSeriesRow = await dbGet(
-        `SELECT COUNT(*) as count FROM manga m WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`
-      );
-      const totalsRow = await dbGet(
-        `
-          SELECT COUNT(*) as total_chapters
-          FROM chapters c
-          JOIN manga m ON m.id = c.manga_id
-          WHERE COALESCE(m.is_hidden, 0) = 0
-            ${adultVisibilityClause}
-        `
-      );
-      const latestForumPostRows = isForumPageAvailable
-        ? await dbAll(
-          `
+          const latestRows = await dbAll(
+            `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${HOMEPAGE_LATEST_LIMIT}`
+          );
+          await ensureMangaDailyViewBaselineSynced();
+          const topRankingDayRows = await resolveHomepageTopRankingByPeriod({
+            includeAdult,
+            daysWindow: HOMEPAGE_RANKING_DAY_DAYS
+          });
+          const topRankingWeekRows = await resolveHomepageTopRankingByPeriod({
+            includeAdult,
+            daysWindow: HOMEPAGE_RANKING_WEEK_DAYS
+          });
+          const topRankingMonthRows = await resolveHomepageTopRankingByPeriod({
+            includeAdult,
+            daysWindow: HOMEPAGE_RANKING_MONTH_DAYS
+          });
+          const topRankingTotalRows = await resolveHomepageTopRankingByPeriod({
+            includeAdult,
+            daysWindow: 0
+          });
+          const recentCommentRows = await dbAll(
+            `
               SELECT
-                p.id,
-                p.content,
-                p.created_at,
-                COALESCE(reply_stats.latest_activity_at, p.created_at) AS latest_activity_at,
-                p.author,
-                p.author_name,
-                p.author_avatar_url,
-                p.author_user_id,
-                COALESCE(u.username, '') AS user_username,
-                COALESCE(u.display_name, '') AS user_display_name,
-                COALESCE(u.avatar_url, '') AS user_avatar_url,
-                COALESCE(reply_stats.reply_count, 0) AS reply_count
-              FROM forum_posts p
-              LEFT JOIN users u ON u.id = p.author_user_id
-              LEFT JOIN LATERAL (
-                WITH RECURSIVE subtree AS (
-                  SELECT child.id, child.created_at
-                  FROM forum_posts child
-                  WHERE child.status = 'visible'
-                    AND COALESCE(child.client_request_id, '') ILIKE ?
-                    AND child.parent_id = p.id
-                  UNION ALL
-                  SELECT child.id, child.created_at
-                  FROM forum_posts child
-                  JOIN subtree ON child.parent_id = subtree.id
-                  WHERE child.status = 'visible'
-                    AND COALESCE(child.client_request_id, '') ILIKE ?
+                c.id,
+                c.manga_id,
+                c.author,
+                c.content,
+                c.created_at,
+                c.chapter_number,
+                (
+                  FLOOR(
+                    COUNT(*) FILTER (
+                      WHERE c_scope.id > c.id
+                    )::numeric / ${COMMENT_PANEL_PER_PAGE}
+                  )::int + 1
+                ) AS comment_page,
+                COALESCE(c.author_avatar_url, '') AS author_avatar_url,
+                COALESCE(
+                  NULLIF(trim(COALESCE(c.author_user_id, '')), ''),
+                  u_primary.id::text,
+                  u_guess.id::text,
+                  ''
+                ) AS author_user_id,
+                COALESCE(
+                  NULLIF(trim(COALESCE(u_primary.username, '')), ''),
+                  NULLIF(trim(COALESCE(u_guess.username, '')), ''),
+                  ''
+                ) AS author_username,
+                m.slug AS manga_slug,
+                m.title AS manga_title
+              FROM comments c
+              JOIN manga m ON m.id = c.manga_id
+              LEFT JOIN comments c_scope
+                ON c_scope.status = 'visible'
+                AND c_scope.parent_id IS NULL
+                AND COALESCE(c_scope.client_request_id, '') NOT ILIKE 'forum-%'
+                AND c_scope.manga_id = c.manga_id
+                AND (
+                  (c.chapter_number IS NULL AND c_scope.chapter_number IS NULL)
+                  OR (c.chapter_number IS NOT NULL AND c_scope.chapter_number = c.chapter_number)
                 )
-                SELECT COUNT(*)::int AS reply_count, MAX(created_at) AS latest_activity_at
-                FROM subtree
-              ) reply_stats ON TRUE
-              WHERE p.status = 'visible'
-                AND p.parent_id IS NULL
-                AND COALESCE(p.client_request_id, '') ILIKE ?
-              ORDER BY COALESCE(reply_stats.latest_activity_at, p.created_at) DESC, p.created_at DESC, p.id DESC
-              LIMIT ?
-            `,
-          [HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_POST_LIMIT]
-        )
-        : [];
+              LEFT JOIN users u_primary
+                ON NULLIF(trim(COALESCE(c.author_user_id, '')), '') IS NOT NULL
+                AND u_primary.id::text = trim(COALESCE(c.author_user_id, ''))
+              LEFT JOIN LATERAL (
+                SELECT u_lookup.id, u_lookup.username
+                FROM users u_lookup
+                WHERE (
+                  NULLIF(trim(COALESCE(c.author_user_id, '')), '') IS NULL
+                  OR u_primary.id IS NULL
+                )
+                  AND (
+                    lower(trim(COALESCE(u_lookup.username, ''))) = lower(regexp_replace(trim(COALESCE(c.author, '')), '^@+', ''))
+                    OR lower(trim(COALESCE(u_lookup.display_name, ''))) = lower(trim(COALESCE(c.author, '')))
+                    OR lower(trim(COALESCE(u_lookup.display_name, ''))) = lower(regexp_replace(trim(COALESCE(c.author, '')), '^@+', ''))
+                  )
+                ORDER BY
+                  CASE
+                    WHEN lower(trim(COALESCE(u_lookup.display_name, ''))) = lower(trim(COALESCE(c.author, ''))) THEN 0
+                    ELSE 1
+                  END,
+                  u_lookup.id
+                LIMIT 1
+              ) u_guess ON TRUE
+              WHERE c.status = 'visible'
+                AND c.parent_id IS NULL
+                AND COALESCE(c.client_request_id, '') NOT ILIKE 'forum-%'
+                AND COALESCE(m.is_hidden, 0) = 0
+                ${adultVisibilityClause}
+              GROUP BY
+                c.id,
+                c.manga_id,
+                c.author,
+                c.content,
+                c.created_at,
+                c.chapter_number,
+                c.author_avatar_url,
+                c.author_user_id,
+                u_primary.id,
+                u_primary.username,
+                u_guess.id,
+                u_guess.username,
+                m.slug,
+                m.title
+              ORDER BY c.id DESC
+              LIMIT ${HOMEPAGE_RECENT_COMMENT_LIMIT}
+            `
+          );
+          const totalSeriesRow = await dbGet(
+            `SELECT COUNT(*) as count FROM manga m WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`
+          );
+          const totalsRow = await dbGet(
+            `
+              SELECT COUNT(*) as total_chapters
+              FROM chapters c
+              JOIN manga m ON m.id = c.manga_id
+              WHERE COALESCE(m.is_hidden, 0) = 0
+                ${adultVisibilityClause}
+            `
+          );
+          const latestForumPostRows = isForumPageAvailable
+            ? await dbAll(
+              `
+                  SELECT
+                    p.id,
+                    p.content,
+                    p.created_at,
+                    COALESCE(reply_stats.latest_activity_at, p.created_at) AS latest_activity_at,
+                    p.author,
+                    p.author_name,
+                    p.author_avatar_url,
+                    p.author_user_id,
+                    COALESCE(u.username, '') AS user_username,
+                    COALESCE(u.display_name, '') AS user_display_name,
+                    COALESCE(u.avatar_url, '') AS user_avatar_url,
+                    COALESCE(reply_stats.reply_count, 0) AS reply_count
+                  FROM forum_posts p
+                  LEFT JOIN users u ON u.id = p.author_user_id
+                  LEFT JOIN LATERAL (
+                    WITH RECURSIVE subtree AS (
+                      SELECT child.id, child.created_at
+                      FROM forum_posts child
+                      WHERE child.status = 'visible'
+                        AND COALESCE(child.client_request_id, '') ILIKE ?
+                        AND child.parent_id = p.id
+                      UNION ALL
+                      SELECT child.id, child.created_at
+                      FROM forum_posts child
+                      JOIN subtree ON child.parent_id = subtree.id
+                      WHERE child.status = 'visible'
+                        AND COALESCE(child.client_request_id, '') ILIKE ?
+                    )
+                    SELECT COUNT(*)::int AS reply_count, MAX(created_at) AS latest_activity_at
+                    FROM subtree
+                  ) reply_stats ON TRUE
+                  WHERE p.status = 'visible'
+                    AND p.parent_id IS NULL
+                    AND COALESCE(p.client_request_id, '') ILIKE ?
+                  ORDER BY COALESCE(reply_stats.latest_activity_at, p.created_at) DESC, p.created_at DESC, p.id DESC
+                  LIMIT ?
+                `,
+              [HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_REQUEST_ID_LIKE, HOMEPAGE_FORUM_POST_LIMIT]
+            )
+            : [];
 
-      const mappedFeatured = featuredRows.map((row) => {
-        const mapped = mapMangaListRow(row);
-        return {
-          ...mapped,
-          isAdult: shouldExposeAdultMarker(row)
-        };
-      });
-      const mappedLatest = latestRows.map((row) => {
-        const mapped = mapMangaListRow(row);
-        return {
-          ...mapped,
-          isAdult: shouldExposeAdultMarker(row)
-        };
-      });
-      const mappedTopRankings = {
-        day: topRankingDayRows,
-        week: topRankingWeekRows,
-        month: topRankingMonthRows,
-        total: topRankingTotalRows
-      };
-      const recentCommentAuthorDecorationMap = await buildForumAuthorDecorationMap(recentCommentRows);
-      const mappedRecentComments = recentCommentRows.map((row) => {
-        const mangaSlug = (row && row.manga_slug ? row.manga_slug : "").toString().trim();
-        const mangaTitle = (row && row.manga_title ? row.manga_title : "").toString().trim();
-        const chapterNumberValue = row && row.chapter_number != null ? Number(row.chapter_number) : NaN;
-        const chapterNumberText = Number.isFinite(chapterNumberValue)
-          ? formatChapterNumberValue(chapterNumberValue)
-          : "";
-        const commentTargetLabel = chapterNumberText
-          ? `CH. ${chapterNumberText} - ${mangaTitle || "Xem truyện"}`
-          : (mangaTitle || "Xem truyện");
-        const mangaHref = mangaSlug ? `/manga/${encodeURIComponent(mangaSlug)}` : "/manga";
-        const chapterHref = mangaSlug && chapterNumberText
-          ? `/manga/${encodeURIComponent(mangaSlug)}/chapters/${encodeURIComponent(chapterNumberText)}`
-          : mangaHref;
-        const commentPageRaw = Number(row && row.comment_page);
-        const commentPage = Number.isFinite(commentPageRaw) && commentPageRaw > 1
-          ? Math.floor(commentPageRaw)
-          : 1;
-        const commentId = Number(row && row.id) || 0;
-        const commentPathBase = chapterHref || mangaHref;
-        const commentPermalinkHref = commentPathBase
-          ? `${commentPathBase}${commentPage > 1 ? `?commentPage=${encodeURIComponent(String(commentPage))}` : ""}${commentId > 0 ? `#comment-${commentId}` : ""}`
-          : "";
-        const authorName = (row && row.author ? row.author : "").toString().trim() || "Thành viên";
-        const authorUserId = row && row.author_user_id ? String(row.author_user_id).trim() : "";
-        const authorUsername = row && row.author_username ? String(row.author_username).trim() : "";
-        const authorProfileHref = authorUsername || authorUserId
-          ? `/user/${encodeURIComponent(authorUsername || authorUserId)}`
-          : "";
-        const authorColor = authorUserId && recentCommentAuthorDecorationMap.has(authorUserId)
-          ? recentCommentAuthorDecorationMap.get(authorUserId) || ""
-          : "";
-        const avatarCandidate = row && row.author_avatar_url ? String(row.author_avatar_url) : "";
-        const avatarUrl = typeof normalizeAvatarUrl === "function"
-          ? normalizeAvatarUrl(avatarCandidate)
-          : avatarCandidate.trim();
+          const mappedFeatured = featuredRows.map((row) => {
+            const mapped = mapMangaListRow(row);
+            return {
+              ...mapped,
+              isAdult: shouldExposeAdultMarker(row)
+            };
+          });
+          const mappedLatest = latestRows.map((row) => {
+            const mapped = mapMangaListRow(row);
+            return {
+              ...mapped,
+              isAdult: shouldExposeAdultMarker(row)
+            };
+          });
+          const mappedTopRankings = {
+            day: topRankingDayRows,
+            week: topRankingWeekRows,
+            month: topRankingMonthRows,
+            total: topRankingTotalRows
+          };
+          const recentCommentAuthorDecorationMap = await buildForumAuthorDecorationMap(recentCommentRows);
+          const mappedRecentComments = recentCommentRows.map((row) => {
+            const mangaSlug = (row && row.manga_slug ? row.manga_slug : "").toString().trim();
+            const mangaTitle = (row && row.manga_title ? row.manga_title : "").toString().trim();
+            const chapterNumberValue = row && row.chapter_number != null ? Number(row.chapter_number) : NaN;
+            const chapterNumberText = Number.isFinite(chapterNumberValue)
+              ? formatChapterNumberValue(chapterNumberValue)
+              : "";
+            const commentTargetLabel = chapterNumberText
+              ? `CH. ${chapterNumberText} - ${mangaTitle || "Xem truyện"}`
+              : (mangaTitle || "Xem truyện");
+            const mangaHref = mangaSlug ? `/manga/${encodeURIComponent(mangaSlug)}` : "/manga";
+            const chapterHref = mangaSlug && chapterNumberText
+              ? `/manga/${encodeURIComponent(mangaSlug)}/chapters/${encodeURIComponent(chapterNumberText)}`
+              : mangaHref;
+            const commentPageRaw = Number(row && row.comment_page);
+            const commentPage = Number.isFinite(commentPageRaw) && commentPageRaw > 1
+              ? Math.floor(commentPageRaw)
+              : 1;
+            const commentId = Number(row && row.id) || 0;
+            const commentPathBase = chapterHref || mangaHref;
+            const commentPermalinkHref = commentPathBase
+              ? `${commentPathBase}${commentPage > 1 ? `?commentPage=${encodeURIComponent(String(commentPage))}` : ""}${commentId > 0 ? `#comment-${commentId}` : ""}`
+              : "";
+            const authorName = (row && row.author ? row.author : "").toString().trim() || "Thành viên";
+            const authorUserId = row && row.author_user_id ? String(row.author_user_id).trim() : "";
+            const authorUsername = row && row.author_username ? String(row.author_username).trim() : "";
+            const authorProfileHref = authorUsername || authorUserId
+              ? `/user/${encodeURIComponent(authorUsername || authorUserId)}`
+              : "";
+            const authorColor = authorUserId && recentCommentAuthorDecorationMap.has(authorUserId)
+              ? recentCommentAuthorDecorationMap.get(authorUserId) || ""
+              : "";
+            const avatarCandidate = row && row.author_avatar_url ? String(row.author_avatar_url) : "";
+            const avatarUrl = typeof normalizeAvatarUrl === "function"
+              ? normalizeAvatarUrl(avatarCandidate)
+              : avatarCandidate.trim();
 
-        return {
-          id: Number(row && row.id) || 0,
-          commentPage,
-          commentPermalinkHref,
-          authorName,
-          authorUsername,
-          authorProfileHref,
-          authorColor,
-          avatarUrl,
-          avatarFallback: buildHomepageAvatarFallback(authorName),
-          content: (row && row.content ? String(row.content) : "").trim(),
-          mangaTitle,
-          commentTargetLabel,
-          mangaHref,
-          chapterHref,
-          chapterNumberText,
-          timeAgo: formatTimeAgo(row && row.created_at)
-        };
-      });
-      const forumAuthorDecorationMap = await buildForumAuthorDecorationMap(latestForumPostRows);
-      const mappedLatestForumPosts = latestForumPostRows.map((row) => {
-        const postId = Number(row && row.id);
-        const safePostId = Number.isFinite(postId) && postId > 0 ? Math.floor(postId) : 0;
-        const title = extractForumTopicHeadline(row && row.content) || "Bài viết diễn đàn";
-        const authorDisplayName = (row && row.user_display_name ? String(row.user_display_name) : "").trim();
-        const authorUsername = (row && row.user_username ? String(row.user_username) : "").trim().toLowerCase();
-        const fallbackAuthor = (row && (row.author_name || row.author) ? String(row.author_name || row.author) : "").trim();
-        const authorName = authorDisplayName || (authorUsername ? `@${authorUsername}` : fallbackAuthor || "Thành viên");
-        const avatarCandidate = row && (row.user_avatar_url || row.author_avatar_url) ? String(row.user_avatar_url || row.author_avatar_url) : "";
-        const avatarUrl = typeof normalizeAvatarUrl === "function" ? normalizeAvatarUrl(avatarCandidate) : avatarCandidate.trim();
-        const metadataAuthor = authorDisplayName || authorUsername || fallbackAuthor || "Thành viên";
-        const authorUserId = row && row.author_user_id ? String(row.author_user_id).trim() : "";
-        const authorColor = authorUserId && forumAuthorDecorationMap.has(authorUserId)
-          ? forumAuthorDecorationMap.get(authorUserId) || ""
-          : "";
-        const sectionLabel = buildForumSectionLabel(row && row.content);
+            return {
+              id: Number(row && row.id) || 0,
+              commentPage,
+              commentPermalinkHref,
+              authorName,
+              authorUsername,
+              authorProfileHref,
+              authorColor,
+              avatarUrl,
+              avatarFallback: buildHomepageAvatarFallback(authorName),
+              content: (row && row.content ? String(row.content) : "").trim(),
+              mangaTitle,
+              commentTargetLabel,
+              mangaHref,
+              chapterHref,
+              chapterNumberText,
+              timeAgo: formatTimeAgo(row && row.created_at)
+            };
+          });
+          const forumAuthorDecorationMap = await buildForumAuthorDecorationMap(latestForumPostRows);
+          const mappedLatestForumPosts = latestForumPostRows.map((row) => {
+            const postId = Number(row && row.id);
+            const safePostId = Number.isFinite(postId) && postId > 0 ? Math.floor(postId) : 0;
+            const title = extractForumTopicHeadline(row && row.content) || "Bài viết diễn đàn";
+            const authorDisplayName = (row && row.user_display_name ? String(row.user_display_name) : "").trim();
+            const authorUsername = (row && row.user_username ? String(row.user_username) : "").trim().toLowerCase();
+            const fallbackAuthor = (row && (row.author_name || row.author) ? String(row.author_name || row.author) : "").trim();
+            const authorName = authorDisplayName || (authorUsername ? `@${authorUsername}` : fallbackAuthor || "Thành viên");
+            const avatarCandidate = row && (row.user_avatar_url || row.author_avatar_url) ? String(row.user_avatar_url || row.author_avatar_url) : "";
+            const avatarUrl = typeof normalizeAvatarUrl === "function" ? normalizeAvatarUrl(avatarCandidate) : avatarCandidate.trim();
+            const metadataAuthor = authorDisplayName || authorUsername || fallbackAuthor || "Thành viên";
+            const authorUserId = row && row.author_user_id ? String(row.author_user_id).trim() : "";
+            const authorColor = authorUserId && forumAuthorDecorationMap.has(authorUserId)
+              ? forumAuthorDecorationMap.get(authorUserId) || ""
+              : "";
+            const sectionLabel = buildForumSectionLabel(row && row.content);
 
-        return {
-          id: safePostId,
-          title,
-          authorName,
-          metadataAuthor,
-          authorColor,
-          avatarUrl,
-          avatarFallback: buildAvatarFallback(authorDisplayName || authorUsername || fallbackAuthor),
-          sectionLabel,
-          commentCount: Number(row && row.reply_count) || 0,
-          timeAgo: formatTimeAgo(row && row.latest_activity_at || row && row.created_at),
-          href: safePostId > 0 ? `/forum/post/${safePostId}` : "/forum"
-        };
-      });
-      homepagePayload = {
-        featured: mappedFeatured,
-        latest: mappedLatest,
-        topRankings: mappedTopRankings,
-        recentComments: mappedRecentComments,
-        latestForumPosts: mappedLatestForumPosts,
-        homepage: {
-          notices
-        },
-        stats: {
-          totalSeries: totalSeriesRow ? Number(totalSeriesRow.count) || 0 : 0,
-          totalChapters: totalsRow
-            ? Number(totalsRow.total_chapters ?? totalsRow.totalchapters ?? totalsRow.totalChapters) || 0
-            : 0
+            return {
+              id: safePostId,
+              title,
+              authorName,
+              metadataAuthor,
+              authorColor,
+              avatarUrl,
+              avatarFallback: buildAvatarFallback(authorDisplayName || authorUsername || fallbackAuthor),
+              sectionLabel,
+              commentCount: Number(row && row.reply_count) || 0,
+              timeAgo: formatTimeAgo(row && row.latest_activity_at || row && row.created_at),
+              href: safePostId > 0 ? `/forum/post/${safePostId}` : "/forum"
+            };
+          });
+          let rebuiltPayload = {
+            featured: mappedFeatured,
+            latest: mappedLatest,
+            topRankings: mappedTopRankings,
+            recentComments: mappedRecentComments,
+            latestForumPosts: mappedLatestForumPosts,
+            homepage: {
+              notices
+            },
+            stats: {
+              totalSeries: totalSeriesRow ? Number(totalSeriesRow.count) || 0 : 0,
+              totalChapters: totalsRow
+                ? Number(totalsRow.total_chapters ?? totalsRow.totalchapters ?? totalsRow.totalChapters) || 0
+                : 0
+            }
+          };
+
+          rebuiltPayload = await refreshHomepageBookmarkCounts(rebuiltPayload);
+          const refreshedAt = Date.now();
+          const freshnessToken = await readHomepageFreshnessToken();
+          homepageCacheByAudience.set(audienceKey, {
+            payload: rebuiltPayload,
+            expiresAt: refreshedAt + HOMEPAGE_CACHE_TTL_MS,
+            updatedAt: homepageRow && homepageRow.updated_at
+              ? String(homepageRow.updated_at).trim()
+              : "",
+            freshnessToken,
+            metaProbeAt: refreshedAt + HOMEPAGE_META_PROBE_INTERVAL_MS
+          });
+          return rebuiltPayload;
+        })();
+
+        homepageCacheRefreshInFlightByAudience.set(audienceKey, refreshPromise);
+        try {
+          homepagePayload = await refreshPromise;
+        } finally {
+          if (homepageCacheRefreshInFlightByAudience.get(audienceKey) === refreshPromise) {
+            homepageCacheRefreshInFlightByAudience.delete(audienceKey);
+          }
         }
-      };
-
-      homepageCacheByAudience.set(audienceKey, {
-        payload: homepagePayload,
-        expiresAt: now + HOMEPAGE_CACHE_TTL_MS,
-        updatedAt: homepageRow && homepageRow.updated_at
-          ? String(homepageRow.updated_at).trim()
-          : ""
-      });
+      }
     }
 
-    homepagePayload = await refreshHomepageBookmarkCounts(homepagePayload);
     return homepagePayload;
   };
 
@@ -10240,9 +10314,10 @@ const registerSiteRoutes = (app, deps) => {
   app.get(
     "/",
     asyncHandler(async (req, res) => {
-      const forceFreshHomepagePayload = isHomepageRefreshRequest(req);
+      const isHomepageRefresh = isHomepageRefreshRequest(req);
+      const forceFreshHomepagePayload = shouldForceFreshHomepagePayload(req);
       res.vary("Cookie");
-      res.set("Cache-Control", forceFreshHomepagePayload ? "no-store" : FAST_NAV_PAGE_CACHE_CONTROL);
+      res.set("Cache-Control", isHomepageRefresh || forceFreshHomepagePayload ? "no-store" : FAST_NAV_PAGE_CACHE_CONTROL);
 
       const homepagePayload = await resolveHomepagePayload({
         forceFresh: forceFreshHomepagePayload,
