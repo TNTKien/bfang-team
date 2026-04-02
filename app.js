@@ -36,6 +36,7 @@ const createMentionNotificationDomain = require("./src/domains/mention-notificat
 const createInitDbDomain = require("./src/domains/init-db-domain");
 const configureCoreRuntime = require("./src/app/configure-core-runtime");
 const { parseEnvBoolean } = require("./src/utils/env");
+const { createRedisCache } = require("./src/utils/redis-cache");
 const viewCoverHelpers = require("./src/utils/view-cover-helpers");
 const { loadSiteConfig } = require("./src/config/site-config");
 require("dotenv").config();
@@ -427,6 +428,103 @@ const newsPgPool = resolvedNewsDatabaseUrl
   : null;
 const isNewsDatabaseConfigured = Boolean(newsPgPool);
 
+const sqlRedisCache = createRedisCache({ logger: console });
+const sqlRedisCacheEnabled =
+  parseEnvBoolean(process.env.SQL_REDIS_CACHE_ENABLED, true) && sqlRedisCache.enabled;
+const SQL_REDIS_CACHE_DEFAULT_TTL_SECONDS = (() => {
+  const parsed = Number(process.env.SQL_REDIS_CACHE_TTL_SECONDS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 5;
+  return Math.floor(parsed);
+})();
+const SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES = (() => {
+  const parsed = Number(process.env.SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 512 * 1024;
+  return Math.floor(parsed);
+})();
+const SQL_REDIS_CACHE_VERSION_REFRESH_MS = (() => {
+  const parsed = Number(process.env.SQL_REDIS_CACHE_VERSION_REFRESH_MS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 1500;
+  return Math.floor(parsed);
+})();
+const SQL_REDIS_CACHE_VERSION_KEY = sqlRedisCache.buildCacheKey("sql-cache-version", "global-v1");
+const sqlRedisCacheVersionState = {
+  value: "0",
+  expiresAt: 0
+};
+
+const normalizeSqlTextForCache = (sql) =>
+  (sql == null ? "" : String(sql)).replace(/\s+/g, " ").trim();
+
+const isMutatingSql = (sql) => {
+  const normalized = normalizeSqlTextForCache(sql).toLowerCase();
+  if (!normalized) return false;
+  if (/^(insert|update|delete|merge|replace)\b/.test(normalized)) {
+    return true;
+  }
+  if (/^with\b/.test(normalized)) {
+    return /\b(insert|update|delete|merge|replace|upsert)\b/.test(normalized);
+  }
+  return false;
+};
+
+const isCacheableReadSql = (sql) => {
+  const normalized = normalizeSqlTextForCache(sql).toLowerCase();
+  if (!normalized) return false;
+  if (/\bfor\s+update\b/.test(normalized)) return false;
+  if (/^select\b/.test(normalized)) return true;
+  if (/^with\b/.test(normalized)) {
+    return !/\b(insert|update|delete|merge|upsert|alter|create|drop|truncate)\b/.test(normalized);
+  }
+  return false;
+};
+
+const getSqlRedisCacheVersion = async () => {
+  if (!sqlRedisCacheEnabled) return "0";
+  const now = Date.now();
+  if (sqlRedisCacheVersionState.expiresAt > now && sqlRedisCacheVersionState.value) {
+    return sqlRedisCacheVersionState.value;
+  }
+
+  const remoteValue = await sqlRedisCache.getText(SQL_REDIS_CACHE_VERSION_KEY);
+  const nextValue = remoteValue || "0";
+  if (!remoteValue) {
+    await sqlRedisCache.setText(SQL_REDIS_CACHE_VERSION_KEY, nextValue);
+  }
+  sqlRedisCacheVersionState.value = nextValue;
+  sqlRedisCacheVersionState.expiresAt = now + SQL_REDIS_CACHE_VERSION_REFRESH_MS;
+  return nextValue;
+};
+
+const bumpSqlRedisCacheVersion = async () => {
+  if (!sqlRedisCacheEnabled) return "0";
+  const incremented = await sqlRedisCache.incr(SQL_REDIS_CACHE_VERSION_KEY);
+  let nextValue = "";
+  if (incremented > 0) {
+    nextValue = String(incremented);
+  } else {
+    nextValue = String(Date.now());
+    await sqlRedisCache.setText(SQL_REDIS_CACHE_VERSION_KEY, nextValue);
+  }
+  sqlRedisCacheVersionState.value = nextValue;
+  sqlRedisCacheVersionState.expiresAt = Date.now() + SQL_REDIS_CACHE_VERSION_REFRESH_MS;
+  return nextValue;
+};
+
+const buildSqlReadCacheKey = async (sql, params = []) => {
+  const normalizedSql = normalizeSqlTextForCache(sql);
+  if (!normalizedSql) return "";
+
+  let serializedParams = "[]";
+  try {
+    serializedParams = JSON.stringify(Array.isArray(params) ? params : []);
+  } catch (_error) {
+    return "";
+  }
+
+  const version = await getSqlRedisCacheVersion();
+  return sqlRedisCache.buildCacheKey("sql-read", `${version}|${normalizedSql}|${serializedParams}`);
+};
+
 if (!newsPgPool) {
   console.warn("NEWS_DATABASE_URL/NEWS_DATABASE_NAME chưa cấu hình; mục Tin tức sẽ tạm ẩn dữ liệu.");
 }
@@ -470,17 +568,56 @@ const dbRun = async (sql, params = [], client = null) => {
   const result = await dbQuery(finalSql, params, client);
   const changes = typeof result.rowCount === "number" ? result.rowCount : 0;
   const lastID = wantsId && result.rows && result.rows[0] ? result.rows[0].id : undefined;
+  if (!client && sqlRedisCacheEnabled && isMutatingSql(finalSql)) {
+    await bumpSqlRedisCacheVersion();
+  }
   return { changes, lastID, rows: result.rows || [] };
 };
 
 const dbGet = async (sql, params = [], client = null) => {
   const rows = await dbAll(sql, params, client);
+  if (!client && sqlRedisCacheEnabled && isMutatingSql(sql)) {
+    await bumpSqlRedisCacheVersion();
+  }
   return rows && rows.length ? rows[0] : null;
 };
 
 const dbAll = async (sql, params = [], client = null) => {
+  const canReadThroughCache =
+    sqlRedisCacheEnabled
+    && !client
+    && isCacheableReadSql(sql);
+
+  let cacheKey = "";
+  if (canReadThroughCache) {
+    cacheKey = await buildSqlReadCacheKey(sql, params);
+    if (cacheKey) {
+      const cachedRows = await sqlRedisCache.getJson(cacheKey);
+      if (Array.isArray(cachedRows)) {
+        return cachedRows;
+      }
+    }
+  }
+
   const result = await dbQuery(sql, params, client);
-  return result.rows || [];
+  const rows = result.rows || [];
+
+  if (canReadThroughCache && cacheKey) {
+    let canStorePayload = false;
+    try {
+      const serializedRows = JSON.stringify(rows);
+      const payloadSize = Buffer.byteLength(serializedRows || "[]", "utf8");
+      canStorePayload = payloadSize <= SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES;
+    } catch (_error) {
+      canStorePayload = false;
+    }
+
+    if (canStorePayload) {
+      await sqlRedisCache.setJson(cacheKey, rows, SQL_REDIS_CACHE_DEFAULT_TTL_SECONDS);
+    }
+  }
+
+  return rows;
 };
 
 const newsDbQuery = async (sql, params = [], client = null) => {
@@ -504,15 +641,31 @@ const newsDbGet = async (sql, params = [], client = null) => {
 
 const withTransaction = async (fn) => {
   const client = await pgPool.connect();
+  let shouldInvalidateSqlCache = false;
   try {
     await client.query("BEGIN");
     const api = {
-      dbRun: (sql, params) => dbRun(sql, params, client),
-      dbGet: (sql, params) => dbGet(sql, params, client),
+      dbRun: async (sql, params) => {
+        const result = await dbRun(sql, params, client);
+        if (isMutatingSql(sql)) {
+          shouldInvalidateSqlCache = true;
+        }
+        return result;
+      },
+      dbGet: async (sql, params) => {
+        const result = await dbGet(sql, params, client);
+        if (isMutatingSql(sql)) {
+          shouldInvalidateSqlCache = true;
+        }
+        return result;
+      },
       dbAll: (sql, params) => dbAll(sql, params, client)
     };
     const result = await fn(api);
     await client.query("COMMIT");
+    if (shouldInvalidateSqlCache && sqlRedisCacheEnabled) {
+      await bumpSqlRedisCacheVersion();
+    }
     return result;
   } catch (err) {
     try {
@@ -3951,6 +4104,9 @@ const appContainer = {
   dbAll,
   dbGet,
   dbRun,
+  getSqlRedisCacheVersion,
+  sqlRedisCache,
+  sqlRedisCacheEnabled,
   newsDbAll,
   newsDbGet,
   isNewsDatabaseConfigured,

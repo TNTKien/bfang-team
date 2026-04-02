@@ -40,6 +40,7 @@ const registerForumApiRoutes = (app, deps) => {
     extractMentionUsernamesFromContent,
     formatTimeAgo,
     getB2Config,
+    getSqlRedisCacheVersion,
     getUserBadgeContext,
     isB2Ready,
     loadSessionUserById,
@@ -48,6 +49,8 @@ const registerForumApiRoutes = (app, deps) => {
     publishNotificationStreamUpdate,
     requireAdmin,
     sharp,
+    sqlRedisCache,
+    sqlRedisCacheEnabled,
     uploadCommentImage,
     uploadImageBufferToGoogleDrive,
     commentImageUploadsEnabled,
@@ -67,6 +70,67 @@ const registerForumApiRoutes = (app, deps) => {
   const NOTIFICATION_TYPE_COMMENT_REPLY = "comment_reply";
   const ADMIN_DEFAULT_PER_PAGE = 20;
   const ADMIN_MAX_PER_PAGE = 50;
+  const endpointRedisCacheEnabled = Boolean(
+    sqlRedisCacheEnabled
+      && sqlRedisCache
+      && typeof sqlRedisCache.buildCacheKey === "function"
+      && typeof sqlRedisCache.getJson === "function"
+      && typeof sqlRedisCache.setJson === "function"
+      && typeof getSqlRedisCacheVersion === "function"
+  );
+  const ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS = (() => {
+    const parsed = Number(process.env.ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 8;
+    return Math.floor(parsed);
+  })();
+
+  const normalizeEndpointCacheInput = (value) => {
+    if (Array.isArray(value)) {
+      return value.map((item) => (item == null ? "" : String(item)).trim()).filter(Boolean);
+    }
+    if (value == null) return "";
+    if (typeof value === "object") {
+      try {
+        return JSON.stringify(value);
+      } catch (_error) {
+        return "";
+      }
+    }
+    return String(value).trim();
+  };
+
+  const buildEndpointCacheKey = async (scope, payload) => {
+    if (!endpointRedisCacheEnabled) return "";
+    const safeScope = String(scope || "").trim();
+    if (!safeScope) return "";
+
+    let serializedPayload = "";
+    try {
+      serializedPayload = JSON.stringify(payload || {});
+    } catch (_error) {
+      return "";
+    }
+
+    const sqlCacheVersion = await getSqlRedisCacheVersion();
+    return sqlRedisCache.buildCacheKey(`endpoint:${safeScope}`, `${sqlCacheVersion}|${serializedPayload}`);
+  };
+
+  const readEndpointCache = async (scope, payload) => {
+    const key = await buildEndpointCacheKey(scope, payload);
+    if (!key) return { key: "", value: null };
+    const value = await sqlRedisCache.getJson(key);
+    return {
+      key,
+      value: value && typeof value === "object" ? value : null
+    };
+  };
+
+  const writeEndpointCache = async (key, payload, ttlSeconds) => {
+    const safeKey = String(key || "").trim();
+    if (!endpointRedisCacheEnabled || !safeKey) return false;
+    if (!payload || typeof payload !== "object") return false;
+    return sqlRedisCache.setJson(safeKey, payload, ttlSeconds);
+  };
 
   const rewriteForumCommentSql = (sql) => {
     const text = typeof sql === "string" ? sql : "";
@@ -1767,20 +1831,28 @@ const registerForumApiRoutes = (app, deps) => {
       });
 
       const sectionMetaBySlug = buildSectionMetaBySlug(forumSectionConfig.sections);
-
-      const countRow = await loadForumHomeCount({ whereParams, whereSql });
-
-      const total = Number(countRow && countRow.count) || 0;
-      const paginationState = buildPaginationState({
+      const forumHomeEndpointCacheContext = {
+        page: requestedPage,
         perPage,
-        requestedPage,
-        total,
-      });
-      const {
-        offset,
-        page,
-        pageCount,
-      } = paginationState;
+        q: normalizeEndpointCacheInput(queryText),
+        sort,
+        section: normalizeEndpointCacheInput(requestedSection)
+      };
+      const forumHomeEndpointCache = await readEndpointCache("forum-home", forumHomeEndpointCacheContext);
+      const forumHomeEndpointCacheKey = forumHomeEndpointCache.key;
+      const cachedForumHomePayload = forumHomeEndpointCache.value;
+
+      let total = 0;
+      let offset = 0;
+      let page = 1;
+      let pageCount = 1;
+      let postRows = [];
+      let statsRow = {
+        member_count: 0,
+        post_count: 0,
+        reply_count: 0
+      };
+      let sectionStatsBySlug = new Map();
 
       const basePostSelectSql = `
         SELECT
@@ -1822,88 +1894,143 @@ const registerForumApiRoutes = (app, deps) => {
         ) reply_stats ON TRUE
         WHERE ${whereSql}
       `;
-
-      let postRows = [];
-      if (sort === "hot") {
-        const recentCutoffIso = new Date(Date.now() - HOT_RECENT_WINDOW_MS).toISOString();
-        postRows = await dbAll(
-          `
-            WITH base_posts AS (
-              ${basePostSelectSql}
-            ),
-            recent_bucket AS (
-              SELECT
-                bp.id,
-                ROW_NUMBER() OVER (ORDER BY bp.created_at DESC, bp.id DESC) AS bucket_rank
-              FROM base_posts bp
-              WHERE bp.created_at >= ?
-            ),
-            recent_picks AS (
-              SELECT id, bucket_rank
-              FROM recent_bucket
-              WHERE bucket_rank <= ${HOT_RECENT_LIMIT}
-            ),
-            comment_bucket AS (
-              SELECT
-                bp.id,
-                ROW_NUMBER() OVER (ORDER BY bp.latest_reply_at DESC, bp.id DESC) AS bucket_rank
-              FROM base_posts bp
-              WHERE bp.latest_reply_at IS NOT NULL
-                AND bp.id NOT IN (SELECT id FROM recent_picks)
-            ),
-            comment_picks AS (
-              SELECT id, bucket_rank
-              FROM comment_bucket
-              WHERE bucket_rank <= ${HOT_COMMENT_ACTIVITY_LIMIT}
-            ),
-            hot_bucket AS (
-              SELECT
-                bp.id,
-                ROW_NUMBER() OVER (ORDER BY bp.hot_score DESC, bp.created_at DESC, bp.id DESC) AS bucket_rank
-              FROM base_posts bp
-              WHERE bp.id NOT IN (SELECT id FROM recent_picks)
-                AND bp.id NOT IN (SELECT id FROM comment_picks)
-            ),
-            ranked AS (
-              SELECT
-                merged.id,
-                ROW_NUMBER() OVER (ORDER BY merged.bucket ASC, merged.bucket_rank ASC) AS global_rank
-              FROM (
-                SELECT rp.id, 1 AS bucket, rp.bucket_rank
-                FROM recent_picks rp
-                UNION ALL
-                SELECT cp.id, 2 AS bucket, cp.bucket_rank
-                FROM comment_picks cp
-                UNION ALL
-                SELECT hb.id, 3 AS bucket, hb.bucket_rank
-                FROM hot_bucket hb
-              ) merged
-            )
-            SELECT bp.*
-            FROM ranked r
-            JOIN base_posts bp ON bp.id = r.id
-            ORDER BY r.global_rank ASC
-            LIMIT ? OFFSET ?
-          `,
-          [FORUM_REQUEST_ID_LIKE, FORUM_REQUEST_ID_LIKE, ...whereParams, recentCutoffIso, perPage, offset]
+      if (
+        cachedForumHomePayload
+        && Array.isArray(cachedForumHomePayload.postRows)
+        && Array.isArray(cachedForumHomePayload.sectionStatsEntries)
+      ) {
+        total = Number(cachedForumHomePayload.total) || 0;
+        const cachedPaginationState = buildPaginationState({
+          perPage,
+          requestedPage,
+          total
+        });
+        offset = cachedPaginationState.offset;
+        page = cachedPaginationState.page;
+        pageCount = cachedPaginationState.pageCount;
+        postRows = cachedForumHomePayload.postRows;
+        statsRow =
+          cachedForumHomePayload.statsRow && typeof cachedForumHomePayload.statsRow === "object"
+            ? cachedForumHomePayload.statsRow
+            : statsRow;
+        sectionStatsBySlug = new Map(
+          cachedForumHomePayload.sectionStatsEntries.filter(
+            (entry) =>
+              Array.isArray(entry)
+              && entry.length === 2
+              && typeof entry[0] === "string"
+              && entry[0]
+              && entry[1]
+              && typeof entry[1] === "object"
+          )
         );
       } else {
-        const orderSql =
-          sort === "most-commented"
-            ? "ORDER BY COALESCE(reply_stats.reply_count, 0) DESC, c.created_at DESC, c.id DESC"
-            : "ORDER BY c.created_at DESC, c.id DESC";
+        const countRow = await loadForumHomeCount({ whereParams, whereSql });
+        total = Number(countRow && countRow.count) || 0;
+        const paginationState = buildPaginationState({
+          perPage,
+          requestedPage,
+          total,
+        });
+        offset = paginationState.offset;
+        page = paginationState.page;
+        pageCount = paginationState.pageCount;
 
-        postRows = await dbAll(
-          `
-            ${basePostSelectSql}
-            ${orderSql}
-            LIMIT ? OFFSET ?
-          `,
-          [FORUM_REQUEST_ID_LIKE, FORUM_REQUEST_ID_LIKE, ...whereParams, perPage, offset]
+        if (sort === "hot") {
+          const recentCutoffIso = new Date(Date.now() - HOT_RECENT_WINDOW_MS).toISOString();
+          postRows = await dbAll(
+            `
+              WITH base_posts AS (
+                ${basePostSelectSql}
+              ),
+              recent_bucket AS (
+                SELECT
+                  bp.id,
+                  ROW_NUMBER() OVER (ORDER BY bp.created_at DESC, bp.id DESC) AS bucket_rank
+                FROM base_posts bp
+                WHERE bp.created_at >= ?
+              ),
+              recent_picks AS (
+                SELECT id, bucket_rank
+                FROM recent_bucket
+                WHERE bucket_rank <= ${HOT_RECENT_LIMIT}
+              ),
+              comment_bucket AS (
+                SELECT
+                  bp.id,
+                  ROW_NUMBER() OVER (ORDER BY bp.latest_reply_at DESC, bp.id DESC) AS bucket_rank
+                FROM base_posts bp
+                WHERE bp.latest_reply_at IS NOT NULL
+                  AND bp.id NOT IN (SELECT id FROM recent_picks)
+              ),
+              comment_picks AS (
+                SELECT id, bucket_rank
+                FROM comment_bucket
+                WHERE bucket_rank <= ${HOT_COMMENT_ACTIVITY_LIMIT}
+              ),
+              hot_bucket AS (
+                SELECT
+                  bp.id,
+                  ROW_NUMBER() OVER (ORDER BY bp.hot_score DESC, bp.created_at DESC, bp.id DESC) AS bucket_rank
+                FROM base_posts bp
+                WHERE bp.id NOT IN (SELECT id FROM recent_picks)
+                  AND bp.id NOT IN (SELECT id FROM comment_picks)
+              ),
+              ranked AS (
+                SELECT
+                  merged.id,
+                  ROW_NUMBER() OVER (ORDER BY merged.bucket ASC, merged.bucket_rank ASC) AS global_rank
+                FROM (
+                  SELECT rp.id, 1 AS bucket, rp.bucket_rank
+                  FROM recent_picks rp
+                  UNION ALL
+                  SELECT cp.id, 2 AS bucket, cp.bucket_rank
+                  FROM comment_picks cp
+                  UNION ALL
+                  SELECT hb.id, 3 AS bucket, hb.bucket_rank
+                  FROM hot_bucket hb
+                ) merged
+              )
+              SELECT bp.*
+              FROM ranked r
+              JOIN base_posts bp ON bp.id = r.id
+              ORDER BY r.global_rank ASC
+              LIMIT ? OFFSET ?
+            `,
+            [FORUM_REQUEST_ID_LIKE, FORUM_REQUEST_ID_LIKE, ...whereParams, recentCutoffIso, perPage, offset]
+          );
+        } else {
+          const orderSql =
+            sort === "most-commented"
+              ? "ORDER BY COALESCE(reply_stats.reply_count, 0) DESC, c.created_at DESC, c.id DESC"
+              : "ORDER BY c.created_at DESC, c.id DESC";
+
+          postRows = await dbAll(
+            `
+              ${basePostSelectSql}
+              ${orderSql}
+              LIMIT ? OFFSET ?
+            `,
+            [FORUM_REQUEST_ID_LIKE, FORUM_REQUEST_ID_LIKE, ...whereParams, perPage, offset]
+          );
+        }
+
+        statsRow = await loadForumHomeStats();
+        sectionStatsBySlug = await buildForumAdminSectionStatsMap(
+          forumSectionConfig.sections.map((section) => section.slug)
+        );
+
+        await writeEndpointCache(
+          forumHomeEndpointCacheKey,
+          {
+            total,
+            postRows,
+            statsRow,
+            sectionStatsEntries: Array.from(sectionStatsBySlug.entries())
+          },
+          ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS
         );
       }
-
-      const statsRow = await loadForumHomeStats();
 
       const postIds = postRows
         .map((row) => Number(row && row.id))
@@ -1913,9 +2040,6 @@ const registerForumApiRoutes = (app, deps) => {
       const savedIdSet = await buildSavedPostIdSetForViewer({ viewer, ids: postIds });
       const authorDecorationMap = await buildAuthorDecorationMap(postRows);
       const mentionByCommentId = await buildMentionMapForRows({ rows: postRows });
-      const sectionStatsBySlug = await buildForumAdminSectionStatsMap(
-        forumSectionConfig.sections.map((section) => section.slug)
-      );
 
       return res.json({
         ok: true,

@@ -222,6 +222,54 @@ Phần này trả lời câu hỏi "lấy từng biến ở đâu".
 - `SESSION_SECRET`: tự sinh chuỗi ngẫu nhiên dài (>= 32 ký tự).
 - `ADMIN_USER`, `ADMIN_PASS`: do bạn tự đặt.
 
+### 7.1.1 Redis cache (tối ưu SQL)
+
+Điền trực tiếp vào file **`.env` ở thư mục gốc web** (`web1/.env`):
+
+- `REDIS_URL`: URL kết nối Redis (ví dụ: `redis://127.0.0.1:6379/0`)
+- `REDIS_CACHE_ENABLED`: bật/tắt Redis helper tổng thể (`true/false`)
+- `REDIS_PREFIX`: prefix key (mặc định `bfang`)
+- `REDIS_DEFAULT_TTL_SECONDS`: TTL mặc định cho helper Redis
+- `REDIS_CONNECT_TIMEOUT_MS`: timeout kết nối Redis
+- `REDIS_RECONNECT_RETRY_MS`: chu kỳ retry reconnect
+
+Biến chuyên cho SQL read-through cache:
+
+- `SQL_REDIS_CACHE_ENABLED`
+- `SQL_REDIS_CACHE_TTL_SECONDS`
+- `SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES`
+- `SQL_REDIS_CACHE_VERSION_REFRESH_MS`
+
+Biến TTL endpoint-level cache (nghiệp vụ):
+
+- `ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS`
+- `ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS`
+- `ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS`
+- `ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS`
+- `ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS`
+
+Ví dụ nhanh:
+
+```env
+REDIS_CACHE_ENABLED=true
+REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_PREFIX=bfang
+REDIS_DEFAULT_TTL_SECONDS=30
+REDIS_CONNECT_TIMEOUT_MS=5000
+REDIS_RECONNECT_RETRY_MS=15000
+
+SQL_REDIS_CACHE_ENABLED=true
+SQL_REDIS_CACHE_TTL_SECONDS=5
+SQL_REDIS_CACHE_MAX_PAYLOAD_BYTES=524288
+SQL_REDIS_CACHE_VERSION_REFRESH_MS=1500
+
+ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS=30
+ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS=20
+ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS=20
+ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS=15
+ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS=8
+```
+
 ### 7.2 MinIO / S3-compatible (ảnh chapter/forum)
 
 Biến liên quan:

@@ -58,6 +58,7 @@ const registerSiteRoutes = (app, deps) => {
     getMentionProfileMapForManga,
     getPaginatedCommentTree,
     getPublicOriginFromRequest,
+    getSqlRedisCacheVersion,
     getUserBadgeContext,
     hasOwnObjectKey,
     isDuplicateCommentRequestError,
@@ -106,6 +107,8 @@ const registerSiteRoutes = (app, deps) => {
     serverSessionVersion,
     setAuthSessionUser,
     sharp,
+    sqlRedisCache,
+    sqlRedisCacheEnabled,
     sitemapCacheByOrigin,
     sitemapCacheTtlMs,
     siteConfig,
@@ -191,6 +194,88 @@ const registerSiteRoutes = (app, deps) => {
     (process.env.CHAPTER_VIEW_SECRET || process.env.SESSION_SECRET || `${SEO_SITE_NAME}-chapter-view`)
       .toString()
       .trim() || "chapter-view-fallback";
+  const endpointRedisCacheEnabled = Boolean(
+    sqlRedisCacheEnabled
+      && sqlRedisCache
+      && typeof sqlRedisCache.buildCacheKey === "function"
+      && typeof sqlRedisCache.getJson === "function"
+      && typeof sqlRedisCache.setJson === "function"
+      && typeof getSqlRedisCacheVersion === "function"
+  );
+  const ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS = (() => {
+    const parsed = Number(process.env.ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 30;
+    return Math.floor(parsed);
+  })();
+  const ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS = (() => {
+    const parsed = Number(process.env.ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 20;
+    return Math.floor(parsed);
+  })();
+  const ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS = (() => {
+    const parsed = Number(process.env.ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 20;
+    return Math.floor(parsed);
+  })();
+  const ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS = (() => {
+    const parsed = Number(process.env.ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 15;
+    return Math.floor(parsed);
+  })();
+
+  const normalizeEndpointCacheInput = (value) => {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => String(item == null ? "" : item).trim())
+        .filter(Boolean);
+    }
+    if (value == null) return "";
+    if (typeof value === "object") {
+      try {
+        return JSON.stringify(value);
+      } catch (_error) {
+        return "";
+      }
+    }
+    return String(value).trim();
+  };
+
+  const buildEndpointCacheKey = async (scope, payload) => {
+    if (!endpointRedisCacheEnabled) return "";
+    const safeScope = String(scope || "").trim();
+    if (!safeScope) return "";
+
+    let serializedPayload = "";
+    try {
+      serializedPayload = JSON.stringify(payload || {});
+    } catch (_error) {
+      return "";
+    }
+
+    const sqlCacheVersion = await getSqlRedisCacheVersion();
+    return sqlRedisCache.buildCacheKey(`endpoint:${safeScope}`, `${sqlCacheVersion}|${serializedPayload}`);
+  };
+
+  const readEndpointCache = async (scope, payload) => {
+    const key = await buildEndpointCacheKey(scope, payload);
+    if (!key) {
+      return { key: "", value: null };
+    }
+
+    const cachedValue = await sqlRedisCache.getJson(key);
+    return {
+      key,
+      value: cachedValue && typeof cachedValue === "object" ? cachedValue : null
+    };
+  };
+
+  const writeEndpointCache = async (key, value, ttlSeconds) => {
+    const safeKey = String(key || "").trim();
+    if (!endpointRedisCacheEnabled || !safeKey) return false;
+    if (!value || typeof value !== "object") return false;
+    return sqlRedisCache.setJson(safeKey, value, ttlSeconds);
+  };
+
   let chapterViewSchemaReadyPromise = null;
   let mangaDailyViewSchemaReadyPromise = null;
   let mangaDailyViewBaselineSyncPromise = null;
@@ -9939,11 +10024,29 @@ const registerSiteRoutes = (app, deps) => {
     const includeAdult = Boolean(options && options.includeAdult);
     const audienceKey = buildHomepageAudienceCacheKey(includeAdult);
     const now = Date.now();
-    const cachedState = homepageCacheByAudience.get(audienceKey);
+    let cachedState = homepageCacheByAudience.get(audienceKey);
     let homepagePayload = cachedState && cachedState.payload ? cachedState.payload : null;
+    let homepageEndpointCacheKey = "";
 
     if (forceFresh) {
       homepagePayload = null;
+    }
+
+    if (!forceFresh && !homepagePayload) {
+      const homepageRedisCache = await readEndpointCache("homepage", { audienceKey });
+      homepageEndpointCacheKey = homepageRedisCache.key;
+      const cachedRedisState = homepageRedisCache.value;
+      if (cachedRedisState && cachedRedisState.payload && typeof cachedRedisState.payload === "object") {
+        homepagePayload = cachedRedisState.payload;
+        homepageCacheByAudience.set(audienceKey, {
+          payload: homepagePayload,
+          expiresAt: now + HOMEPAGE_CACHE_TTL_MS,
+          updatedAt: cachedRedisState.updatedAt ? String(cachedRedisState.updatedAt).trim() : "",
+          freshnessToken: cachedRedisState.freshnessToken ? String(cachedRedisState.freshnessToken).trim() : "",
+          metaProbeAt: now + HOMEPAGE_META_PROBE_INTERVAL_MS
+        });
+        cachedState = homepageCacheByAudience.get(audienceKey);
+      }
     }
 
     if (homepagePayload && cachedState && cachedState.expiresAt > now) {
@@ -10280,15 +10383,26 @@ const registerSiteRoutes = (app, deps) => {
           rebuiltPayload = await refreshHomepageBookmarkCounts(rebuiltPayload);
           const refreshedAt = Date.now();
           const freshnessToken = await readHomepageFreshnessToken();
+          const updatedAt = homepageRow && homepageRow.updated_at
+            ? String(homepageRow.updated_at).trim()
+            : "";
           homepageCacheByAudience.set(audienceKey, {
             payload: rebuiltPayload,
             expiresAt: refreshedAt + HOMEPAGE_CACHE_TTL_MS,
-            updatedAt: homepageRow && homepageRow.updated_at
-              ? String(homepageRow.updated_at).trim()
-              : "",
+            updatedAt,
             freshnessToken,
             metaProbeAt: refreshedAt + HOMEPAGE_META_PROBE_INTERVAL_MS
           });
+          const redisHomepageCacheKey = homepageEndpointCacheKey || await buildEndpointCacheKey("homepage", { audienceKey });
+          await writeEndpointCache(
+            redisHomepageCacheKey,
+            {
+              payload: rebuiltPayload,
+              freshnessToken,
+              updatedAt
+            },
+            ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS
+          );
           return rebuiltPayload;
         })();
 
@@ -10841,6 +10955,71 @@ const registerSiteRoutes = (app, deps) => {
       const rawInclude = req.query.include;
       const rawExclude = req.query.exclude;
       const legacyGenre = typeof req.query.genre === "string" ? req.query.genre.trim() : "";
+      const mangaListEndpointCacheContext = {
+        includeAdult,
+        q: normalizeEndpointCacheInput(q),
+        status: normalizeEndpointCacheInput(rawStatus),
+        include: normalizeEndpointCacheInput(rawInclude),
+        exclude: normalizeEndpointCacheInput(rawExclude),
+        genre: normalizeEndpointCacheInput(legacyGenre),
+        pageInput: normalizeEndpointCacheInput(req.query && req.query.page),
+        perPageInput: normalizeEndpointCacheInput(req.query && req.query.perPage)
+      };
+      const mangaListEndpointCache = await readEndpointCache("manga-list", mangaListEndpointCacheContext);
+      const mangaListEndpointCacheKey = mangaListEndpointCache.key;
+      const cachedMangaListPayload = mangaListEndpointCache.value;
+      if (
+        cachedMangaListPayload
+        && Array.isArray(cachedMangaListPayload.mangaLibrary)
+        && Array.isArray(cachedMangaListPayload.genreStats)
+        && cachedMangaListPayload.pagination
+        && typeof cachedMangaListPayload.pagination === "object"
+      ) {
+        const cachedFilters =
+          cachedMangaListPayload.filters && typeof cachedMangaListPayload.filters === "object"
+            ? cachedMangaListPayload.filters
+            : {};
+        const cachedSeo =
+          cachedMangaListPayload.seoData && typeof cachedMangaListPayload.seoData === "object"
+            ? cachedMangaListPayload.seoData
+            : {};
+        const cachedMangaLibrary = cachedMangaListPayload.mangaLibrary;
+        const cachedResultCount = Number(cachedMangaListPayload.resultCount) || 0;
+        const cachedKeywords = Array.isArray(cachedSeo.mangaListKeywords) ? cachedSeo.mangaListKeywords : [];
+        const cachedSchemas = Array.isArray(cachedSeo.mangaListSchemas) ? cachedSeo.mangaListSchemas : [];
+
+        return res.render("manga", {
+          title: "Toàn bộ truyện",
+          team,
+          mangaLibrary: cachedMangaLibrary,
+          genres: cachedMangaListPayload.genreStats,
+          filters: {
+            q: typeof cachedFilters.q === "string" ? cachedFilters.q : "",
+            status: typeof cachedFilters.status === "string" ? cachedFilters.status : "",
+            statusOptions: Array.isArray(cachedMangaListPayload.statusOptions)
+              ? cachedMangaListPayload.statusOptions
+              : [],
+            include: Array.isArray(cachedFilters.include) ? cachedFilters.include : [],
+            exclude: Array.isArray(cachedFilters.exclude) ? cachedFilters.exclude : []
+          },
+          resultCount: cachedResultCount,
+          pagination: cachedMangaListPayload.pagination,
+          seo: buildSeoPayload(req, {
+            title: typeof cachedSeo.seoTitle === "string"
+              ? cachedSeo.seoTitle
+              : "Đọc truyện tranh | Toàn bộ manga",
+            description: typeof cachedSeo.seoDescription === "string"
+              ? cachedSeo.seoDescription
+              : `${SEO_SITE_NAME} là kho đọc truyện tranh online miễn phí, cập nhật liên tục manga, manhwa, manhua mới nhất mỗi ngày.`,
+            keywords: cachedKeywords,
+            canonicalPath: "/manga",
+            robots: cachedSeo.shouldNoIndex ? SEO_ROBOTS_NOINDEX : SEO_ROBOTS_INDEX,
+            image: cachedMangaLibrary.length && cachedMangaLibrary[0].cover ? cachedMangaLibrary[0].cover : "",
+            ogType: "website",
+            jsonLd: cachedSchemas
+          })
+        });
+      }
       const include = [];
       const exclude = [];
 
@@ -11072,6 +11251,36 @@ const registerSiteRoutes = (app, deps) => {
           ])
         ]);
 
+      const mangaListCachePayload = {
+        mangaLibrary,
+        genreStats,
+        statusOptions,
+        filters: {
+          q,
+          status: selectedStatus,
+          include,
+          exclude: filteredExclude
+        },
+        resultCount: pagination.total,
+        pagination,
+        seoData: {
+          seoTitle,
+          seoDescription,
+          shouldNoIndex,
+          mangaListKeywords,
+          mangaListSchemas
+        }
+      };
+      const mangaListResolvedEndpointCacheKey = mangaListEndpointCacheKey || await buildEndpointCacheKey(
+        "manga-list",
+        mangaListEndpointCacheContext
+      );
+      await writeEndpointCache(
+        mangaListResolvedEndpointCacheKey,
+        mangaListCachePayload,
+        ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS
+      );
+
       res.render("manga", {
         title: "Toàn bộ truyện",
         team,
@@ -11122,73 +11331,7 @@ const registerSiteRoutes = (app, deps) => {
         return res.redirect(301, canonicalMangaPath);
       }
 
-      const chapterSummary = await dbGet(
-        `
-        SELECT
-          COUNT(*) as count,
-          MAX(number) as latest_number,
-          MIN(number) as first_number
-        FROM chapters
-        WHERE manga_id = ?
-      `,
-        [mangaRow.id]
-      );
-      const chapterPagination = resolvePaginationParams({
-        pageInput: req.query.chapterPage,
-        perPageInput: MANGA_DETAIL_CHAPTERS_PER_PAGE,
-        defaultPerPage: MANGA_DETAIL_CHAPTERS_PER_PAGE,
-        maxPerPage: MANGA_DETAIL_CHAPTERS_PER_PAGE,
-        totalCount: chapterSummary && chapterSummary.count ? Number(chapterSummary.count) : 0
-      });
-      const shouldNoIndexMangaDetail = chapterPagination.page > 1;
-
-      const chapterRows = await dbAll(
-        `
-        SELECT
-          c.id,
-          c.number,
-          c.title,
-          c.pages,
-          c.date,
-          c.group_name,
-          CASE
-            WHEN COALESCE(c.password_hash, '') <> '' AND COALESCE(c.password_salt, '') <> '' THEN true
-            ELSE false
-          END AS has_password,
-          COALESCE(c.is_oneshot, false) as is_oneshot,
-          COALESCE(v.view_count, 0) as view_count
-        FROM chapters c
-        LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
-        WHERE c.manga_id = ?
-        ORDER BY c.number DESC
-        LIMIT ? OFFSET ?
-      `,
-        [mangaRow.id, chapterPagination.perPage, chapterPagination.offset]
-      );
-      const mangaTotalViewsRow = await dbGet(
-        `
-        SELECT COALESCE(SUM(COALESCE(v.view_count, 0)), 0) as total_views
-        FROM chapters c
-        LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
-        WHERE c.manga_id = ?
-      `,
-        [mangaRow.id]
-      );
-      const chapters = chapterRows.map((chapter) => ({
-        ...chapter,
-        has_password: toBooleanFlag(chapter && chapter.has_password),
-        is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot),
-        view_count: toSafeChapterViewCount(chapter && chapter.view_count)
-      }));
-      const latestChapterNumber = chapterSummary && chapterSummary.latest_number != null
-        ? formatChapterNumberValue(chapterSummary.latest_number)
-        : "";
-      const firstChapterNumber = chapterSummary && chapterSummary.first_number != null
-        ? formatChapterNumberValue(chapterSummary.first_number)
-        : "";
-      const latestChapterForSeoText = latestChapterNumber || "?";
-      const mangaSeoTitle = `${mangaRow.title} [Tới Chap ${latestChapterForSeoText}]`;
-
+      const includeAdult = shouldIncludeAdultMangaForRequest(req);
       const commentPageRaw = Number(req.query.commentPage);
       const commentPage =
         Number.isFinite(commentPageRaw) && commentPageRaw > 0 ? Math.floor(commentPageRaw) : 1;
@@ -11197,6 +11340,145 @@ const registerSiteRoutes = (app, deps) => {
         commentsFlag === "1" || commentsFlag === "true" || commentsFlag === "yes";
       const hasCommentPageQuery = hasOwnObjectKey(req.query || {}, "commentPage");
       const commentsHydrated = commentsRequestedExplicitly || hasCommentPageQuery;
+
+      const mangaDetailEndpointCacheContext = {
+        slug: mangaRow.slug,
+        includeAdult,
+        chapterPageInput: normalizeEndpointCacheInput(req.query && req.query.chapterPage)
+      };
+      const mangaDetailEndpointCache = commentsHydrated
+        ? { key: "", value: null }
+        : await readEndpointCache("manga-detail", mangaDetailEndpointCacheContext);
+      const mangaDetailEndpointCacheKey = mangaDetailEndpointCache.key;
+      const cachedMangaDetailPayload = mangaDetailEndpointCache.value;
+
+      let chapterPagination = null;
+      let shouldNoIndexMangaDetail = false;
+      let chapters = [];
+      let latestChapterNumber = "";
+      let firstChapterNumber = "";
+      let latestChapterForSeoText = "?";
+      let mangaSeoTitle = "";
+      let mappedManga = null;
+      let mangaBookmarkCount = 0;
+      let groupTeamLinks = [];
+      let mangaTotalViews = 0;
+
+      if (
+        cachedMangaDetailPayload
+        && cachedMangaDetailPayload.chapterPagination
+        && typeof cachedMangaDetailPayload.chapterPagination === "object"
+        && Array.isArray(cachedMangaDetailPayload.chapters)
+        && cachedMangaDetailPayload.mappedManga
+        && typeof cachedMangaDetailPayload.mappedManga === "object"
+      ) {
+        chapterPagination = cachedMangaDetailPayload.chapterPagination;
+        shouldNoIndexMangaDetail = Boolean(cachedMangaDetailPayload.shouldNoIndexMangaDetail);
+        chapters = cachedMangaDetailPayload.chapters;
+        latestChapterNumber = String(cachedMangaDetailPayload.latestChapterNumber || "").trim();
+        firstChapterNumber = String(cachedMangaDetailPayload.firstChapterNumber || "").trim();
+        latestChapterForSeoText = String(cachedMangaDetailPayload.latestChapterForSeoText || "?").trim() || "?";
+        mangaSeoTitle = String(cachedMangaDetailPayload.mangaSeoTitle || "").trim() || `${mangaRow.title} [Tới Chap ${latestChapterForSeoText}]`;
+        mappedManga = cachedMangaDetailPayload.mappedManga;
+        mangaBookmarkCount = Number(cachedMangaDetailPayload.mangaBookmarkCount) || 0;
+        groupTeamLinks = Array.isArray(cachedMangaDetailPayload.groupTeamLinks)
+          ? cachedMangaDetailPayload.groupTeamLinks
+          : [];
+        mangaTotalViews = toSafeChapterViewCount(cachedMangaDetailPayload.mangaTotalViews);
+      } else {
+        const chapterSummary = await dbGet(
+          `
+          SELECT
+            COUNT(*) as count,
+            MAX(number) as latest_number,
+            MIN(number) as first_number
+          FROM chapters
+          WHERE manga_id = ?
+        `,
+          [mangaRow.id]
+        );
+        chapterPagination = resolvePaginationParams({
+          pageInput: req.query.chapterPage,
+          perPageInput: MANGA_DETAIL_CHAPTERS_PER_PAGE,
+          defaultPerPage: MANGA_DETAIL_CHAPTERS_PER_PAGE,
+          maxPerPage: MANGA_DETAIL_CHAPTERS_PER_PAGE,
+          totalCount: chapterSummary && chapterSummary.count ? Number(chapterSummary.count) : 0
+        });
+        shouldNoIndexMangaDetail = chapterPagination.page > 1;
+
+        const chapterRows = await dbAll(
+          `
+          SELECT
+            c.id,
+            c.number,
+            c.title,
+            c.pages,
+            c.date,
+            c.group_name,
+            CASE
+              WHEN COALESCE(c.password_hash, '') <> '' AND COALESCE(c.password_salt, '') <> '' THEN true
+              ELSE false
+            END AS has_password,
+            COALESCE(c.is_oneshot, false) as is_oneshot,
+            COALESCE(v.view_count, 0) as view_count
+          FROM chapters c
+          LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
+          WHERE c.manga_id = ?
+          ORDER BY c.number DESC
+          LIMIT ? OFFSET ?
+        `,
+          [mangaRow.id, chapterPagination.perPage, chapterPagination.offset]
+        );
+        const mangaTotalViewsRow = await dbGet(
+          `
+          SELECT COALESCE(SUM(COALESCE(v.view_count, 0)), 0) as total_views
+          FROM chapters c
+          LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
+          WHERE c.manga_id = ?
+        `,
+          [mangaRow.id]
+        );
+        chapters = chapterRows.map((chapter) => ({
+          ...chapter,
+          has_password: toBooleanFlag(chapter && chapter.has_password),
+          is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot),
+          view_count: toSafeChapterViewCount(chapter && chapter.view_count)
+        }));
+        latestChapterNumber = chapterSummary && chapterSummary.latest_number != null
+          ? formatChapterNumberValue(chapterSummary.latest_number)
+          : "";
+        firstChapterNumber = chapterSummary && chapterSummary.first_number != null
+          ? formatChapterNumberValue(chapterSummary.first_number)
+          : "";
+        latestChapterForSeoText = latestChapterNumber || "?";
+        mangaSeoTitle = `${mangaRow.title} [Tới Chap ${latestChapterForSeoText}]`;
+        mappedManga = {
+          ...mapMangaRow(mangaRow),
+          isAdult: shouldExposeAdultMarker(mangaRow)
+        };
+        const bookmarkCountByMangaId = await resolveBookmarkUserCountByMangaId([mangaRow.id]);
+        mangaBookmarkCount = Number(bookmarkCountByMangaId.get(Math.floor(Number(mangaRow.id)))) || 0;
+        groupTeamLinks = await listGroupTeamLinks(mangaRow.group_name || "");
+        mangaTotalViews = toSafeChapterViewCount(mangaTotalViewsRow && mangaTotalViewsRow.total_views);
+
+        await writeEndpointCache(
+          mangaDetailEndpointCacheKey,
+          {
+            chapterPagination,
+            shouldNoIndexMangaDetail,
+            chapters,
+            latestChapterNumber,
+            firstChapterNumber,
+            latestChapterForSeoText,
+            mangaSeoTitle,
+            mappedManga,
+            mangaBookmarkCount,
+            groupTeamLinks,
+            mangaTotalViews
+          },
+          ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS
+        );
+      }
 
       let commentData = null;
       if (commentsHydrated) {
@@ -11223,13 +11505,6 @@ const registerSiteRoutes = (app, deps) => {
         };
       }
 
-      const mappedManga = {
-        ...mapMangaRow(mangaRow),
-        isAdult: shouldExposeAdultMarker(mangaRow)
-      };
-      const bookmarkCountByMangaId = await resolveBookmarkUserCountByMangaId([mangaRow.id]);
-      const mangaBookmarkCount = Number(bookmarkCountByMangaId.get(Math.floor(Number(mangaRow.id)))) || 0;
-      const groupTeamLinks = await listGroupTeamLinks(mangaRow.group_name || "");
       const commentsLoadUrl = `/manga/${encodeURIComponent(mangaRow.slug)}?comments=1`;
       const authUserId =
         req && req.session && req.session.authUserId
@@ -11305,7 +11580,7 @@ const registerSiteRoutes = (app, deps) => {
           latestChapterNumber,
           firstChapterNumber,
           groupTeamLinks,
-          totalViews: toSafeChapterViewCount(mangaTotalViewsRow && mangaTotalViewsRow.total_views)
+          totalViews: mangaTotalViews
         },
         chapterPagination,
         comments: commentData.comments,
@@ -11571,33 +11846,73 @@ const registerSiteRoutes = (app, deps) => {
         return res.redirect(301, `/manga/${encodeURIComponent(mangaRow.slug)}/chapters/${encodeURIComponent(String(chapterNumber))}`);
       }
 
-      const chapterRow = await dbGet(
-        `
-        SELECT
-          c.id,
-          c.number,
-          c.title,
-          c.pages,
-          c.date,
-          c.pages_prefix,
-          c.pages_file_prefix,
-          c.pages_ext,
-          c.pages_updated_at,
-          c.processing_state,
-          c.processing_error,
-          c.processing_done_pages,
-          c.processing_total_pages,
-          c.password_hash,
-          c.password_salt,
-          c.password_updated_at,
-          COALESCE(c.is_oneshot, false) as is_oneshot,
-          COALESCE(v.view_count, 0) as view_count
-        FROM chapters c
-        LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
-        WHERE c.manga_id = ? AND c.number = ?
-      `,
-        [mangaRow.id, chapterNumber]
-      );
+      const includeAdult = shouldIncludeAdultMangaForRequest(req);
+      const chapterDetailEndpointCacheContext = {
+        slug: mangaRow.slug,
+        includeAdult,
+        chapterNumber
+      };
+      const chapterDetailEndpointCache = await readEndpointCache("chapter-detail", chapterDetailEndpointCacheContext);
+      const chapterDetailEndpointCacheKey = chapterDetailEndpointCache.key;
+      const cachedChapterDetailPayload = chapterDetailEndpointCache.value;
+
+      let chapterRow = null;
+      let chapterListRows = [];
+      if (
+        cachedChapterDetailPayload
+        && cachedChapterDetailPayload.chapterRow
+        && typeof cachedChapterDetailPayload.chapterRow === "object"
+        && Array.isArray(cachedChapterDetailPayload.chapterListRows)
+      ) {
+        chapterRow = cachedChapterDetailPayload.chapterRow;
+        chapterListRows = cachedChapterDetailPayload.chapterListRows;
+      } else {
+        chapterRow = await dbGet(
+          `
+          SELECT
+            c.id,
+            c.number,
+            c.title,
+            c.pages,
+            c.date,
+            c.pages_prefix,
+            c.pages_file_prefix,
+            c.pages_ext,
+            c.pages_updated_at,
+            c.processing_state,
+            c.processing_error,
+            c.processing_done_pages,
+            c.processing_total_pages,
+            c.password_hash,
+            c.password_salt,
+            c.password_updated_at,
+            COALESCE(c.is_oneshot, false) as is_oneshot,
+            COALESCE(v.view_count, 0) as view_count
+          FROM chapters c
+          LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
+          WHERE c.manga_id = ? AND c.number = ?
+        `,
+          [mangaRow.id, chapterNumber]
+        );
+
+        if (!chapterRow) {
+          return renderNotFoundPage(req, res);
+        }
+
+        chapterListRows = await dbAll(
+          "SELECT number, title, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? ORDER BY number DESC",
+          [mangaRow.id]
+        );
+
+        await writeEndpointCache(
+          chapterDetailEndpointCacheKey,
+          {
+            chapterRow,
+            chapterListRows
+          },
+          ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS
+        );
+      }
 
       if (!chapterRow) {
         return renderNotFoundPage(req, res);
@@ -11632,10 +11947,6 @@ const registerSiteRoutes = (app, deps) => {
               ? "Bạn đã thử sai quá nhiều lần. Vui lòng chờ một lúc rồi thử lại."
               : "";
 
-      const chapterListRows = await dbAll(
-        "SELECT number, title, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? ORDER BY number DESC",
-        [mangaRow.id]
-      );
       const chapterList = chapterListRows.map((item) => ({
         ...item,
         is_oneshot: toBooleanFlag(item && item.is_oneshot)
