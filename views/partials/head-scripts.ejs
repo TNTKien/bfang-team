@@ -1,3 +1,13 @@
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-HJBTK1S4HZ"></script>
+  <script nonce="<%= cspNonce || '' %>">
+    window.dataLayer = window.dataLayer || [];
+    function gtag() {
+      dataLayer.push(arguments);
+    }
+    gtag("js", new Date());
+    gtag("config", "G-HJBTK1S4HZ");
+  </script>
   <% if (isHeadScriptEnabled("flowbite")) { %>
     <script src="<%= flowbiteScriptUrl %>" defer></script>
   <% } %>
