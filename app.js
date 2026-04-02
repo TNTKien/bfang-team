@@ -460,6 +460,72 @@ const isMutatingSql = (sql) => {
   return false;
 };
 
+const inferMutatedSqlTables = (sql) => {
+  const normalized = normalizeSqlTextForCache(sql).toLowerCase();
+  if (!normalized) return new Set();
+
+  const tables = new Set();
+  const addTable = (value) => {
+    const table = (value || "").toString().trim().toLowerCase();
+    if (!table) return;
+    tables.add(table);
+  };
+
+  const tablePattern = /\b(?:insert\s+into|update|delete\s+from)\s+([a-z_][a-z0-9_]*)\b/g;
+  let match = tablePattern.exec(normalized);
+  while (match) {
+    addTable(match[1]);
+    match = tablePattern.exec(normalized);
+  }
+
+  if (normalized.includes("manga_genres")) addTable("manga_genres");
+  if (normalized.includes("chapters")) addTable("chapters");
+  if (normalized.includes("manga")) addTable("manga");
+  if (normalized.includes("forum_posts")) addTable("forum_posts");
+  if (normalized.includes("comments")) addTable("comments");
+
+  return tables;
+};
+
+const buildBusinessCacheInvalidationPatterns = (mutatedTables) => {
+  const tableSet = mutatedTables instanceof Set ? mutatedTables : new Set(mutatedTables || []);
+  if (!tableSet.size) return [];
+
+  const patterns = [];
+  const pushPattern = (...segments) => {
+    const pattern = sqlRedisCache.buildCacheKey(...segments);
+    if (pattern) patterns.push(pattern);
+  };
+
+  if (tableSet.has("manga") || tableSet.has("manga_genres") || tableSet.has("chapters")) {
+    pushPattern("endpoint", "homepage", "*");
+    pushPattern("endpoint", "manga", "*");
+    pushPattern("endpoint", "chapters", "*");
+    pushPattern("endpoint", "chapter", "*");
+  }
+
+  if (tableSet.has("comments") || tableSet.has("forum_posts")) {
+    pushPattern("endpoint", "forum", "home", "*");
+  }
+
+  return Array.from(new Set(patterns));
+};
+
+const invalidateBusinessRedisCacheBySql = async (sql) => {
+  if (
+    !sqlRedisCacheEnabled
+    || !sqlRedisCache
+    || typeof sqlRedisCache.delByPattern !== "function"
+  ) {
+    return 0;
+  }
+
+  const mutatedTables = inferMutatedSqlTables(sql);
+  const patterns = buildBusinessCacheInvalidationPatterns(mutatedTables);
+  if (!patterns.length) return 0;
+  return sqlRedisCache.delByPattern(patterns);
+};
+
 const getSqlRedisCacheVersion = async () => {
   if (!sqlRedisCacheEnabled) return "0";
   const now = Date.now();
@@ -537,6 +603,7 @@ const dbRun = async (sql, params = [], client = null) => {
   const lastID = wantsId && result.rows && result.rows[0] ? result.rows[0].id : undefined;
   if (!client && sqlRedisCacheEnabled && isMutatingSql(finalSql)) {
     await bumpSqlRedisCacheVersion();
+    await invalidateBusinessRedisCacheBySql(finalSql);
   }
   return { changes, lastID, rows: result.rows || [] };
 };
@@ -545,6 +612,7 @@ const dbGet = async (sql, params = [], client = null) => {
   const rows = await dbAll(sql, params, client);
   if (!client && sqlRedisCacheEnabled && isMutatingSql(sql)) {
     await bumpSqlRedisCacheVersion();
+    await invalidateBusinessRedisCacheBySql(sql);
   }
   return rows && rows.length ? rows[0] : null;
 };
@@ -576,21 +644,29 @@ const newsDbGet = async (sql, params = [], client = null) => {
 const withTransaction = async (fn) => {
   const client = await pgPool.connect();
   let shouldInvalidateSqlCache = false;
+  const mutatingSqlSamples = [];
+
+  const trackMutatingSql = (sql) => {
+    if (!isMutatingSql(sql)) return;
+    shouldInvalidateSqlCache = true;
+    if (mutatingSqlSamples.length >= 16) return;
+    const normalizedSql = normalizeSqlTextForCache(sql);
+    if (!normalizedSql) return;
+    if (mutatingSqlSamples.includes(normalizedSql)) return;
+    mutatingSqlSamples.push(normalizedSql);
+  };
+
   try {
     await client.query("BEGIN");
     const api = {
       dbRun: async (sql, params) => {
         const result = await dbRun(sql, params, client);
-        if (isMutatingSql(sql)) {
-          shouldInvalidateSqlCache = true;
-        }
+        trackMutatingSql(sql);
         return result;
       },
       dbGet: async (sql, params) => {
         const result = await dbGet(sql, params, client);
-        if (isMutatingSql(sql)) {
-          shouldInvalidateSqlCache = true;
-        }
+        trackMutatingSql(sql);
         return result;
       },
       dbAll: (sql, params) => dbAll(sql, params, client)
@@ -599,6 +675,9 @@ const withTransaction = async (fn) => {
     await client.query("COMMIT");
     if (shouldInvalidateSqlCache && sqlRedisCacheEnabled) {
       await bumpSqlRedisCacheVersion();
+      for (const sqlSample of mutatingSqlSamples) {
+        await invalidateBusinessRedisCacheBySql(sqlSample);
+      }
     }
     return result;
   } catch (err) {

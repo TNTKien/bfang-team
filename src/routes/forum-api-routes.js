@@ -40,7 +40,6 @@ const registerForumApiRoutes = (app, deps) => {
     extractMentionUsernamesFromContent,
     formatTimeAgo,
     getB2Config,
-    getSqlRedisCacheVersion,
     getUserBadgeContext,
     isB2Ready,
     loadSessionUserById,
@@ -76,17 +75,16 @@ const registerForumApiRoutes = (app, deps) => {
       && typeof sqlRedisCache.buildCacheKey === "function"
       && typeof sqlRedisCache.getJson === "function"
       && typeof sqlRedisCache.setJson === "function"
-      && typeof getSqlRedisCacheVersion === "function"
   );
   const ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS = (() => {
     const parsed = Number(process.env.ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS);
-    if (!Number.isFinite(parsed) || parsed <= 0) return 8;
+    if (!Number.isFinite(parsed) || parsed <= 0) return 45;
     return Math.floor(parsed);
   })();
 
   const normalizeEndpointCacheInput = (value) => {
     if (Array.isArray(value)) {
-      return value.map((item) => (item == null ? "" : String(item)).trim()).filter(Boolean);
+      return value.map((item) => (item == null ? "" : String(item)).trim()).filter(Boolean).sort();
     }
     if (value == null) return "";
     if (typeof value === "object") {
@@ -99,26 +97,42 @@ const registerForumApiRoutes = (app, deps) => {
     return String(value).trim();
   };
 
-  const buildEndpointCacheKey = async (scope, payload) => {
+  const normalizeCacheKeySegment = (value) =>
+    String(value == null ? "" : value)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9:_-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  const buildEndpointCacheKey = (...segments) => {
     if (!endpointRedisCacheEnabled) return "";
-    const safeScope = String(scope || "").trim();
-    if (!safeScope) return "";
-
-    let serializedPayload = "";
-    try {
-      serializedPayload = JSON.stringify(payload || {});
-    } catch (_error) {
-      return "";
-    }
-
-    const sqlCacheVersion = await getSqlRedisCacheVersion();
-    return sqlRedisCache.buildCacheKey(`endpoint:${safeScope}`, `${sqlCacheVersion}|${serializedPayload}`);
+    const normalizedSegments = segments
+      .map((segment) => normalizeCacheKeySegment(segment))
+      .filter(Boolean);
+    if (!normalizedSegments.length) return "";
+    return sqlRedisCache.buildCacheKey("endpoint", normalizedSegments);
   };
 
-  const readEndpointCache = async (scope, payload) => {
-    const key = await buildEndpointCacheKey(scope, payload);
+  const buildForumHomeEndpointCacheKey = ({ page, perPage, q, sort, section }) =>
+    buildEndpointCacheKey(
+      "forum",
+      "home",
+      `page-${normalizeEndpointCacheInput(page) || "1"}`,
+      `per-page-${normalizeEndpointCacheInput(perPage) || "20"}`,
+      `q-${String(normalizeEndpointCacheInput(q) || "all").toLowerCase()}`,
+      `sort-${String(normalizeEndpointCacheInput(sort) || "latest").toLowerCase()}`,
+      `section-${String(normalizeEndpointCacheInput(section) || "all").toLowerCase()}`
+    );
+
+  const readEndpointCache = async (key) => {
     if (!key) return { key: "", value: null };
     const value = await sqlRedisCache.getJson(key);
+    if (value && typeof value === "object") {
+      console.info(`[CACHE HIT] ${key}`);
+    } else {
+      console.info(`[CACHE MISS] ${key}`);
+    }
     return {
       key,
       value: value && typeof value === "object" ? value : null
@@ -1838,7 +1852,8 @@ const registerForumApiRoutes = (app, deps) => {
         sort,
         section: normalizeEndpointCacheInput(requestedSection)
       };
-      const forumHomeEndpointCache = await readEndpointCache("forum-home", forumHomeEndpointCacheContext);
+      const forumHomeEndpointCacheKeyRequest = buildForumHomeEndpointCacheKey(forumHomeEndpointCacheContext);
+      const forumHomeEndpointCache = await readEndpointCache(forumHomeEndpointCacheKeyRequest);
       const forumHomeEndpointCacheKey = forumHomeEndpointCache.key;
       const cachedForumHomePayload = forumHomeEndpointCache.value;
 

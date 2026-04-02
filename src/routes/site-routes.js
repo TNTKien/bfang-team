@@ -58,7 +58,6 @@ const registerSiteRoutes = (app, deps) => {
     getMentionProfileMapForManga,
     getPaginatedCommentTree,
     getPublicOriginFromRequest,
-    getSqlRedisCacheVersion,
     getUserBadgeContext,
     hasOwnObjectKey,
     isDuplicateCommentRequestError,
@@ -200,26 +199,25 @@ const registerSiteRoutes = (app, deps) => {
       && typeof sqlRedisCache.buildCacheKey === "function"
       && typeof sqlRedisCache.getJson === "function"
       && typeof sqlRedisCache.setJson === "function"
-      && typeof getSqlRedisCacheVersion === "function"
   );
   const ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS = (() => {
     const parsed = Number(process.env.ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS);
-    if (!Number.isFinite(parsed) || parsed <= 0) return 30;
+    if (!Number.isFinite(parsed) || parsed <= 0) return 45;
     return Math.floor(parsed);
   })();
   const ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS = (() => {
     const parsed = Number(process.env.ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS);
-    if (!Number.isFinite(parsed) || parsed <= 0) return 20;
+    if (!Number.isFinite(parsed) || parsed <= 0) return 180;
     return Math.floor(parsed);
   })();
   const ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS = (() => {
     const parsed = Number(process.env.ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS);
-    if (!Number.isFinite(parsed) || parsed <= 0) return 20;
+    if (!Number.isFinite(parsed) || parsed <= 0) return 300;
     return Math.floor(parsed);
   })();
   const ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS = (() => {
     const parsed = Number(process.env.ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS);
-    if (!Number.isFinite(parsed) || parsed <= 0) return 15;
+    if (!Number.isFinite(parsed) || parsed <= 0) return 450;
     return Math.floor(parsed);
   })();
 
@@ -227,7 +225,8 @@ const registerSiteRoutes = (app, deps) => {
     if (Array.isArray(value)) {
       return value
         .map((item) => String(item == null ? "" : item).trim())
-        .filter(Boolean);
+        .filter(Boolean)
+        .sort();
     }
     if (value == null) return "";
     if (typeof value === "object") {
@@ -240,29 +239,77 @@ const registerSiteRoutes = (app, deps) => {
     return String(value).trim();
   };
 
-  const buildEndpointCacheKey = async (scope, payload) => {
+  const normalizeCacheKeySegment = (value) =>
+    String(value == null ? "" : value)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9:_-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  const buildEndpointCacheKey = (...segments) => {
     if (!endpointRedisCacheEnabled) return "";
-    const safeScope = String(scope || "").trim();
-    if (!safeScope) return "";
-
-    let serializedPayload = "";
-    try {
-      serializedPayload = JSON.stringify(payload || {});
-    } catch (_error) {
-      return "";
-    }
-
-    const sqlCacheVersion = await getSqlRedisCacheVersion();
-    return sqlRedisCache.buildCacheKey(`endpoint:${safeScope}`, `${sqlCacheVersion}|${serializedPayload}`);
+    const normalizedSegments = segments
+      .map((segment) => normalizeCacheKeySegment(segment))
+      .filter(Boolean);
+    if (!normalizedSegments.length) return "";
+    return sqlRedisCache.buildCacheKey("endpoint", normalizedSegments);
   };
 
-  const readEndpointCache = async (scope, payload) => {
-    const key = await buildEndpointCacheKey(scope, payload);
+  const buildHomepageEndpointCacheKey = ({ audienceKey }) =>
+    buildEndpointCacheKey("homepage", audienceKey || "signed-out");
+
+  const buildMangaListEndpointCacheKey = ({
+    includeAdult,
+    q,
+    status,
+    include,
+    exclude,
+    genre,
+    pageInput,
+    perPageInput
+  }) =>
+    buildEndpointCacheKey(
+      "manga",
+      "list",
+      `adult-${includeAdult ? "1" : "0"}`,
+      `q-${String(normalizeEndpointCacheInput(q) || "all").toLowerCase()}`,
+      `status-${String(normalizeEndpointCacheInput(status) || "all").toLowerCase()}`,
+      `include-${String(normalizeEndpointCacheInput(include) || "none").toLowerCase()}`,
+      `exclude-${String(normalizeEndpointCacheInput(exclude) || "none").toLowerCase()}`,
+      `genre-${String(normalizeEndpointCacheInput(genre) || "none").toLowerCase()}`,
+      `page-${normalizeEndpointCacheInput(pageInput) || "1"}`,
+      `per-page-${normalizeEndpointCacheInput(perPageInput) || "24"}`
+    );
+
+  const buildMangaDetailEndpointCacheKey = ({ slug, includeAdult, chapterPageInput }) =>
+    buildEndpointCacheKey(
+      "manga",
+      slug,
+      `adult-${includeAdult ? "1" : "0"}`,
+      "chapters",
+      `page-${normalizeEndpointCacheInput(chapterPageInput) || "1"}`
+    );
+
+  const buildChapterDetailEndpointCacheKey = ({ slug, includeAdult, chapterNumber }) =>
+    buildEndpointCacheKey(
+      "chapter",
+      slug,
+      normalizeEndpointCacheInput(chapterNumber) || "0",
+      `adult-${includeAdult ? "1" : "0"}`
+    );
+
+  const readEndpointCache = async (key) => {
     if (!key) {
       return { key: "", value: null };
     }
 
     const cachedValue = await sqlRedisCache.getJson(key);
+    if (cachedValue && typeof cachedValue === "object") {
+      console.info(`[CACHE HIT] ${key}`);
+    } else {
+      console.info(`[CACHE MISS] ${key}`);
+    }
     return {
       key,
       value: cachedValue && typeof cachedValue === "object" ? cachedValue : null
@@ -10033,7 +10080,8 @@ const registerSiteRoutes = (app, deps) => {
     }
 
     if (!forceFresh && !homepagePayload) {
-      const homepageRedisCache = await readEndpointCache("homepage", { audienceKey });
+      const homepageCacheKey = buildHomepageEndpointCacheKey({ audienceKey });
+      const homepageRedisCache = await readEndpointCache(homepageCacheKey);
       homepageEndpointCacheKey = homepageRedisCache.key;
       const cachedRedisState = homepageRedisCache.value;
       if (cachedRedisState && cachedRedisState.payload && typeof cachedRedisState.payload === "object") {
@@ -10393,7 +10441,7 @@ const registerSiteRoutes = (app, deps) => {
             freshnessToken,
             metaProbeAt: refreshedAt + HOMEPAGE_META_PROBE_INTERVAL_MS
           });
-          const redisHomepageCacheKey = homepageEndpointCacheKey || await buildEndpointCacheKey("homepage", { audienceKey });
+          const redisHomepageCacheKey = homepageEndpointCacheKey || buildHomepageEndpointCacheKey({ audienceKey });
           await writeEndpointCache(
             redisHomepageCacheKey,
             {
@@ -10965,7 +11013,8 @@ const registerSiteRoutes = (app, deps) => {
         pageInput: normalizeEndpointCacheInput(req.query && req.query.page),
         perPageInput: normalizeEndpointCacheInput(req.query && req.query.perPage)
       };
-      const mangaListEndpointCache = await readEndpointCache("manga-list", mangaListEndpointCacheContext);
+      const mangaListRequestedEndpointCacheKey = buildMangaListEndpointCacheKey(mangaListEndpointCacheContext);
+      const mangaListEndpointCache = await readEndpointCache(mangaListRequestedEndpointCacheKey);
       const mangaListEndpointCacheKey = mangaListEndpointCache.key;
       const cachedMangaListPayload = mangaListEndpointCache.value;
       if (
@@ -11271,10 +11320,7 @@ const registerSiteRoutes = (app, deps) => {
           mangaListSchemas
         }
       };
-      const mangaListResolvedEndpointCacheKey = mangaListEndpointCacheKey || await buildEndpointCacheKey(
-        "manga-list",
-        mangaListEndpointCacheContext
-      );
+      const mangaListResolvedEndpointCacheKey = mangaListEndpointCacheKey || buildMangaListEndpointCacheKey(mangaListEndpointCacheContext);
       await writeEndpointCache(
         mangaListResolvedEndpointCacheKey,
         mangaListCachePayload,
@@ -11346,9 +11392,10 @@ const registerSiteRoutes = (app, deps) => {
         includeAdult,
         chapterPageInput: normalizeEndpointCacheInput(req.query && req.query.chapterPage)
       };
+      const mangaDetailKey = buildMangaDetailEndpointCacheKey(mangaDetailEndpointCacheContext);
       const mangaDetailEndpointCache = commentsHydrated
         ? { key: "", value: null }
-        : await readEndpointCache("manga-detail", mangaDetailEndpointCacheContext);
+        : await readEndpointCache(mangaDetailKey);
       const mangaDetailEndpointCacheKey = mangaDetailEndpointCache.key;
       const cachedMangaDetailPayload = mangaDetailEndpointCache.value;
 
@@ -11852,7 +11899,8 @@ const registerSiteRoutes = (app, deps) => {
         includeAdult,
         chapterNumber
       };
-      const chapterDetailEndpointCache = await readEndpointCache("chapter-detail", chapterDetailEndpointCacheContext);
+      const chapterDetailCacheKey = buildChapterDetailEndpointCacheKey(chapterDetailEndpointCacheContext);
+      const chapterDetailEndpointCache = await readEndpointCache(chapterDetailCacheKey);
       const chapterDetailEndpointCacheKey = chapterDetailEndpointCache.key;
       const cachedChapterDetailPayload = chapterDetailEndpointCache.value;
 

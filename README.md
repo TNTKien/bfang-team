@@ -240,6 +240,15 @@ Biến bật/tắt business-key cache + version invalidation:
 
 > Tương thích ngược: có thể dùng biến cũ `SQL_REDIS_CACHE_ENABLED` và `SQL_REDIS_CACHE_VERSION_REFRESH_MS`.
 
+Business key hiện dùng dạng dễ debug/xóa cache, ví dụ:
+
+- `bfang:endpoint:manga:list:...`
+- `bfang:endpoint:manga:{slug}:...`
+- `bfang:endpoint:chapter:{slug}:{number}:...`
+- `bfang:endpoint:homepage:{audience}`
+
+Server log sẽ ghi rõ `CACHE HIT` / `CACHE MISS` cho endpoint cache.
+
 Biến TTL endpoint-level cache (nghiệp vụ):
 
 - `ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS`
@@ -261,11 +270,11 @@ REDIS_RECONNECT_RETRY_MS=15000
 REDIS_BUSINESS_CACHE_ENABLED=true
 REDIS_CACHE_VERSION_REFRESH_MS=1500
 
-ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS=30
-ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS=20
-ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS=20
-ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS=15
-ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS=8
+ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS=45
+ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS=180
+ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS=300
+ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS=450
+ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS=45
 ```
 
 ### 7.2 MinIO / S3-compatible (ảnh chapter/forum)

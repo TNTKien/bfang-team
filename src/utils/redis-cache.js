@@ -1,4 +1,3 @@
-const crypto = require("crypto");
 const Redis = require("ioredis");
 const { parseEnvBoolean } = require("./env");
 
@@ -15,8 +14,13 @@ const toSafePositiveInt = (value, fallback) => {
   return normalized;
 };
 
-const hashCachePayload = (payload) =>
-  crypto.createHash("sha1").update(String(payload == null ? "" : payload)).digest("hex");
+const normalizeCacheKeySegment = (value) =>
+  String(value == null ? "" : value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9:_*.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
 const createRedisCache = (options = {}) => {
   const logger = options && options.logger && typeof options.logger.warn === "function"
@@ -51,6 +55,7 @@ const createRedisCache = (options = {}) => {
       getJson: async () => null,
       setJson: async () => false,
       del: async () => 0,
+      delByPattern: async () => 0,
       disconnect: async () => undefined
     };
   }
@@ -87,10 +92,29 @@ const createRedisCache = (options = {}) => {
     }
   };
 
-  const buildCacheKey = (scope, payload) => {
-    const safeScope = String(scope || "default").trim().toLowerCase().replace(/[^a-z0-9:_-]+/g, "-") || "default";
-    const payloadHash = hashCachePayload(payload);
-    return `${prefix}:${safeScope}:${payloadHash}`;
+  const buildCacheKey = (...segments) => {
+    const normalizedSegments = [];
+    segments.forEach((segment) => {
+      if (Array.isArray(segment)) {
+        segment.forEach((nestedValue) => {
+          const normalized = normalizeCacheKeySegment(nestedValue);
+          if (normalized) {
+            normalizedSegments.push(normalized);
+          }
+        });
+        return;
+      }
+
+      const normalized = normalizeCacheKeySegment(segment);
+      if (normalized) {
+        normalizedSegments.push(normalized);
+      }
+    });
+
+    if (!normalizedSegments.length) {
+      return prefix;
+    }
+    return `${prefix}:${normalizedSegments.join(":")}`;
   };
 
   const getJson = async (key) => {
@@ -194,6 +218,36 @@ const createRedisCache = (options = {}) => {
     }
   };
 
+  const delByPattern = async (patterns) => {
+    const normalizedPatterns = Array.isArray(patterns)
+      ? patterns.map((item) => String(item || "").trim()).filter(Boolean)
+      : [String(patterns || "").trim()].filter(Boolean);
+    if (!normalizedPatterns.length) return 0;
+
+    const connected = await ensureConnected();
+    if (!connected) return 0;
+
+    let deletedCount = 0;
+    try {
+      for (const pattern of normalizedPatterns) {
+        let cursor = "0";
+        do {
+          const response = await client.scan(cursor, "MATCH", pattern, "COUNT", 200);
+          cursor = Array.isArray(response) && response[0] != null ? String(response[0]) : "0";
+          const keys = Array.isArray(response) && Array.isArray(response[1]) ? response[1] : [];
+          if (keys.length) {
+            const deleted = await client.del(...keys);
+            deletedCount += Number(deleted) || 0;
+          }
+        } while (cursor !== "0");
+      }
+      return deletedCount;
+    } catch (error) {
+      logger.warn("Redis DEL by pattern failed", error && error.message ? error.message : error);
+      return deletedCount;
+    }
+  };
+
   const disconnect = async () => {
     try {
       if (client.status === "end") return;
@@ -214,6 +268,7 @@ const createRedisCache = (options = {}) => {
     getJson,
     setJson,
     del,
+    delByPattern,
     disconnect
   };
 };
