@@ -467,6 +467,14 @@ const registerSiteRoutes = (app, deps) => {
     return safeItems.filter((item) => !isAdultMangaItemForOverlay(item));
   };
 
+  const filterGenreStatsForAudience = (genreStats, includeAdult) => {
+    const safeGenreStats = Array.isArray(genreStats) ? genreStats.slice() : [];
+    if (includeAdult || !isAdultContentControlActive) {
+      return safeGenreStats;
+    }
+    return safeGenreStats.filter((genre) => !isAdultGenreLabel(genre && genre.name));
+  };
+
   const applyHomepageUserOverlay = (homepagePayload, includeAdult) => {
     const safePayload = homepagePayload && typeof homepagePayload === "object" ? homepagePayload : {};
     const safeTopRankings =
@@ -502,6 +510,7 @@ const registerSiteRoutes = (app, deps) => {
   const applyMangaListUserOverlay = (mangaListPayload, includeAdult) => {
     const safePayload = mangaListPayload && typeof mangaListPayload === "object" ? mangaListPayload : {};
     const filteredMangaLibrary = filterAdultItemsForOverlay(safePayload.mangaLibrary, includeAdult);
+    const filteredGenreStats = filterGenreStatsForAudience(safePayload.genreStats, includeAdult);
     const basePagination =
       safePayload.pagination && typeof safePayload.pagination === "object" ? safePayload.pagination : {};
     const perPageRaw = Number(basePagination.perPage);
@@ -519,6 +528,7 @@ const registerSiteRoutes = (app, deps) => {
     return {
       ...safePayload,
       mangaLibrary: filteredMangaLibrary,
+      genreStats: filteredGenreStats,
       resultCount,
       pagination: {
         ...basePagination,
@@ -11176,7 +11186,8 @@ const registerSiteRoutes = (app, deps) => {
       const include = [];
       const exclude = [];
 
-      const genreStats = await getGenreStats();
+      const rawGenreStats = await getGenreStats();
+      const genreStats = filterGenreStatsForAudience(rawGenreStats, includeAdultForRequest);
       const statusRows = await dbAll(
         `
         SELECT status, COUNT(*) as count
@@ -11214,6 +11225,12 @@ const registerSiteRoutes = (app, deps) => {
       const genreIdByName = new Map(
         genreStats.map((genre) => [genre.name.toLowerCase(), genre.id])
       );
+      const allowedGenreIdSet = new Set(
+        genreStats
+          .map((genre) => Number(genre && genre.id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+          .map((id) => Math.floor(id))
+      );
 
       const addFilter = (target, value) => {
         const trimmed = value.trim();
@@ -11227,6 +11244,7 @@ const registerSiteRoutes = (app, deps) => {
 
         if (!Number.isFinite(resolvedId) || resolvedId <= 0) return;
         const id = Math.floor(resolvedId);
+        if (!allowedGenreIdSet.has(id)) return;
         if (!target.includes(id)) target.push(id);
       };
 
@@ -11445,7 +11463,7 @@ const registerSiteRoutes = (app, deps) => {
         title: "Toàn bộ truyện",
         team,
         mangaLibrary: mangaListRenderPayload.mangaLibrary,
-        genres: genreStats,
+        genres: mangaListRenderPayload.genreStats,
         filters: {
           q,
           status: selectedStatus,
