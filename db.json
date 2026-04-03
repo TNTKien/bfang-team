@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "public",
-  "generated_at": "2026-04-01T14:34:33.283Z",
+  "generated_at": "2026-04-03T06:09:38.977Z",
   "generated_by": "scripts/sync-db-json.js",
   "source_files": [
     "src/domains/init-db-domain.js",
@@ -144,6 +144,67 @@
         {
           "name": "server_image",
           "data_type": "integer",
+          "is_nullable": false
+        }
+      ]
+    },
+    {
+      "name": "chapter_reports",
+      "exists": true,
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "integer",
+          "is_nullable": false
+        },
+        {
+          "name": "manga_id",
+          "data_type": "integer",
+          "is_nullable": false
+        },
+        {
+          "name": "chapter_id",
+          "data_type": "integer",
+          "is_nullable": false
+        },
+        {
+          "name": "chapter_number",
+          "data_type": "numeric",
+          "is_nullable": false
+        },
+        {
+          "name": "reporter_user_id",
+          "data_type": "text",
+          "is_nullable": true
+        },
+        {
+          "name": "reporter_session_id",
+          "data_type": "text",
+          "is_nullable": true
+        },
+        {
+          "name": "reason",
+          "data_type": "text",
+          "is_nullable": false
+        },
+        {
+          "name": "note",
+          "data_type": "text",
+          "is_nullable": true
+        },
+        {
+          "name": "status",
+          "data_type": "text",
+          "is_nullable": false
+        },
+        {
+          "name": "created_at",
+          "data_type": "bigint",
+          "is_nullable": false
+        },
+        {
+          "name": "updated_at",
+          "data_type": "bigint",
           "is_nullable": false
         }
       ]

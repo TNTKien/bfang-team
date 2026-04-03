@@ -188,6 +188,14 @@ const registerSiteRoutes = (app, deps) => {
   const CHAPTER_UNLOCK_ATTEMPT_BASE_DELAY_MS = 15 * 1000;
   const CHAPTER_UNLOCK_ATTEMPT_MAX_DELAY_MS = 4 * 60 * 1000;
   const CHAPTER_UNLOCK_ATTEMPT_MAP_MAX_SIZE = 6000;
+  const CHAPTER_REPORT_REASON_MAX_LENGTH = 40;
+  const CHAPTER_REPORT_NOTE_MAX_LENGTH = 600;
+  const CHAPTER_REPORT_ALLOWED_REASONS = new Set([
+    "broken_images",
+    "wrong_order",
+    "translation_issue",
+    "other"
+  ]);
   const chapterUnlockAttemptMap = new Map();
   const CHAPTER_VIEW_TOKEN_SECRET =
     (process.env.CHAPTER_VIEW_SECRET || process.env.SESSION_SECRET || `${SEO_SITE_NAME}-chapter-view`)
@@ -12274,7 +12282,7 @@ const registerSiteRoutes = (app, deps) => {
         count: 0,
         pagination: {
           page: 1,
-          perPage: 20,
+          perPage: 10,
           totalPages: 1,
           totalTopLevel: 0,
           hasPrev: false,
@@ -12288,7 +12296,7 @@ const registerSiteRoutes = (app, deps) => {
           mangaId: mangaRow.id,
           chapterNumber: isOneshotChapter ? null : chapterNumber,
           page: commentPage,
-          perPage: 20,
+          perPage: 10,
           session: req.session
         });
       }
@@ -12731,6 +12739,102 @@ const registerSiteRoutes = (app, deps) => {
         requiredSeenPages,
         viewCount: toSafeChapterViewCount(updatedRow && updatedRow.view_count)
       });
+    })
+  );
+
+  app.post(
+    "/manga/:slug/chapters/:number/report",
+    asyncHandler(async (req, res) => {
+      if (!wantsJson(req)) {
+        return res.status(406).json({ ok: false, error: "Yêu cầu JSON." });
+      }
+
+      const chapterNumber = Number(req.params.number);
+      if (!Number.isFinite(chapterNumber)) {
+        return res.status(400).json({ ok: false, error: "Số chương không hợp lệ." });
+      }
+
+      const mangaResolution = await resolveMangaRowByRouteSlug(req.params.slug);
+      const mangaRow = mangaResolution.mangaRow;
+      if (!mangaRow || isAdultMangaBlockedForRequest(req, mangaRow)) {
+        return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+      }
+
+      const chapterRow = await dbGet(
+        `
+        SELECT
+          c.id,
+          c.number,
+          c.password_hash,
+          c.password_salt
+        FROM chapters c
+        WHERE c.manga_id = ?
+          AND c.number = ?
+        LIMIT 1
+      `,
+        [mangaRow.id, chapterNumber]
+      );
+
+      if (!chapterRow || !chapterRow.id) {
+        return res.status(404).json({ ok: false, error: "Không tìm thấy chương." });
+      }
+
+      if (!isChapterUnlockedForSession({ req, chapterRow, nowMs: Date.now() })) {
+        return res.status(403).json({ ok: false, error: "Vui lòng mở khóa chương trước khi gửi báo lỗi." });
+      }
+
+      const reasonInput = req.body && req.body.reason != null ? String(req.body.reason) : "";
+      const reason = reasonInput.trim().toLowerCase();
+      if (
+        !reason
+        || reason.length > CHAPTER_REPORT_REASON_MAX_LENGTH
+        || !CHAPTER_REPORT_ALLOWED_REASONS.has(reason)
+      ) {
+        return res.status(400).json({ ok: false, error: "Lý do báo lỗi không hợp lệ." });
+      }
+
+      const noteInput = req.body && req.body.note != null ? String(req.body.note) : "";
+      const note = noteInput.trim();
+      if (note.length > CHAPTER_REPORT_NOTE_MAX_LENGTH) {
+        return res.status(400).json({ ok: false, error: "Nội dung báo lỗi quá dài." });
+      }
+
+      const reporterUserId = req && req.session && req.session.authUserId
+        ? String(req.session.authUserId).trim()
+        : "";
+      const reporterSessionId = req && req.sessionID ? String(req.sessionID).trim() : "";
+      const now = Date.now();
+
+      await dbRun(
+        `
+        INSERT INTO chapter_reports (
+          manga_id,
+          chapter_id,
+          chapter_number,
+          reporter_user_id,
+          reporter_session_id,
+          reason,
+          note,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+      `,
+        [
+          mangaRow.id,
+          chapterRow.id,
+          Number(chapterRow.number),
+          reporterUserId || null,
+          reporterSessionId || null,
+          reason,
+          note || null,
+          now,
+          now
+        ]
+      );
+
+      return res.json({ ok: true });
     })
   );
 

@@ -6,19 +6,19 @@
     aria-label="Chương trước"
     title="Chương trước"
   >
-    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M15 18l-6-6 6-6" />
+    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15 18 L9 12 L15 6" />
     </svg>
   </a>
 <% } else { %>
   <span class="reader-float-btn reader-float-btn--nav is-disabled" aria-hidden="true">
-    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M15 18l-6-6 6-6" />
+    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15 18 L9 12 L15 6" />
     </svg>
   </span>
 <% } %>
 <div class="reader-dropdown<%= safeDropdownClass ? ` ${safeDropdownClass}` : "" %>" data-reader-dropdown>
-  <button class="reader-dropdown-trigger" type="button" data-reader-toggle>
+  <button class="reader-dropdown-trigger" type="button" data-reader-toggle data-button-loading-skip>
     <span class="reader-dropdown-label">
       <%= chapterShortLabel %><% if (chapterTitle) { %> — <%= chapterTitle %><% } %>
     </span>
@@ -27,7 +27,7 @@
     </svg>
   </button>
   <div class="reader-dropdown-panel" data-reader-panel>
-    <button class="reader-dropdown-nav" type="button" data-reader-scroll="up" aria-label="Cuộn lên">
+    <button class="reader-dropdown-nav" type="button" data-reader-scroll="up" data-button-loading-skip aria-label="Cuộn lên">
       <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M6 15l6-6 6 6" />
       </svg>
@@ -40,11 +40,11 @@
           data-reader-option
           data-href="/manga/<%= manga.slug %>/chapters/<%= item.number %>"
         >
-          <%= buildChapterOptionLabel(item) %>
+          <span class="reader-dropdown-option-text"><%= buildChapterOptionLabel(item) %></span>
         </button>
       <% }) %>
     </div>
-    <button class="reader-dropdown-nav" type="button" data-reader-scroll="down" aria-label="Cuộn xuống">
+    <button class="reader-dropdown-nav" type="button" data-reader-scroll="down" data-button-loading-skip aria-label="Cuộn xuống">
       <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M6 9l6 6 6-6" />
       </svg>
@@ -58,14 +58,40 @@
     aria-label="Chương sau"
     title="Chương sau"
   >
-    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M9 18l6-6-6-6" />
+    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 18 L15 12 L9 6" />
     </svg>
   </a>
 <% } else { %>
   <span class="reader-float-btn reader-float-btn--nav is-disabled" aria-hidden="true">
-    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M9 18l6-6-6-6" />
+    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 18 L15 12 L9 6" />
     </svg>
   </span>
 <% } %>
+<button
+  class="reader-mode-toggle"
+  type="button"
+  data-reader-mode-toggle
+  data-reader-mode="vertical"
+  data-button-loading-skip
+  aria-pressed="false"
+  aria-label="Chế độ đọc dọc, bấm để chuyển đọc ngang"
+  title="Chế độ đọc dọc, bấm để chuyển đọc ngang"
+>
+  <span class="reader-mode-toggle__icon reader-mode-toggle__icon--vertical" aria-hidden="true">
+    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 4v16" />
+      <path d="M8.5 7.5L12 4l3.5 3.5" />
+      <path d="M8.5 16.5L12 20l3.5-3.5" />
+    </svg>
+  </span>
+  <span class="reader-mode-toggle__icon reader-mode-toggle__icon--horizontal" aria-hidden="true">
+    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 12h16" />
+      <path d="M7.5 8.5L4 12l3.5 3.5" />
+      <path d="M16.5 8.5L20 12l-3.5 3.5" />
+    </svg>
+  </span>
+  <span class="reader-mode-toggle__label" data-reader-mode-label>Dọc</span>
+</button>

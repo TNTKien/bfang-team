@@ -1,12 +1,45 @@
 const readerFloat = document.querySelector("[data-reader-float]");
 const fixedNavs = Array.from(document.querySelectorAll("[data-reader-fixed]"));
 const commentsSection = document.querySelector("#comments");
-const quickTop = document.querySelector("[data-reader-top]");
-const quickComments = document.querySelector("[data-reader-comments]");
+const quickTopButtons = Array.from(document.querySelectorAll("[data-reader-top]"));
+const quickDownButtons = Array.from(document.querySelectorAll("[data-reader-down]"));
+const quickCommentsButtons = Array.from(document.querySelectorAll("[data-reader-comments]"));
+const reportButtons = Array.from(document.querySelectorAll("[data-reader-report]"));
 const dropdowns = Array.from(document.querySelectorAll("[data-reader-dropdown]"));
 const READER_JUMP_COMMENTS_EVENT = "bfang:reader-jump-comments";
 const READER_CANCEL_JUMP_COMMENTS_EVENT = "bfang:reader-cancel-jump-comments";
 const READER_COMMENTS_LAYOUT_EVENT = "bfang:reader-comments-layout";
+const READER_HORIZONTAL_PAGE_NAV_EVENT = "bfang:reader-horizontal-page-nav";
+const READER_MODE_STORAGE_KEY = "bfang:reader-mode";
+const READER_MODE_VERTICAL = "vertical";
+const READER_MODE_HORIZONTAL = "horizontal";
+const READER_MODE_HORIZONTAL_CLASS = "reader-reading-horizontal";
+
+const dispatchReaderToast = (message, tone = "info") => {
+  const text = (message || "").toString().trim();
+  if (!text) return;
+
+  if (window.BfangToast) {
+    const toastMethod = tone === "error" ? "error" : tone === "success" ? "success" : "info";
+    if (typeof window.BfangToast[toastMethod] === "function") {
+      window.BfangToast[toastMethod](text, { dedupe: false, duration: 3600 });
+      return;
+    }
+  }
+
+  if (typeof window.CustomEvent === "function") {
+    window.dispatchEvent(
+      new CustomEvent("bfang:toast", {
+        detail: {
+          message: text,
+          tone,
+          dedupe: false,
+          duration: 3600
+        }
+      })
+    );
+  }
+};
 
 (() => {
   const unlockForm = document.querySelector("[data-chapter-unlock-form]");
@@ -482,11 +515,27 @@ dropdowns.forEach((dropdown) => {
   initDropdown(dropdown, closeAllDropdowns);
 });
 
+if (dropdowns.length) {
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!target.closest("[data-reader-dropdown]")) {
+      closeAllDropdowns();
+    }
+  });
+}
+
 if (readerFloat) {
   let lastScroll = window.scrollY;
   let ticking = false;
   const threshold = 8;
   const floatDropdown = readerFloat.querySelector("[data-reader-dropdown]");
+  const isMobileReaderMode = () =>
+    Boolean(
+      document.body &&
+        document.body.classList.contains("reader-page--reader-mode") &&
+        window.matchMedia &&
+        window.matchMedia("(max-width: 959px)").matches
+    );
 
   const setVisible = (visible) => {
     if (visible) {
@@ -502,8 +551,9 @@ if (readerFloat) {
     const commentsVisible = isCommentsVisible();
     const fixedVisible = isFixedVisible();
     const floatOpen = floatDropdown && floatDropdown.classList.contains("is-open");
+    const shouldHideForComments = commentsVisible && !isMobileReaderMode();
 
-    if (commentsVisible || fixedVisible) {
+    if (shouldHideForComments || fixedVisible) {
       setVisible(false);
       if (floatOpen && floatDropdown._setOpen) {
         floatDropdown._setOpen(false);
@@ -516,7 +566,7 @@ if (readerFloat) {
       setVisible(false);
     }
 
-    if (!commentsVisible && !fixedVisible && current < 120) {
+    if (!shouldHideForComments && !fixedVisible && current < 120) {
       setVisible(true);
     }
 
@@ -531,30 +581,182 @@ if (readerFloat) {
     }
   });
 
-  document.addEventListener("click", (event) => {
-    const target = event.target;
-    if (!target.closest("[data-reader-dropdown]")) {
-      closeAllDropdowns();
-    }
-  });
-
   updateVisibility();
 }
 
-if (quickTop) {
+quickTopButtons.forEach((quickTop) => {
   quickTop.addEventListener("click", () => {
     window.dispatchEvent(new CustomEvent(READER_CANCEL_JUMP_COMMENTS_EVENT));
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
-}
+});
 
-if (quickComments) {
+quickDownButtons.forEach((quickDown) => {
+  quickDown.addEventListener("click", () => {
+    const doc = document.documentElement;
+    const body = document.body;
+    const docHeight = doc ? Number(doc.scrollHeight) : 0;
+    const bodyHeight = body ? Number(body.scrollHeight) : 0;
+    const viewportHeight = Number(window.innerHeight) || 0;
+    const maxTop = Math.max(0, Math.max(docHeight, bodyHeight) - Math.max(0, viewportHeight));
+    window.scrollTo({ top: maxTop, behavior: "smooth" });
+  });
+});
+
+quickCommentsButtons.forEach((quickComments) => {
   quickComments.addEventListener("click", () => {
     if (commentsSection) {
       window.dispatchEvent(new CustomEvent(READER_JUMP_COMMENTS_EVENT));
     }
   });
-}
+});
+
+(() => {
+  const reportModal = document.querySelector("[data-reader-report-modal]");
+  if (!(reportModal instanceof HTMLElement)) return;
+
+  const closeButtons = Array.from(reportModal.querySelectorAll("[data-reader-report-close]"));
+  const reasonButtons = Array.from(reportModal.querySelectorAll("[data-reader-report-reason]"));
+  const noteInput = reportModal.querySelector("[data-reader-report-note]");
+  const submitButton = reportModal.querySelector("[data-reader-report-submit]");
+  const feedback = reportModal.querySelector("[data-reader-report-feedback]");
+  const submitUrl = (reportModal.dataset.readerReportSubmitUrl || "").toString().trim();
+  const body = document.body;
+  let selectedReason = "";
+  let submitting = false;
+
+  const setFeedback = (message, tone = "") => {
+    if (!(feedback instanceof HTMLElement)) return;
+    feedback.textContent = (message || "").toString().trim();
+    feedback.dataset.tone = tone;
+  };
+
+  const setOpen = (open) => {
+    if (open) {
+      reportModal.hidden = false;
+      reportModal.classList.add("is-open");
+      body.classList.add("reader-report-open");
+    } else {
+      reportModal.classList.remove("is-open");
+      reportModal.hidden = true;
+      body.classList.remove("reader-report-open");
+      setSelectedReason("");
+      if (noteInput instanceof HTMLTextAreaElement) {
+        noteInput.value = "";
+      }
+      submitting = false;
+      if (submitButton instanceof HTMLButtonElement) {
+        submitButton.disabled = false;
+        submitButton.textContent = "Gửi báo lỗi";
+      }
+      setFeedback("");
+    }
+  };
+
+  const setSelectedReason = (reason) => {
+    selectedReason = (reason || "").toString().trim();
+    reasonButtons.forEach((button) => {
+      const buttonReason = (button.dataset.readerReportReason || "").toString().trim();
+      const isActive = Boolean(selectedReason) && buttonReason === selectedReason;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  };
+
+  reportButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setOpen(true);
+    });
+  });
+
+  closeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setOpen(false);
+    });
+  });
+
+  reasonButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      if (submitting) return;
+      setSelectedReason(button.dataset.readerReportReason || "");
+      setFeedback("");
+    });
+  });
+
+  if (submitButton instanceof HTMLButtonElement) {
+    submitButton.addEventListener("click", async () => {
+      if (submitting) return;
+      if (!selectedReason) {
+        setFeedback("Vui lòng chọn lý do báo lỗi.", "error");
+        dispatchReaderToast("Vui lòng chọn lý do báo lỗi.", "error");
+        return;
+      }
+
+      if (!submitUrl) {
+        setFeedback("Không thể gửi báo lỗi lúc này. Vui lòng thử lại sau.", "error");
+        dispatchReaderToast("Không thể gửi báo lỗi lúc này. Vui lòng thử lại sau.", "error");
+        return;
+      }
+
+      const note = noteInput instanceof HTMLTextAreaElement ? String(noteInput.value || "").trim() : "";
+
+      submitting = true;
+      submitButton.disabled = true;
+      submitButton.textContent = "Đang gửi...";
+      setFeedback("");
+
+      try {
+        const response = await fetch(submitUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json; charset=UTF-8",
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            reason: selectedReason,
+            note
+          })
+        });
+
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.ok !== true) {
+          const errorMessage = payload && payload.error
+            ? String(payload.error)
+            : "Không thể gửi báo lỗi lúc này. Vui lòng thử lại.";
+          setFeedback(errorMessage, "error");
+          dispatchReaderToast(errorMessage, "error");
+          return;
+        }
+
+        setFeedback("Đã gửi báo lỗi. Cảm ơn bạn!", "success");
+        dispatchReaderToast("Đã gửi báo lỗi. Cảm ơn bạn!", "success");
+        window.setTimeout(() => {
+          setOpen(false);
+        }, 320);
+      } catch (_error) {
+        const message = "Không thể gửi báo lỗi lúc này. Vui lòng thử lại.";
+        setFeedback(message, "error");
+        dispatchReaderToast(message, "error");
+      } finally {
+        submitting = false;
+        if (submitButton instanceof HTMLButtonElement && reportModal.classList.contains("is-open")) {
+          submitButton.disabled = false;
+          submitButton.textContent = "Gửi báo lỗi";
+        }
+      }
+    });
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (!reportModal.classList.contains("is-open")) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+    }
+  });
+})();
 
 (() => {
   const prevLink = document.querySelector('a[aria-label="Chương trước"][href]');
@@ -575,6 +777,9 @@ if (quickComments) {
     return false;
   };
 
+  const isHorizontalReaderMode = () =>
+    Boolean(document.body && document.body.classList.contains(READER_MODE_HORIZONTAL_CLASS));
+
   document.addEventListener("keydown", (event) => {
     if (event.defaultPrevented) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -584,8 +789,26 @@ if (quickComments) {
     let targetHref = "";
 
     if (key === "ArrowRight") {
+      if (isHorizontalReaderMode()) {
+        event.preventDefault();
+        window.dispatchEvent(
+          new CustomEvent(READER_HORIZONTAL_PAGE_NAV_EVENT, {
+            detail: { direction: 1 }
+          })
+        );
+        return;
+      }
       targetHref = nextLink ? (nextLink.getAttribute("href") || "").toString().trim() : "";
     } else if (key === "ArrowLeft") {
+      if (isHorizontalReaderMode()) {
+        event.preventDefault();
+        window.dispatchEvent(
+          new CustomEvent(READER_HORIZONTAL_PAGE_NAV_EVENT, {
+            detail: { direction: -1 }
+          })
+        );
+        return;
+      }
       targetHref = prevLink ? (prevLink.getAttribute("href") || "").toString().trim() : "";
     } else {
       return;
@@ -620,8 +843,336 @@ if (quickComments) {
   const viewTrackUrl = (pagesRoot.dataset.readerViewTrackUrl || "").toString().trim();
   const viewTrackToken = (pagesRoot.dataset.readerViewTrackToken || "").toString().trim();
   const totalPagesRaw = Number(pagesRoot.dataset.readerTotalPages);
-  const totalPages =
-    Number.isFinite(totalPagesRaw) && totalPagesRaw > 0 ? Math.floor(totalPagesRaw) : orderedImages.length;
+  const totalPagesFromDataset = Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
+    ? Math.floor(totalPagesRaw)
+    : 0;
+  const totalPages = orderedImages.length > 0 ? orderedImages.length : totalPagesFromDataset;
+  const pageCurrentIndicators = Array.from(document.querySelectorAll("[data-reader-page-current]"));
+  const pageTotalIndicators = Array.from(document.querySelectorAll("[data-reader-page-total]"));
+  const pageFirstButtons = Array.from(document.querySelectorAll("[data-reader-page-first]"));
+  const pagePrevButtons = Array.from(document.querySelectorAll("[data-reader-page-prev]"));
+  const pageNextButtons = Array.from(document.querySelectorAll("[data-reader-page-next]"));
+  const pageLastButtons = Array.from(document.querySelectorAll("[data-reader-page-last]"));
+  const pageOptionButtons = Array.from(document.querySelectorAll("[data-reader-page-index]"));
+  const modeOptionButtons = Array.from(document.querySelectorAll("[data-reader-mode-option]"));
+  const modeToggleButtons = Array.from(document.querySelectorAll("[data-reader-mode-toggle]"));
+
+  const normalizeReaderMode = (value) => {
+    const normalized = (value || "").toString().trim().toLowerCase();
+    return normalized === READER_MODE_HORIZONTAL ? READER_MODE_HORIZONTAL : READER_MODE_VERTICAL;
+  };
+
+  const readStoredReaderMode = () => {
+    try {
+      const rawMode = window.localStorage.getItem(READER_MODE_STORAGE_KEY);
+      const normalizedMode = normalizeReaderMode(rawMode);
+      if (rawMode !== normalizedMode) {
+        window.localStorage.setItem(READER_MODE_STORAGE_KEY, normalizedMode);
+      }
+      return normalizedMode;
+    } catch (_err) {
+      return READER_MODE_VERTICAL;
+    }
+  };
+
+  let readerMode = readStoredReaderMode();
+  const isHorizontalReaderModeActive = () => readerMode === READER_MODE_HORIZONTAL;
+
+  const persistReaderMode = (mode) => {
+    try {
+      window.localStorage.setItem(READER_MODE_STORAGE_KEY, mode);
+    } catch (_err) {
+      // Ignore storage failures.
+    }
+  };
+
+  const applyReaderModeStateToDom = () => {
+    const horizontal = isHorizontalReaderModeActive();
+    const currentMode = horizontal ? READER_MODE_HORIZONTAL : READER_MODE_VERTICAL;
+    if (document.body) {
+      document.body.classList.toggle(READER_MODE_HORIZONTAL_CLASS, horizontal);
+      document.body.dataset.readerMode = currentMode;
+    }
+    pagesRoot.dataset.readerMode = currentMode;
+
+    modeOptionButtons.forEach((button) => {
+      const optionMode = normalizeReaderMode(button.dataset.readerModeOption || "");
+      const isActive = optionMode === currentMode;
+      button.dataset.readerMode = currentMode;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+
+    modeToggleButtons.forEach((button) => {
+      const label = button.querySelector("[data-reader-mode-label]");
+      if (label) {
+        label.textContent = horizontal ? "Ngang" : "Dọc";
+      }
+
+      button.dataset.readerMode = currentMode;
+      button.setAttribute("aria-pressed", horizontal ? "true" : "false");
+      if (horizontal) {
+        button.setAttribute("aria-label", "Chế độ đọc ngang, bấm để chuyển đọc dọc");
+        button.setAttribute("title", "Chế độ đọc ngang, bấm để chuyển đọc dọc");
+      } else {
+        button.setAttribute("aria-label", "Chế độ đọc dọc, bấm để chuyển đọc ngang");
+        button.setAttribute("title", "Chế độ đọc dọc, bấm để chuyển đọc ngang");
+      }
+    });
+  };
+
+  applyReaderModeStateToDom();
+
+  const clampPageIndex = (value) => {
+    if (!orderedImages.length) return 0;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.min(orderedImages.length - 1, Math.floor(parsed)));
+  };
+
+  const setNavButtonState = (button, disabled) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.disabled = disabled;
+    button.classList.toggle("is-disabled", disabled);
+  };
+
+  const updatePageNavButtons = (pageIndex) => {
+    const hasPages = orderedImages.length > 0;
+    const safeIndex = clampPageIndex(pageIndex);
+    const atFirst = safeIndex <= 0;
+    const atLast = safeIndex >= Math.max(0, orderedImages.length - 1);
+
+    pageFirstButtons.forEach((button) => {
+      setNavButtonState(button, !hasPages || atFirst);
+    });
+    pagePrevButtons.forEach((button) => {
+      setNavButtonState(button, !hasPages || atFirst);
+    });
+    pageNextButtons.forEach((button) => {
+      setNavButtonState(button, !hasPages || atLast);
+    });
+    pageLastButtons.forEach((button) => {
+      setNavButtonState(button, !hasPages || atLast);
+    });
+
+    pageOptionButtons.forEach((button) => {
+      if (!button) return;
+      const optionIndex = Number(button.dataset.readerPageIndex);
+      const isActive = Number.isFinite(optionIndex) && Math.floor(optionIndex) === safeIndex;
+      button.classList.toggle("is-active", isActive);
+      if (isActive) {
+        button.setAttribute("aria-current", "true");
+      } else {
+        button.removeAttribute("aria-current");
+      }
+    });
+  };
+
+  let horizontalScrollFrame = 0;
+
+  const isMobileHorizontalReaderModeActive = () =>
+    Boolean(
+      isHorizontalReaderModeActive() &&
+        window.matchMedia &&
+        window.matchMedia("(max-width: 959px)").matches
+    );
+
+  const getWindowScrollTop = () => {
+    const windowTop = Number(window.scrollY);
+    if (Number.isFinite(windowTop)) {
+      return Math.max(0, windowTop);
+    }
+
+    const pageTop = Number(window.pageYOffset);
+    if (Number.isFinite(pageTop)) {
+      return Math.max(0, pageTop);
+    }
+
+    const doc = document.documentElement;
+    const body = document.body;
+    const docTop = doc ? Number(doc.scrollTop) || 0 : 0;
+    const bodyTop = body ? Number(body.scrollTop) || 0 : 0;
+    return Math.max(0, docTop, bodyTop);
+  };
+
+  const recenterMobileHorizontalViewport = () => {
+    if (!isMobileHorizontalReaderModeActive()) return;
+    if (!pagesRoot || !pagesRoot.isConnected) return;
+
+    const viewportHeight = Number(window.innerHeight) || Number(document.documentElement?.clientHeight) || 0;
+    if (!viewportHeight) return;
+
+    const rootRect = pagesRoot.getBoundingClientRect();
+    if (!rootRect || !Number.isFinite(rootRect.top) || !Number.isFinite(rootRect.height) || rootRect.height <= 0) {
+      return;
+    }
+
+    const currentCenter = rootRect.top + rootRect.height * 0.5;
+    const targetCenter = viewportHeight * 0.5;
+    const delta = currentCenter - targetCenter;
+    if (Math.abs(delta) < 1) return;
+
+    const currentTop = getWindowScrollTop();
+    const nextTop = Math.max(0, Math.round(currentTop + delta));
+    if (Math.abs(nextTop - currentTop) < 1) return;
+
+    window.scrollTo({ top: nextTop, behavior: "auto" });
+  };
+
+  const stopHorizontalScrollAnimation = () => {
+    if (horizontalScrollFrame) {
+      window.cancelAnimationFrame(horizontalScrollFrame);
+      horizontalScrollFrame = 0;
+    }
+    pagesRoot.classList.remove("is-programmatic-scroll");
+  };
+
+  const animateHorizontalScrollTo = (targetLeft, durationMs) => {
+    const startLeft = Math.max(0, Number(pagesRoot.scrollLeft) || 0);
+    const destination = Math.max(0, Number(targetLeft) || 0);
+    if (Math.abs(destination - startLeft) < 1) {
+      pagesRoot.scrollLeft = destination;
+      return;
+    }
+
+    const duration = Number.isFinite(Number(durationMs))
+      ? Math.max(80, Math.min(220, Math.floor(Number(durationMs))))
+      : 150;
+
+    stopHorizontalScrollAnimation();
+    pagesRoot.classList.add("is-programmatic-scroll");
+    const startedAt = performance.now();
+
+    const tick = (now) => {
+      const elapsed = Math.max(0, now - startedAt);
+      const progress = Math.min(1, elapsed / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextLeft = startLeft + (destination - startLeft) * eased;
+      pagesRoot.scrollLeft = nextLeft;
+
+      if (progress < 1) {
+        horizontalScrollFrame = window.requestAnimationFrame(tick);
+      } else {
+        pagesRoot.scrollLeft = destination;
+        horizontalScrollFrame = 0;
+        pagesRoot.classList.remove("is-programmatic-scroll");
+      }
+    };
+
+    horizontalScrollFrame = window.requestAnimationFrame(tick);
+  };
+
+  const scrollToPageIndex = (targetIndex, behavior = "smooth") => {
+    if (!orderedImages.length) return;
+    const safeIndex = clampPageIndex(targetIndex);
+    const targetImage = orderedImages[safeIndex];
+    if (!targetImage || !targetImage.isConnected) return;
+
+    activePageIndex = safeIndex;
+    updatePageIndicators(activePageIndex);
+    markPageAsViewed(activePageIndex);
+    queueLookAround(activePageIndex);
+    ensureImageVisible(targetImage);
+
+    if (isHorizontalReaderModeActive()) {
+      const targetMetrics = getHorizontalTargetMetrics(targetImage);
+      const targetLeft = targetMetrics.start;
+      const targetDeferredSrc = getDeferredSrc(targetImage);
+      const targetLazyState = getLazyState(targetImage);
+      const targetReady = !targetDeferredSrc || targetLazyState === "loaded";
+      const smoothNavigation = behavior === "smooth" && targetReady;
+      window.dispatchEvent(new CustomEvent(READER_CANCEL_JUMP_COMMENTS_EVENT));
+      closeAllDropdowns();
+
+      if (isMobileHorizontalReaderModeActive()) {
+        clearHorizontalPullResistance(false);
+        recenterMobileHorizontalViewport();
+      }
+
+      if (smoothNavigation) {
+        const isMobileViewport = isMobileHorizontalReaderModeActive();
+        animateHorizontalScrollTo(targetLeft, isMobileViewport ? 112 : 126);
+      } else {
+        stopHorizontalScrollAnimation();
+        pagesRoot.scrollLeft = targetLeft;
+      }
+
+      if (isMobileHorizontalReaderModeActive()) {
+        window.requestAnimationFrame(() => {
+          recenterMobileHorizontalViewport();
+        });
+      }
+
+      window.setTimeout(() => {
+        if (isMobileHorizontalReaderModeActive()) {
+          recenterMobileHorizontalViewport();
+        }
+        scheduleActiveWindowSync();
+      }, smoothNavigation ? 120 : 40);
+      return;
+    }
+
+    const targetTop = Math.max(0, Math.round(window.scrollY + targetImage.getBoundingClientRect().top - 12));
+    window.dispatchEvent(new CustomEvent(READER_CANCEL_JUMP_COMMENTS_EVENT));
+    closeAllDropdowns();
+    window.scrollTo({ top: targetTop, behavior });
+
+    window.setTimeout(() => {
+      scheduleActiveWindowSync();
+    }, 260);
+  };
+
+  pageFirstButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      scrollToPageIndex(0);
+    });
+  });
+
+  pagePrevButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      scrollToPageIndex(activePageIndex - 1);
+    });
+  });
+
+  pageNextButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      scrollToPageIndex(activePageIndex + 1);
+    });
+  });
+
+  pageLastButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      scrollToPageIndex(orderedImages.length - 1);
+    });
+  });
+
+  pageOptionButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const optionIndex = Number(button.dataset.readerPageIndex);
+      if (!Number.isFinite(optionIndex)) return;
+      scrollToPageIndex(optionIndex);
+    });
+  });
+
+  const updatePageIndicators = (pageIndex) => {
+    const safeTotal = Math.max(1, totalPages || orderedImages.length || 1);
+    const safeCurrentIndex = Number.isFinite(Number(pageIndex)) ? Math.floor(Number(pageIndex)) : 0;
+    const safeCurrent = Math.min(safeTotal, Math.max(1, safeCurrentIndex + 1));
+
+    pageCurrentIndicators.forEach((element) => {
+      if (element) {
+        element.textContent = String(safeCurrent);
+      }
+    });
+
+    pageTotalIndicators.forEach((element) => {
+      if (element) {
+        element.textContent = String(safeTotal);
+      }
+    });
+
+    updatePageNavButtons(safeCurrent - 1);
+  };
   const thresholdRaw = Number(pagesRoot.dataset.readerViewThreshold);
   const requiredViewedPages = Number.isFinite(thresholdRaw) && thresholdRaw > 0
     ? Math.floor(thresholdRaw)
@@ -697,6 +1248,23 @@ if (quickComments) {
   };
 
   const getPageFrame = (img) => (img && img.closest ? img.closest(".page-frame") : null);
+  const getPageCard = (img) => (img && img.closest ? img.closest(".page-card") : null);
+
+  const getHorizontalScrollTarget = (img) => getPageCard(img) || getPageFrame(img) || img;
+
+  const getHorizontalTargetMetrics = (img) => {
+    const target = getHorizontalScrollTarget(img);
+    if (!target || !target.isConnected) {
+      return { start: 0, width: 0 };
+    }
+
+    const targetRect = target.getBoundingClientRect();
+    const rootRect = pagesRoot.getBoundingClientRect();
+    const currentLeft = Math.max(0, Number(pagesRoot.scrollLeft) || 0);
+    const start = Math.max(0, Math.round(currentLeft + ((Number(targetRect.left) || 0) - (Number(rootRect.left) || 0))));
+    const width = Math.max(1, Math.round(Number(targetRect.width) || Number(target.offsetWidth) || 0));
+    return { start, width };
+  };
 
   const getPositiveDimension = (value) => {
     const numeric = Number(value);
@@ -704,11 +1272,75 @@ if (quickComments) {
     return Math.round(numeric);
   };
 
+  const clearReaderImageSize = (img) => {
+    if (!img || !(img instanceof HTMLElement)) return;
+    img.style.width = "";
+    img.style.height = "";
+    img.style.maxWidth = "";
+    img.style.maxHeight = "";
+  };
+
+  const applyHorizontalImageSize = (img) => {
+    if (!img || !img.isConnected) return;
+
+    if (!isHorizontalReaderModeActive()) {
+      clearReaderImageSize(img);
+      return;
+    }
+
+    const lazyState = getLazyState(img);
+    if (lazyState !== "loaded" && getDeferredSrc(img)) {
+      clearReaderImageSize(img);
+      return;
+    }
+
+    const naturalWidth = getPositiveDimension(img.naturalWidth);
+    const naturalHeight = getPositiveDimension(img.naturalHeight);
+    if (!naturalWidth || !naturalHeight) {
+      clearReaderImageSize(img);
+      return;
+    }
+
+    const rootRect = pagesRoot.getBoundingClientRect();
+    const viewportWidth = Math.max(1, getPositiveDimension(rootRect.width) || getPositiveDimension(window.innerWidth));
+    const viewportHeight = Math.max(1, getPositiveDimension(window.innerHeight) || getPositiveDimension(rootRect.height));
+
+    let targetHeight = Math.min(naturalHeight, viewportHeight);
+    let targetWidth = Math.round((naturalWidth * targetHeight) / naturalHeight);
+
+    if (targetWidth > viewportWidth) {
+      targetWidth = Math.min(viewportWidth, naturalWidth);
+      targetHeight = Math.round((naturalHeight * targetWidth) / naturalWidth);
+    }
+
+    targetWidth = Math.max(1, Math.min(targetWidth, naturalWidth));
+    targetHeight = Math.max(1, Math.min(targetHeight, naturalHeight));
+
+    img.style.width = `${targetWidth}px`;
+    img.style.height = `${targetHeight}px`;
+    img.style.maxWidth = "100%";
+    img.style.maxHeight = "100%";
+  };
+
+  const applyReaderModeImageSizing = () => {
+    orderedImages.forEach((img) => {
+      applyHorizontalImageSize(img);
+    });
+  };
+
   const applyPageFrameWidth = (img) => {
     if (!img || !img.isConnected) return;
 
     const frame = getPageFrame(img);
     if (!frame) return;
+
+    if (isHorizontalReaderModeActive()) {
+      frame.style.removeProperty("--page-frame-width");
+      frame.style.removeProperty("--page-desktop-max-viewport");
+      pagesRoot.style.removeProperty("--reader-page-width");
+      pagesRoot.style.removeProperty("--reader-page-desktop-max-viewport");
+      return;
+    }
 
     const naturalWidth = getPositiveDimension(img.naturalWidth);
     const naturalHeight = getPositiveDimension(img.naturalHeight);
@@ -1104,6 +1736,32 @@ if (quickComments) {
   const resolveActivePageIndex = () => {
     if (!orderedImages.length) return 0;
 
+    if (isHorizontalReaderModeActive()) {
+      const viewportWidth = Math.max(1, Number(pagesRoot.clientWidth) || Number(window.innerWidth) || 0);
+      const currentLeft = Math.max(0, Number(pagesRoot.scrollLeft) || 0);
+      const focusLine = currentLeft + viewportWidth * 0.5;
+
+      for (let index = 0; index < orderedImages.length; index += 1) {
+        const targetMetrics = getHorizontalTargetMetrics(orderedImages[index]);
+        const start = targetMetrics.start;
+        const width = targetMetrics.width;
+        const end = start + width;
+        if (start <= focusLine && end >= focusLine) {
+          return index;
+        }
+      }
+
+      for (let index = 0; index < orderedImages.length; index += 1) {
+        const targetMetrics = getHorizontalTargetMetrics(orderedImages[index]);
+        const end = targetMetrics.start + targetMetrics.width;
+        if (end > currentLeft) {
+          return index;
+        }
+      }
+
+      return orderedImages.length - 1;
+    }
+
     const viewportHeight = window.innerHeight || 0;
     if (!viewportHeight) return activePageIndex;
 
@@ -1127,6 +1785,7 @@ if (quickComments) {
 
   const syncActiveWindow = () => {
     activePageIndex = resolveActivePageIndex();
+    updatePageIndicators(activePageIndex);
     markPageAsViewed(activePageIndex);
     if (jumpToCommentsActive) {
       enqueueImagesTowardComments();
@@ -1151,10 +1810,384 @@ if (quickComments) {
     window.setTimeout(runSync, 260);
   };
 
+  const setReaderMode = (nextMode, options = {}) => {
+    const normalizedMode = normalizeReaderMode(nextMode);
+    const shouldPersist = !options || options.persist !== false;
+    const behavior = options && options.behavior ? String(options.behavior) : "auto";
+
+    readerMode = normalizedMode;
+    applyReaderModeStateToDom();
+    if (shouldPersist) {
+      persistReaderMode(readerMode);
+    }
+
+    applyReaderModeImageSizing();
+    if (isHorizontalReaderModeActive()) {
+      scrollToPageIndex(activePageIndex, behavior === "smooth" ? "smooth" : "auto");
+    } else {
+      clearHorizontalPullResistance(false);
+      scheduleActiveWindowSync();
+    }
+  };
+
+  modeOptionButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMode = normalizeReaderMode(button.dataset.readerModeOption || "");
+      if (nextMode === readerMode) return;
+      setReaderMode(nextMode, { persist: true, behavior: "auto" });
+    });
+  });
+
+  modeToggleButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMode = isHorizontalReaderModeActive() ? READER_MODE_VERTICAL : READER_MODE_HORIZONTAL;
+      setReaderMode(nextMode, { persist: true, behavior: "auto" });
+    });
+  });
+
+  window.addEventListener(READER_HORIZONTAL_PAGE_NAV_EVENT, (event) => {
+    if (!isHorizontalReaderModeActive()) return;
+    const detail = event && event.detail && typeof event.detail === "object" ? event.detail : null;
+    const directionRaw = Number(detail && detail.direction);
+    const direction = directionRaw > 0 ? 1 : directionRaw < 0 ? -1 : 0;
+    if (!direction) return;
+    scrollToPageIndex(activePageIndex + direction);
+  });
+
+  const isInteractiveTarget = (target) => {
+    if (!(target instanceof Element)) return false;
+    return Boolean(
+      target.closest(
+        "a,button,input,textarea,select,label,[role='button'],[contenteditable='true'],[data-reader-option],[data-reader-report-submit],[data-reader-report-close],[data-reader-report-reason]"
+      )
+    );
+  };
+
+  const getClientX = (event) => {
+    if (!event) return NaN;
+    const touch = event.changedTouches && event.changedTouches[0];
+    if (touch && Number.isFinite(Number(touch.clientX))) {
+      return Number(touch.clientX);
+    }
+    if (Number.isFinite(Number(event.clientX))) {
+      return Number(event.clientX);
+    }
+    return NaN;
+  };
+
+  let suppressClickUntil = 0;
+  let pointerTracking = false;
+  let pointerMoved = false;
+  let pointerStartX = 0;
+  let pointerStartY = 0;
+  let pointerStartAt = 0;
+  let pointerType = "";
+  let touchTracking = false;
+  let swipeStartX = 0;
+  let swipeStartY = 0;
+  let touchMoved = false;
+  let touchStartAt = 0;
+  let touchSuppressTapClick = false;
+  let skipHalfClickForErrorRetry = false;
+  let horizontalPullResetTimer = 0;
+
+  const HORIZONTAL_POINTER_DRAG_THRESHOLD = 8;
+  const HORIZONTAL_TAP_DEAD_MOVEMENT = 6;
+  const HORIZONTAL_SWIPE_MIN_DISTANCE = 74;
+  const HORIZONTAL_SWIPE_INTENT_RATIO = 1.28;
+  const HORIZONTAL_SWIPE_MAX_DURATION = 760;
+  const HORIZONTAL_PULL_RESIST_FACTOR = 0.18;
+  const HORIZONTAL_PULL_RESIST_MAX = 18;
+
+  const clearHorizontalPullResistance = (animate = true) => {
+    if (horizontalPullResetTimer) {
+      window.clearTimeout(horizontalPullResetTimer);
+      horizontalPullResetTimer = 0;
+    }
+
+    if (!pagesRoot.classList.contains("is-pull-resist") && !pagesRoot.style.getPropertyValue("--reader-horizontal-pull-offset")) {
+      pagesRoot.style.removeProperty("transition");
+      return;
+    }
+
+    if (!animate) {
+      pagesRoot.classList.remove("is-pull-resist");
+      pagesRoot.style.removeProperty("--reader-horizontal-pull-offset");
+      pagesRoot.style.removeProperty("transition");
+      return;
+    }
+
+    pagesRoot.classList.add("is-pull-resist");
+    pagesRoot.style.transition = "transform 180ms ease-out";
+    pagesRoot.style.setProperty("--reader-horizontal-pull-offset", "0px");
+    horizontalPullResetTimer = window.setTimeout(() => {
+      pagesRoot.classList.remove("is-pull-resist");
+      pagesRoot.style.removeProperty("--reader-horizontal-pull-offset");
+      pagesRoot.style.removeProperty("transition");
+      horizontalPullResetTimer = 0;
+    }, 190);
+  };
+
+  const applyHorizontalPullResistance = (offsetPx) => {
+    if (!Number.isFinite(offsetPx) || offsetPx <= 0) {
+      clearHorizontalPullResistance(false);
+      return;
+    }
+
+    if (horizontalPullResetTimer) {
+      window.clearTimeout(horizontalPullResetTimer);
+      horizontalPullResetTimer = 0;
+    }
+
+    pagesRoot.classList.add("is-pull-resist");
+    pagesRoot.style.removeProperty("transition");
+    pagesRoot.style.setProperty("--reader-horizontal-pull-offset", `${Math.round(offsetPx)}px`);
+  };
+
+  pagesRoot.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (!isHorizontalReaderModeActive()) return;
+      if (!event || event.button !== 0 || !event.isPrimary) return;
+      if (isInteractiveTarget(event.target)) return;
+
+      pointerTracking = true;
+      pointerMoved = false;
+      pointerStartX = Number(event.clientX) || 0;
+      pointerStartY = Number(event.clientY) || 0;
+      pointerStartAt = Date.now();
+      pointerType = ((event.pointerType || "") + "").toLowerCase();
+    },
+    { passive: true }
+  );
+
+  pagesRoot.addEventListener(
+    "pointermove",
+    (event) => {
+      if (!pointerTracking) return;
+      const moveX = Math.abs((Number(event.clientX) || 0) - pointerStartX);
+      const moveY = Math.abs((Number(event.clientY) || 0) - pointerStartY);
+      if (moveX > HORIZONTAL_POINTER_DRAG_THRESHOLD || moveY > HORIZONTAL_POINTER_DRAG_THRESHOLD) {
+        pointerMoved = true;
+      }
+    },
+    { passive: true }
+  );
+
+  const finishPointerTracking = (event, cancelled = false) => {
+    if (!pointerTracking) return;
+
+    const endX = event && Number.isFinite(Number(event.clientX)) ? Number(event.clientX) : pointerStartX;
+    const endY = event && Number.isFinite(Number(event.clientY)) ? Number(event.clientY) : pointerStartY;
+    const deltaX = endX - pointerStartX;
+    const deltaY = endY - pointerStartY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+    const elapsedMs = pointerStartAt > 0 ? Date.now() - pointerStartAt : 0;
+
+    const shouldSwipePage =
+      !cancelled &&
+      isHorizontalReaderModeActive() &&
+      pointerType !== "touch" &&
+      pointerMoved &&
+      absX >= HORIZONTAL_SWIPE_MIN_DISTANCE &&
+      absX > absY * HORIZONTAL_SWIPE_INTENT_RATIO &&
+      elapsedMs <= HORIZONTAL_SWIPE_MAX_DURATION;
+
+    if (shouldSwipePage) {
+      suppressClickUntil = Date.now() + 220;
+      const direction = deltaX < 0 ? 1 : -1;
+      scrollToPageIndex(activePageIndex + direction);
+    } else if (pointerMoved) {
+      suppressClickUntil = Date.now() + 180;
+    }
+
+    pointerTracking = false;
+    pointerMoved = false;
+    pointerStartAt = 0;
+    pointerType = "";
+  };
+
+  pagesRoot.addEventListener(
+    "pointerup",
+    (event) => {
+      finishPointerTracking(event, false);
+    },
+    { passive: true }
+  );
+  pagesRoot.addEventListener(
+    "pointercancel",
+    (event) => {
+      finishPointerTracking(event, true);
+    },
+    { passive: true }
+  );
+  pagesRoot.addEventListener(
+    "pointerleave",
+    (event) => {
+      finishPointerTracking(event, true);
+    },
+    { passive: true }
+  );
+
+  pagesRoot.addEventListener(
+    "touchstart",
+    (event) => {
+      if (!isHorizontalReaderModeActive()) return;
+      if (!event || !event.touches || event.touches.length !== 1) return;
+      if (isInteractiveTarget(event.target)) return;
+      const touch = event.touches[0];
+      touchTracking = true;
+      touchMoved = false;
+      touchSuppressTapClick = false;
+      skipHalfClickForErrorRetry = false;
+      swipeStartX = Number(touch.clientX) || 0;
+      swipeStartY = Number(touch.clientY) || 0;
+      touchStartAt = Date.now();
+    },
+    { passive: true }
+  );
+
+  pagesRoot.addEventListener(
+    "touchmove",
+    (event) => {
+      if (!touchTracking || !event || !event.touches || !event.touches[0]) return;
+      const touch = event.touches[0];
+      const deltaX = (Number(touch.clientX) || 0) - swipeStartX;
+      const deltaY = (Number(touch.clientY) || 0) - swipeStartY;
+
+      if (isMobileHorizontalReaderModeActive()) {
+        const currentLeft = Math.max(0, Number(pagesRoot.scrollLeft) || 0);
+        const atReaderStart = activePageIndex <= 0 && currentLeft <= 8;
+        const downwardDominant = deltaY > 6 && Math.abs(deltaY) > Math.abs(deltaX) * 1.08;
+        if (atReaderStart && downwardDominant) {
+          const resistance = Math.min(HORIZONTAL_PULL_RESIST_MAX, deltaY * HORIZONTAL_PULL_RESIST_FACTOR);
+          applyHorizontalPullResistance(resistance);
+        } else {
+          clearHorizontalPullResistance(false);
+        }
+      }
+
+      if (Math.abs(deltaX) > HORIZONTAL_TAP_DEAD_MOVEMENT || Math.abs(deltaY) > HORIZONTAL_TAP_DEAD_MOVEMENT) {
+        touchMoved = true;
+      }
+    },
+    { passive: true }
+  );
+
+  pagesRoot.addEventListener(
+    "touchend",
+    (event) => {
+      if (!touchTracking) return;
+
+      const clientX = getClientX(event);
+      const clientY = event && event.changedTouches && event.changedTouches[0]
+        ? Number(event.changedTouches[0].clientY)
+        : NaN;
+      const deltaX = Number.isFinite(clientX) ? clientX - swipeStartX : 0;
+      const deltaY = Number.isFinite(clientY) ? clientY - swipeStartY : 0;
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      const elapsedMs = Date.now() - touchStartAt;
+
+      const shouldSwipePage =
+        isHorizontalReaderModeActive() &&
+        absX >= HORIZONTAL_SWIPE_MIN_DISTANCE &&
+        absX > absY * HORIZONTAL_SWIPE_INTENT_RATIO &&
+        elapsedMs <= HORIZONTAL_SWIPE_MAX_DURATION;
+
+      if (shouldSwipePage) {
+        touchSuppressTapClick = true;
+        suppressClickUntil = Date.now() + 220;
+        const direction = deltaX < 0 ? 1 : -1;
+        scrollToPageIndex(activePageIndex + direction);
+      } else if (touchMoved) {
+        touchSuppressTapClick = true;
+        suppressClickUntil = Date.now() + 170;
+      }
+
+      clearHorizontalPullResistance(true);
+      touchTracking = false;
+      touchMoved = false;
+      touchStartAt = 0;
+    },
+    { passive: true }
+  );
+
+  pagesRoot.addEventListener(
+    "touchcancel",
+    () => {
+      touchTracking = false;
+      touchMoved = false;
+      touchSuppressTapClick = false;
+      touchStartAt = 0;
+      clearHorizontalPullResistance(false);
+    },
+    { passive: true }
+  );
+
+  pagesRoot.addEventListener(
+    "click",
+    (event) => {
+      if (!isHorizontalReaderModeActive()) return;
+      const targetImage = event.target instanceof Element
+        ? event.target.closest(".page-media--lazy")
+        : null;
+      if (!(targetImage instanceof HTMLElement)) return;
+      if (getLazyState(targetImage) === "error") {
+        skipHalfClickForErrorRetry = true;
+      }
+    },
+    { capture: true, passive: true }
+  );
+
+  pagesRoot.addEventListener("click", (event) => {
+    if (!isHorizontalReaderModeActive()) {
+      touchSuppressTapClick = false;
+      skipHalfClickForErrorRetry = false;
+      return;
+    }
+    if (!event || event.defaultPrevented) {
+      skipHalfClickForErrorRetry = false;
+      return;
+    }
+    if (skipHalfClickForErrorRetry) {
+      skipHalfClickForErrorRetry = false;
+      return;
+    }
+    if (Date.now() < suppressClickUntil) {
+      touchSuppressTapClick = false;
+      return;
+    }
+    if (touchSuppressTapClick) {
+      touchSuppressTapClick = false;
+      return;
+    }
+    if (isInteractiveTarget(event.target)) return;
+
+    const targetImage = event.target instanceof Element
+      ? event.target.closest(".page-media--lazy")
+      : null;
+    if (targetImage instanceof HTMLElement) {
+      const lazyState = getLazyState(targetImage);
+      if (lazyState === "error") return;
+    }
+
+    const rootRect = pagesRoot.getBoundingClientRect();
+    if (!rootRect || !Number.isFinite(rootRect.width) || rootRect.width <= 0) return;
+    const clickX = Number(event.clientX);
+    if (!Number.isFinite(clickX)) return;
+
+    const relativeX = (clickX - rootRect.left) / rootRect.width;
+    const direction = relativeX > 0.5 ? 1 : -1;
+    scrollToPageIndex(activePageIndex + direction);
+  });
+
   const onImageLoaded = (img) => {
     resetRetry(img);
     markLoaded(img);
     applyPageFrameWidth(img);
+    applyHorizontalImageSize(img);
     activePageIndex = resolveActivePageIndex();
     if (jumpToCommentsActive) {
       enqueueImagesTowardComments();
@@ -1272,6 +2305,7 @@ if (quickComments) {
       if (getLazyState(img) === "loaded") {
         markLoaded(img);
         applyPageFrameWidth(img);
+        applyHorizontalImageSize(img);
       } else {
         img.classList.remove("is-loaded", "is-error", "lazyerror", "lazyloaded", "lazyload");
         img.classList.add("is-placeholder");
@@ -1329,15 +2363,18 @@ if (quickComments) {
   }
 
   scheduleDurationTracking();
+  updatePageIndicators(activePageIndex);
 
   const primeInitialImages = () => {
     orderedImages.slice(0, Math.min(5, orderedImages.length)).forEach((img) => {
       ensureImageVisible(img);
     });
+    applyReaderModeImageSizing();
   };
 
   syncActiveWindow();
   primeInitialImages();
+  setReaderMode(readerMode, { persist: false, behavior: "auto" });
   window.requestAnimationFrame(primeInitialImages);
   window.addEventListener("load", primeInitialImages, { once: true });
   window.addEventListener("pageshow", () => {
@@ -1347,6 +2384,7 @@ if (quickComments) {
     scheduleActiveWindowSync();
   });
   window.addEventListener("pagehide", () => {
+    stopHorizontalScrollAnimation();
     lazyImages.forEach((img) => {
       clearLazyWatchdog(img);
     });
@@ -1364,6 +2402,14 @@ if (quickComments) {
         clearJumpToComments();
       }
       lastObservedScrollY = currentScrollY;
+      scheduleActiveWindowSync();
+    },
+    { passive: true }
+  );
+  pagesRoot.addEventListener(
+    "scroll",
+    () => {
+      if (!isHorizontalReaderModeActive()) return;
       scheduleActiveWindowSync();
     },
     { passive: true }
@@ -1413,7 +2459,14 @@ if (quickComments) {
     },
     { passive: true }
   );
-  window.addEventListener("resize", scheduleActiveWindowSync, { passive: true });
+  window.addEventListener(
+    "resize",
+    () => {
+      applyReaderModeImageSizing();
+      scheduleActiveWindowSync();
+    },
+    { passive: true }
+  );
   window.addEventListener(READER_JUMP_COMMENTS_EVENT, requestJumpToComments);
   window.addEventListener(READER_CANCEL_JUMP_COMMENTS_EVENT, clearJumpToComments);
   window.addEventListener(READER_COMMENTS_LAYOUT_EVENT, () => {

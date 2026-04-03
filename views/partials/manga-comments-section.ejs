@@ -1,6 +1,14 @@
 <% const resolvedCommentScope = typeof commentScope === "string" && commentScope.trim() ? commentScope.trim().toLowerCase() : "manga"; %>
 <% const resolvedCommentBasePath = typeof commentBasePathOverride === "string" && commentBasePathOverride.trim() ? commentBasePathOverride.trim() : `/manga/${manga.slug}`; %>
 <% const resolvedCommentCreateAction = `${resolvedCommentBasePath}/comments`; %>
+<% const showChapterTagInCommentHeader = resolvedCommentScope !== "chapter"; %>
+<% const infiniteCommentMode = typeof commentInfiniteMode !== "undefined" ? Boolean(commentInfiniteMode) : false; %>
+<% const infiniteCommentBatchSizeRaw = typeof commentInfiniteBatchSize !== "undefined" ? Number(commentInfiniteBatchSize) : Number.NaN; %>
+<% const infiniteCommentBatchSize = Number.isFinite(infiniteCommentBatchSizeRaw) && infiniteCommentBatchSizeRaw > 0 ? Math.floor(infiniteCommentBatchSizeRaw) : 10; %>
+<% const commentComposerEnabledFlag = typeof commentComposerEnabled === "boolean" ? commentComposerEnabled : true; %>
+<% const commentImageUploadsEnabledFlag = typeof commentImageUploadsEnabled !== "undefined" ? Boolean(commentImageUploadsEnabled) : false; %>
+<% const commentPage = commentPagination && commentPagination.page ? Number(commentPagination.page) : 1; %>
+<% const commentTotalPages = commentPagination && commentPagination.totalPages ? Number(commentPagination.totalPages) : 1; %>
 <section
   id="comments"
   class="section container"
@@ -9,13 +17,17 @@
   data-comment-manga-title="<%= manga.title %>"
   data-comment-scope="<%= resolvedCommentScope %>"
   data-comment-image-upload-url="/comments/upload-image"
-  data-comment-image-upload-enabled="<%= commentImageUploadsEnabled ? "1" : "0" %>"
+  data-comment-image-upload-enabled="<%= commentImageUploadsEnabledFlag ? "1" : "0" %>"
   data-comment-can-delete-team="<%= typeof commentDeleteByTeamMember !== "undefined" && commentDeleteByTeamMember ? "1" : "0" %>"
   data-comment-script-src="<%= cacheBust('/comments.js', assetVersion) %>"
+  data-comment-base-path="<%= resolvedCommentBasePath %>"
+  data-comment-page="<%= commentPage %>"
+  data-comment-total-pages="<%= commentTotalPages %>"
+  data-comment-has-next="<%= commentPagination && commentPagination.hasNext ? "1" : "0" %>"
+  data-comment-next-page="<%= commentPagination && commentPagination.hasNext ? commentPagination.nextPage : commentPage %>"
+  data-comment-infinite="<%= infiniteCommentMode ? "1" : "0" %>"
+  data-comment-infinite-batch-size="<%= infiniteCommentBatchSize %>"
 >
-  <% const commentComposerEnabledFlag = typeof commentComposerEnabled === "boolean" ? commentComposerEnabled : true; %>
-  <% const commentPage = commentPagination && commentPagination.page ? Number(commentPagination.page) : 1; %>
-  <% const commentTotalPages = commentPagination && commentPagination.totalPages ? Number(commentPagination.totalPages) : 1; %>
   <% const commentPageHref = (targetPage) => {
     const safeTarget = Number.isFinite(targetPage) && targetPage > 0 ? Math.floor(targetPage) : 1;
     if (typeof commentPageHrefBuilder === "function") {
@@ -56,7 +68,10 @@
     return `https://lh3.googleusercontent.com/d/${imageId}=s${safeSize}`;
   }; %>
   <div class="section-header">
-    <h2>Bình luận (<%= commentCount %>)</h2>
+    <h2 class="comment-section-title">
+      <span class="comment-section-title__label">Bình luận</span>
+      <span class="comment-section-title__count"><%= commentCount %></span>
+    </h2>
     <span class="section-line"></span>
   </div>
   <div class="comment-box <%= commentComposerEnabledFlag ? "" : "comment-box--locked" %>">
@@ -172,17 +187,19 @@
                     </span>
                   <% } %>
                 </span>
-                <% const commentChapterNumberText = (comment && comment.chapterNumberText ? String(comment.chapterNumberText) : "").trim(); %>
-                <% const commentChapterLabelText = (comment && comment.chapterLabel ? String(comment.chapterLabel) : "").trim(); %>
-                <% if (commentChapterNumberText) { %>
-                  <a
-                    class="comment-chapter-tag"
-                    href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(commentChapterNumberText) %>"
-                  >
-                    Chương <%= commentChapterNumberText %>
-                  </a>
-                <% } else if (commentChapterLabelText) { %>
-                  <span class="comment-chapter-tag"><%= commentChapterLabelText %></span>
+                <% if (showChapterTagInCommentHeader) { %>
+                  <% const commentChapterNumberText = (comment && comment.chapterNumberText ? String(comment.chapterNumberText) : "").trim(); %>
+                  <% const commentChapterLabelText = (comment && comment.chapterLabel ? String(comment.chapterLabel) : "").trim(); %>
+                  <% if (commentChapterNumberText) { %>
+                    <a
+                      class="comment-chapter-tag"
+                      href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(commentChapterNumberText) %>"
+                    >
+                      Chương <%= commentChapterNumberText %>
+                    </a>
+                  <% } else if (commentChapterLabelText) { %>
+                    <span class="comment-chapter-tag"><%= commentChapterLabelText %></span>
+                  <% } %>
                 <% } %>
               </div>
               <% const commentContentText = String(comment.content || "").trim(); %>
@@ -343,17 +360,19 @@
                               </span>
                             <% } %>
                           </span>
-                          <% const replyChapterNumberText = (reply && reply.chapterNumberText ? String(reply.chapterNumberText) : "").trim(); %>
-                          <% const replyChapterLabelText = (reply && reply.chapterLabel ? String(reply.chapterLabel) : "").trim(); %>
-                          <% if (replyChapterNumberText) { %>
-                            <a
-                              class="comment-chapter-tag"
-                              href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(replyChapterNumberText) %>"
-                            >
-                              Chương <%= replyChapterNumberText %>
-                            </a>
-                          <% } else if (replyChapterLabelText) { %>
-                            <span class="comment-chapter-tag"><%= replyChapterLabelText %></span>
+                          <% if (showChapterTagInCommentHeader) { %>
+                            <% const replyChapterNumberText = (reply && reply.chapterNumberText ? String(reply.chapterNumberText) : "").trim(); %>
+                            <% const replyChapterLabelText = (reply && reply.chapterLabel ? String(reply.chapterLabel) : "").trim(); %>
+                            <% if (replyChapterNumberText) { %>
+                              <a
+                                class="comment-chapter-tag"
+                                href="/manga/<%= manga.slug %>/chapters/<%= encodeURIComponent(replyChapterNumberText) %>"
+                              >
+                                Chương <%= replyChapterNumberText %>
+                              </a>
+                            <% } else if (replyChapterLabelText) { %>
+                              <span class="comment-chapter-tag"><%= replyChapterLabelText %></span>
+                            <% } %>
                           <% } %>
                         </div>
                         <% const replyContentText = String(reply.content || "").trim(); %>
@@ -465,7 +484,7 @@
     </ul>
   <% } %>
 
-  <% if (commentTotalPages > 1) { %>
+  <% if (!infiniteCommentMode && commentTotalPages > 1) { %>
     <nav class="comment-pagination" aria-label="Phân trang bình luận">
       <a
         class="button button--ghost comment-pagination__nav <%= commentPagination && commentPagination.hasPrev ? "" : "is-disabled" %>"
@@ -487,5 +506,7 @@
         <span class="sr-only">Trang sau</span>
       </a>
     </nav>
+  <% } else if (infiniteCommentMode && commentTotalPages > 1) { %>
+    <div class="comment-infinite-status" data-comment-infinite-status aria-live="polite"></div>
   <% } %>
 </section>

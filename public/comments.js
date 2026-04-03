@@ -4071,6 +4071,7 @@ const ensureNoCommentsNote = (section) => {
 };
 
 let isCommentPaginationLoading = false;
+let isCommentInfiniteLoading = false;
 
 const isPrimaryUnmodifiedClick = (event) => {
   if (!event || event.defaultPrevented) return false;
@@ -4238,6 +4239,7 @@ const replaceCommentsSectionFromPage = async (targetUrl, options) => {
     applyCommentImageSizing(nextSection);
     initCommentRichText(nextSection);
     initCommentCharCounters(nextSection);
+    initInfiniteComments(nextSection);
 
     if (window.BfangAuth && typeof window.BfangAuth.refreshUi === "function") {
       window.BfangAuth.refreshUi({ force: false }).catch(() => null);
@@ -4266,6 +4268,234 @@ const replaceCommentsSectionFromPage = async (targetUrl, options) => {
       activeSection.removeAttribute("aria-busy");
     }
   }
+};
+
+const toPositiveInteger = (value, fallback = 0) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+};
+
+const readCommentInfiniteState = (section) => {
+  if (!section) {
+    return {
+      enabled: false,
+      hasNext: false,
+      nextPage: 0,
+      page: 1,
+      totalPages: 1
+    };
+  }
+
+  const enabled = (section.getAttribute("data-comment-infinite") || "").toString().trim() === "1";
+  const hasNext = (section.getAttribute("data-comment-has-next") || "").toString().trim() === "1";
+  const nextPage = toPositiveInteger(section.getAttribute("data-comment-next-page"), 0);
+  const page = toPositiveInteger(section.getAttribute("data-comment-page"), 1);
+  const totalPages = toPositiveInteger(section.getAttribute("data-comment-total-pages"), 1);
+  return {
+    enabled,
+    hasNext,
+    nextPage,
+    page,
+    totalPages
+  };
+};
+
+const writeCommentInfiniteStateFromSection = (targetSection, sourceSection) => {
+  if (!targetSection || !sourceSection) return;
+  [
+    "data-comment-page",
+    "data-comment-total-pages",
+    "data-comment-has-next",
+    "data-comment-next-page"
+  ].forEach((attribute) => {
+    const sourceValue = sourceSection.getAttribute(attribute);
+    if (sourceValue == null) {
+      targetSection.removeAttribute(attribute);
+      return;
+    }
+    targetSection.setAttribute(attribute, sourceValue);
+  });
+};
+
+const updateCommentInfiniteStatus = (section, message) => {
+  if (!section) return;
+  const status = section.querySelector("[data-comment-infinite-status]");
+  if (!(status instanceof HTMLElement)) return;
+  status.textContent = (message || "").toString().trim();
+};
+
+const buildCommentPageUrlFromSection = (section, page) => {
+  if (!section) return null;
+  const basePathRaw = (section.getAttribute("data-comment-base-path") || "").toString().trim();
+  if (!basePathRaw) return null;
+
+  const safePage = toPositiveInteger(page, 1);
+  let targetUrl = null;
+  try {
+    targetUrl = new URL(basePathRaw, window.location.href);
+  } catch (_err) {
+    targetUrl = null;
+  }
+  if (!targetUrl || targetUrl.origin !== window.location.origin) return null;
+
+  if (safePage > 1) {
+    targetUrl.searchParams.set("commentPage", String(safePage));
+  } else {
+    targetUrl.searchParams.delete("commentPage");
+  }
+  targetUrl.hash = "comments";
+  return targetUrl;
+};
+
+const mergeCommentPageIntoSection = (currentSection, nextSection) => {
+  if (!currentSection || !nextSection) return 0;
+
+  const nextItems = Array.from(nextSection.querySelectorAll(".comment-items > .comment-item"));
+  if (!nextItems.length) {
+    writeCommentInfiniteStateFromSection(currentSection, nextSection);
+    return 0;
+  }
+
+  const currentList = ensureCommentList(currentSection);
+  let appended = 0;
+
+  nextItems.forEach((item) => {
+    const cloned = item.cloneNode(true);
+    currentList.appendChild(cloned);
+    appended += 1;
+    hydrateCommentInlineLinks(cloned).catch(() => null);
+  });
+
+  clearCommentEmptyNotes(currentSection);
+  writeCommentInfiniteStateFromSection(currentSection, nextSection);
+  return appended;
+};
+
+const resolveCommentScrollContainer = (section) => {
+  if (!section) return null;
+  const scopedContainer = section.closest("[data-comment-scroll-container]");
+  if (scopedContainer instanceof HTMLElement) {
+    return scopedContainer;
+  }
+  return window;
+};
+
+const isNearCommentScrollEnd = (container) => {
+  if (!container) return false;
+  if (container === window) {
+    const doc = document.documentElement;
+    const scrollTop = Math.max(window.scrollY || 0, doc ? doc.scrollTop || 0 : 0);
+    const viewportHeight = window.innerHeight || 0;
+    const totalHeight = doc ? doc.scrollHeight || 0 : 0;
+    return scrollTop + viewportHeight >= totalHeight - 180;
+  }
+
+  const node = container;
+  return node.scrollTop + node.clientHeight >= node.scrollHeight - 120;
+};
+
+const loadNextCommentPageInfinite = async (section) => {
+  if (!section) return false;
+  const state = readCommentInfiniteState(section);
+  if (!state.enabled || !state.hasNext || state.nextPage <= state.page) return false;
+  if (isCommentInfiniteLoading) return false;
+
+  const targetUrl = buildCommentPageUrlFromSection(section, state.nextPage);
+  if (!targetUrl) return false;
+
+  isCommentInfiniteLoading = true;
+  section.setAttribute("aria-busy", "true");
+  updateCommentInfiniteStatus(section, "Đang tải thêm bình luận...");
+
+  try {
+    const requestUrl = buildFreshCommentFetchUrl(targetUrl) || targetUrl;
+    const response = await fetch(requestUrl.toString(), {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Accept: "text/html",
+        "X-BFANG-Comments-Fresh": "1",
+        "Cache-Control": "no-cache, no-store",
+        Pragma: "no-cache"
+      },
+      credentials: "same-origin"
+    });
+    if (!response.ok) {
+      updateCommentInfiniteStatus(section, "Không thể tải thêm bình luận.");
+      return false;
+    }
+
+    const html = await response.text();
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    const nextSection = parsed.querySelector(commentSelectors.section);
+    if (!nextSection) {
+      updateCommentInfiniteStatus(section, "Không thể tải thêm bình luận.");
+      return false;
+    }
+
+    const appendedCount = mergeCommentPageIntoSection(section, nextSection);
+    if (appendedCount <= 0) {
+      const settledState = readCommentInfiniteState(section);
+      if (!settledState.hasNext) {
+        updateCommentInfiniteStatus(section, "Đã hiển thị tất cả bình luận.");
+      }
+      return false;
+    }
+
+    applyCommentImageSizing(section);
+    initCommentRichText(section);
+    initCommentCharCounters(section);
+    refreshDeleteVisibility().catch(() => null);
+    refreshCommentPermissionVisibility().catch(() => null);
+    refreshReactionStates().catch(() => null);
+    notifyCommentDataUpdated(section);
+
+    const nextState = readCommentInfiniteState(section);
+    updateCommentInfiniteStatus(
+      section,
+      nextState.hasNext ? "Kéo xuống cuối để tải thêm 10 bình luận." : "Đã hiển thị tất cả bình luận."
+    );
+    return true;
+  } catch (_err) {
+    updateCommentInfiniteStatus(section, "Không thể tải thêm bình luận.");
+    return false;
+  } finally {
+    isCommentInfiniteLoading = false;
+    section.removeAttribute("aria-busy");
+  }
+};
+
+const initInfiniteComments = (section) => {
+  if (!section) return;
+  const state = readCommentInfiniteState(section);
+  if (!state.enabled) return;
+
+  updateCommentInfiniteStatus(
+    section,
+    state.hasNext ? "Kéo xuống cuối để tải thêm 10 bình luận." : "Đã hiển thị tất cả bình luận."
+  );
+
+  const container = resolveCommentScrollContainer(section);
+  if (!container) return;
+
+  if (container._commentInfiniteScrollHandler) {
+    container.removeEventListener("scroll", container._commentInfiniteScrollHandler);
+  }
+
+  let ticking = false;
+  const onScroll = () => {
+    if (ticking) return;
+    ticking = true;
+    window.requestAnimationFrame(() => {
+      ticking = false;
+      if (!isNearCommentScrollEnd(container)) return;
+      loadNextCommentPageInfinite(section).catch(() => null);
+    });
+  };
+
+  container._commentInfiniteScrollHandler = onScroll;
+  container.addEventListener("scroll", onScroll, { passive: true });
 };
 
 let isLazyCommentHydrationLoading = false;
@@ -5158,6 +5388,7 @@ window.addEventListener("bfang:me", (event) => {
 const refreshCommentsPageUi = () => {
   const hasCommentHashTarget = extractCommentIdFromHash(window.location.hash) > 0;
   const lazySection = document.querySelector(`${commentSelectors.section}[data-comment-lazy='1']`);
+  const section = document.querySelector(commentSelectors.section);
   const canAutoHydrate =
     !lazySection ||
     lazySection.getAttribute("data-comment-auto-hydrate") === "1" ||
@@ -5174,6 +5405,9 @@ const refreshCommentsPageUi = () => {
   applyCommentImageSizing();
   initCommentRichText();
   initCommentCharCounters();
+  if (section) {
+    initInfiniteComments(section);
+  }
   revealCommentTargetWithLazyHydration({ behavior: "auto", showFallback: true }).catch(() => null);
 };
 

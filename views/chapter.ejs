@@ -18,9 +18,12 @@
     filters: false,
     admin: false,
     comments: true,
+    notifications: true,
     lazysizes: false,
     readingHistory: true
   };
+  const chapterProcessingState = (chapter && chapter.processing_state ? chapter.processing_state : "").toString().trim();
+  const hasReaderPages = !isChapterLocked && chapterProcessingState !== "processing" && Array.isArray(pageUrls) && pageUrls.length > 0;
 %>
 <!DOCTYPE html>
 <html lang="vi">
@@ -29,54 +32,60 @@
     headScripts: chapterHeadScripts,
     headPreconnectOrigins: chapterPageOrigin ? [chapterPageOrigin] : []
   }) %>
-  <body class="reader-page">
+  <body class="reader-page<%= hasReaderPages ? " reader-page--reader-mode" : "" %>">
     <div class="site">
-      <%- include("partials/header") %>
+      <% if (!hasReaderPages) { %>
+        <%- include("partials/header") %>
+      <% } %>
       <main
         data-reading-progress
         data-reading-manga-slug="<%= manga.slug %>"
         data-reading-chapter-number="<%= chapter.number %>"
       >
-        <section class="section container">
-          <div class="reader-header">
-            <div class="reader-title">
-              <a class="reader-back" href="/manga/<%= manga.slug %>">Quay lại truyện</a>
-              <% const chapterTitle = (chapter.title || "").toString().trim(); %>
-              <% const isOneshotChapter = Boolean(chapter && chapter.is_oneshot); %>
-              <% const chapterHeadingLabel = isOneshotChapter ? "Oneshot" : `Chương ${chapter.number}`; %>
-              <% const chapterShortLabel = isOneshotChapter ? "Oneshot" : `Ch. ${chapter.number}`; %>
-              <% const buildChapterOptionLabel = (item) => {
-                const chapterItem = item && typeof item === "object" ? item : {};
-                const itemTitle = (chapterItem.title || "").toString().trim();
-                const baseLabel = chapterItem.is_oneshot ? "Oneshot" : `Ch. ${chapterItem.number}`;
-                return itemTitle ? `${baseLabel} — ${itemTitle}` : baseLabel;
-              }; %>
-              <h1><%= chapterHeadingLabel %><% if (chapterTitle) { %>: <%= chapterTitle %><% } %></h1>
-              <div class="reader-meta">
-                <span><%= manga.title %></span>
-                <span class="reader-dot">•</span>
-                <span><%= chapter.pages %> trang</span>
-                <span class="reader-dot">•</span>
-                <span>Cập nhật <%= formatDate(chapter.date) %></span>
+        <% const chapterTitle = (chapter.title || "").toString().trim(); %>
+        <% const isOneshotChapter = Boolean(chapter && chapter.is_oneshot); %>
+        <% const chapterHeadingLabel = isOneshotChapter ? "Oneshot" : `Chương ${chapter.number}`; %>
+        <% const chapterShortLabel = isOneshotChapter ? "Oneshot" : `Ch. ${chapter.number}`; %>
+        <% const buildChapterOptionLabel = (item) => {
+          const chapterItem = item && typeof item === "object" ? item : {};
+          const itemTitle = (chapterItem.title || "").toString().trim();
+          const baseLabel = chapterItem.is_oneshot ? "Oneshot" : `Ch. ${chapterItem.number}`;
+          return itemTitle ? `${baseLabel} — ${itemTitle}` : baseLabel;
+        }; %>
+        <% const processingState = chapterProcessingState; %>
+        <% const processingDonePagesRaw = Number(chapter.processing_done_pages); %>
+        <% const processingTotalPagesRaw = Number(chapter.processing_total_pages); %>
+        <% const processingDonePages = Number.isFinite(processingDonePagesRaw) && processingDonePagesRaw >= 0 ? Math.floor(processingDonePagesRaw) : 0; %>
+        <% const processingTotalPages = Number.isFinite(processingTotalPagesRaw) && processingTotalPagesRaw > 0 ? Math.floor(processingTotalPagesRaw) : 0; %>
+        <% const processingPercent = processingTotalPages > 0 ? Math.min(100, Math.max(0, Math.floor((Math.min(processingDonePages, processingTotalPages) / processingTotalPages) * 100))) : 0; %>
+        <% const shouldShowReaderIntro = isChapterLocked || processingState === "processing" || !pageUrls || pageUrls.length === 0; %>
+
+        <% if (shouldShowReaderIntro) { %>
+          <section class="section container">
+            <div class="reader-header">
+              <div class="reader-title">
+                <a class="reader-back" href="/manga/<%= manga.slug %>">Quay lại truyện</a>
+                <h1><%= chapterHeadingLabel %><% if (chapterTitle) { %>: <%= chapterTitle %><% } %></h1>
+                <div class="reader-meta">
+                  <span><%= manga.title %></span>
+                  <span class="reader-dot">•</span>
+                  <span><%= chapter.pages %> trang</span>
+                  <span class="reader-dot">•</span>
+                  <span>Cập nhật <%= formatDate(chapter.date) %></span>
+                </div>
               </div>
             </div>
-          </div>
-          <% const processingState = (chapter.processing_state || "").toString().trim(); %>
-          <% const processingDonePagesRaw = Number(chapter.processing_done_pages); %>
-          <% const processingTotalPagesRaw = Number(chapter.processing_total_pages); %>
-          <% const processingDonePages = Number.isFinite(processingDonePagesRaw) && processingDonePagesRaw >= 0 ? Math.floor(processingDonePagesRaw) : 0; %>
-          <% const processingTotalPages = Number.isFinite(processingTotalPagesRaw) && processingTotalPagesRaw > 0 ? Math.floor(processingTotalPagesRaw) : 0; %>
-          <% const processingPercent = processingTotalPages > 0 ? Math.min(100, Math.max(0, Math.floor((Math.min(processingDonePages, processingTotalPages) / processingTotalPages) * 100))) : 0; %>
-          <% if (isChapterLocked) { %>
-            <p class="reader-note">Chương này đang được khóa mật khẩu. Vui lòng nhập mật khẩu để mở khóa.</p>
-          <% } else if (processingState === "processing") { %>
-            <p class="reader-note" data-chapter-processing-summary>
-              Chương đang xử lý ảnh<% if (processingTotalPages > 0) { %> — <%= processingDonePages %>/<%= processingTotalPages %> (<%= processingPercent %>%)<% } %>. Vui lòng quay lại sau.
-            </p>
-          <% } else if (!pageUrls || pageUrls.length === 0) { %>
-            <p class="reader-note">Trang đọc mẫu: hiển thị khung trang, chưa có ảnh scan.</p>
-          <% } %>
-        </section>
+            <% if (isChapterLocked) { %>
+              <p class="reader-note">Chương này đang được khóa mật khẩu. Vui lòng nhập mật khẩu để mở khóa.</p>
+            <% } else if (processingState === "processing") { %>
+              <p class="reader-note" data-chapter-processing-summary>
+                Chương đang xử lý ảnh<% if (processingTotalPages > 0) { %> — <%= processingDonePages %>/<%= processingTotalPages %> (<%= processingPercent %>%)<% } %>. Vui lòng quay lại sau.
+              </p>
+            <% } else if (!pageUrls || pageUrls.length === 0) { %>
+              <p class="reader-note">Trang đọc mẫu: hiển thị khung trang, chưa có ảnh scan.</p>
+            <% } %>
+          </section>
+        <% } %>
 
         <% if (isChapterLocked) { %>
           <section class="section container">
@@ -134,28 +143,130 @@
             </div>
           </section>
         <% } else { %>
-        <section class="section container reader">
-          <div class="reader-fixed reader-fixed--top" data-reader-fixed>
-            <div class="reader-fixed-inner">
-              <%- include("partials/chapter-reader-controls", {
-                manga,
-                chapter,
-                chapterTitle,
-                chapterShortLabel,
-                chapterList,
-                prevChapter,
-                nextChapter,
-                buildChapterOptionLabel,
-                dropdownClass: "reader-dropdown--down"
-              }) %>
-            </div>
-          </div>
+        <section class="section container reader reader-shell">
           <% const lazyPlaceholderSrc = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="; %>
           <% const readerNextPrefetchPayload = encodeURIComponent(
             JSON.stringify(Array.isArray(nextChapterPrefetchUrls) ? nextChapterPrefetchUrls : [])
           ); %>
           <% const totalChapterPages = Math.max(Number(chapter && chapter.pages ? chapter.pages : 0) || 0, 0); %>
-          <% const chapterViewThreshold = Math.max(1, Math.floor(totalChapterPages / 2 + 1)); %>
+          <% const renderedPageTotal = Array.isArray(pageUrls) ? pageUrls.length : 0; %>
+          <% const readerPageTotal = renderedPageTotal > 0 ? renderedPageTotal : totalChapterPages; %>
+          <% const chapterViewThreshold = Math.max(1, Math.floor(readerPageTotal / 2 + 1)); %>
+          <% const readerInitiallySignedIn = typeof isInitiallySignedIn !== "undefined" && isInitiallySignedIn; %>
+          <div class="reader-shell__layout<%= pageUrls && pageUrls.length ? "" : " reader-shell__layout--single" %>">
+            <div class="reader-shell__content">
+          <% if (pageUrls && pageUrls.length) { %>
+            <div class="reader-mobile-top" aria-label="Điều hướng đọc truyện trên điện thoại">
+              <div class="reader-mobile-top__head reader-dock__head-top">
+                <div class="reader-dock__head">
+                  <p class="reader-dock__series">
+                    <a class="reader-dock__series-link" href="/manga/<%= manga.slug %>"><%= manga.title %></a>
+                  </p>
+                  <p class="reader-dock__chapter"><%= chapterHeadingLabel %><% if (chapterTitle) { %>: <%= chapterTitle %><% } %></p>
+                </div>
+                <nav class="reader-dock__tools" aria-label="Lối tắt đọc truyện">
+                  <a class="reader-dock__tool" href="/" aria-label="Trang chủ" title="Trang chủ">
+                    <i class="fa-solid fa-house" aria-hidden="true"></i>
+                  </a>
+                  <button class="reader-dock__tool" type="button" data-reader-report data-button-loading-skip aria-label="Báo lỗi trang" title="Báo lỗi">
+                    <i class="fa-regular fa-flag" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    class="reader-dock__tool"
+                    type="button"
+                    data-auth-login
+                    aria-label="Thông báo (đăng nhập để xem)"
+                    title="Đăng nhập để xem thông báo"
+                    <%= readerInitiallySignedIn ? "hidden" : "" %>
+                  >
+                    <i class="fa-regular fa-bell" aria-hidden="true"></i>
+                  </button>
+                  <div class="notify-widget reader-dock__notify-widget" data-notify-widget <%= readerInitiallySignedIn ? "" : "hidden" %>>
+                    <button
+                      class="notify-trigger reader-dock__tool reader-dock__tool--notify"
+                      type="button"
+                      data-notify-toggle
+                      aria-haspopup="menu"
+                      aria-expanded="false"
+                      title="Thông báo"
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M6.8 9a5.2 5.2 0 1 1 10.4 0v3.1c0 .8.3 1.5.8 2.1l1.1 1.3H5l1.1-1.3c.5-.6.8-1.3.8-2.1z" />
+                        <path d="M9.8 18.1a2.2 2.2 0 0 0 4.4 0" />
+                      </svg>
+                      <span class="notify-badge" hidden data-notify-badge>0</span>
+                      <span class="sr-only">Thông báo</span>
+                    </button>
+                    <div class="notify-menu" hidden data-notify-menu>
+                      <div class="notify-menu__head">
+                        <strong>Thông báo</strong>
+                        <button class="notify-menu__mark" type="button" data-notify-mark-all hidden>
+                          Đánh dấu đã đọc
+                        </button>
+                      </div>
+                      <p class="notify-menu__empty" data-notify-empty>Chưa có thông báo nào.</p>
+                      <div class="notify-list" data-notify-list role="list"></div>
+                    </div>
+                  </div>
+                  <div class="auth-widget reader-dock__account" data-auth-widget>
+                    <button
+                      class="reader-dock__tool reader-dock__tool--login"
+                      type="button"
+                      data-auth-login
+                      aria-label="Đăng nhập"
+                      title="Đăng nhập"
+                      <%= readerInitiallySignedIn ? "hidden" : "" %>
+                    >
+                      <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i>
+                    </button>
+                    <div class="auth-widget__profile reader-dock__account-profile" data-auth-profile <%= readerInitiallySignedIn ? "" : "hidden" %>>
+                      <button
+                        class="auth-trigger reader-dock__tool reader-dock__tool--avatar"
+                        type="button"
+                        data-auth-menu-toggle
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                        title="Tài khoản"
+                      >
+                        <img class="auth-trigger__avatar reader-dock__avatar" alt="" hidden data-auth-avatar referrerpolicy="no-referrer" />
+                        <svg class="auth-trigger__fallback reader-dock__avatar-fallback" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                          <circle cx="12" cy="8" r="4" />
+                          <path d="M4 20c1.6-3.5 5-5 8-5s6.4 1.5 8 5" />
+                        </svg>
+                      </button>
+                      <div class="auth-menu" hidden data-auth-menu>
+                        <div class="auth-menu__head">
+                          <a class="auth-menu__name auth-menu__name-link" href="/account" data-auth-name data-auth-profile-link></a>
+                          <div class="auth-menu__username" data-auth-username></div>
+                        </div>
+                        <a class="auth-menu__item" href="/account">Cài đặt tài khoản</a>
+                        <a class="auth-menu__item" href="/account/saved">Đã lưu</a>
+                        <a class="auth-menu__item" href="/account/history">Lịch sử đọc</a>
+                        <button class="auth-menu__item" type="button" data-auth-logout>
+                          Đăng xuất
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </nav>
+              </div>
+              <div class="reader-mobile-top__controls" data-reader-fixed>
+                <div class="reader-fixed-inner">
+                  <%- include("partials/chapter-reader-controls", {
+                    manga,
+                    chapter,
+                    chapterTitle,
+                    chapterShortLabel,
+                    chapterList,
+                    prevChapter,
+                    nextChapter,
+                    buildChapterOptionLabel,
+                    dropdownClass: "reader-dropdown--down"
+                  }) %>
+                </div>
+              </div>
+            </div>
+          <% } %>
           <div
             class="reader-pages"
             data-reader-lazy-pages
@@ -163,7 +274,7 @@
             data-reader-view-track-url="/manga/<%= encodeURIComponent(manga.slug) %>/chapters/<%= encodeURIComponent(String(chapter.number)) %>/view"
             data-reader-view-track-token="<%= chapterViewTrackToken %>"
             data-reader-view-threshold="<%= chapterViewThreshold %>"
-            data-reader-total-pages="<%= totalChapterPages %>"
+            data-reader-total-pages="<%= readerPageTotal %>"
           >
             <% if (processingState === "processing") { %>
               <div
@@ -243,7 +354,193 @@
               </div>
             </noscript>
           <% } %>
-          <div class="reader-fixed reader-fixed--bottom" data-reader-fixed>
+            </div>
+            <% if (pageUrls && pageUrls.length) { %>
+            <aside class="reader-dock" aria-label="Bảng điều khiển đọc truyện">
+              <div class="reader-dock__panel">
+                <div class="reader-dock__head-top reader-dock__head-top--desktop">
+                  <div class="reader-dock__head">
+                    <p class="reader-dock__series">
+                      <a class="reader-dock__series-link" href="/manga/<%= manga.slug %>"><%= manga.title %></a>
+                    </p>
+                    <p class="reader-dock__chapter"><%= chapterHeadingLabel %><% if (chapterTitle) { %>: <%= chapterTitle %><% } %></p>
+                  </div>
+                  <nav class="reader-dock__tools" aria-label="Lối tắt đọc truyện">
+                    <a class="reader-dock__tool" href="/" aria-label="Trang chủ" title="Trang chủ">
+                      <i class="fa-solid fa-house" aria-hidden="true"></i>
+                    </a>
+                    <button class="reader-dock__tool" type="button" data-reader-report data-button-loading-skip aria-label="Báo lỗi trang" title="Báo lỗi">
+                      <i class="fa-regular fa-flag" aria-hidden="true"></i>
+                    </button>
+                    <div class="notify-widget reader-dock__notify-widget" data-notify-widget <%= readerInitiallySignedIn ? "" : "hidden" %>>
+                      <button
+                        class="notify-trigger reader-dock__tool reader-dock__tool--notify"
+                        type="button"
+                        data-notify-toggle
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                        title="Thông báo"
+                      >
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M6.8 9a5.2 5.2 0 1 1 10.4 0v3.1c0 .8.3 1.5.8 2.1l1.1 1.3H5l1.1-1.3c.5-.6.8-1.3.8-2.1z" />
+                          <path d="M9.8 18.1a2.2 2.2 0 0 0 4.4 0" />
+                        </svg>
+                        <span class="notify-badge" hidden data-notify-badge>0</span>
+                        <span class="sr-only">Thông báo</span>
+                      </button>
+                      <div class="notify-menu" hidden data-notify-menu>
+                        <div class="notify-menu__head">
+                          <strong>Thông báo</strong>
+                          <button class="notify-menu__mark" type="button" data-notify-mark-all hidden>
+                            Đánh dấu đã đọc
+                          </button>
+                        </div>
+                        <p class="notify-menu__empty" data-notify-empty>Chưa có thông báo nào.</p>
+                        <div class="notify-list" data-notify-list role="list"></div>
+                      </div>
+                    </div>
+                    <div class="auth-widget reader-dock__account" data-auth-widget>
+                      <button
+                        class="reader-dock__tool reader-dock__tool--login"
+                        type="button"
+                        data-auth-login
+                        aria-label="Đăng nhập"
+                        title="Đăng nhập"
+                        <%= readerInitiallySignedIn ? "hidden" : "" %>
+                      >
+                        <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i>
+                      </button>
+                      <div class="auth-widget__profile reader-dock__account-profile" data-auth-profile <%= readerInitiallySignedIn ? "" : "hidden" %>>
+                        <button
+                          class="auth-trigger reader-dock__tool reader-dock__tool--avatar"
+                          type="button"
+                          data-auth-menu-toggle
+                          aria-haspopup="menu"
+                          aria-expanded="false"
+                          title="Tài khoản"
+                        >
+                          <img class="auth-trigger__avatar reader-dock__avatar" alt="" hidden data-auth-avatar referrerpolicy="no-referrer" />
+                          <svg class="auth-trigger__fallback reader-dock__avatar-fallback" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                            <circle cx="12" cy="8" r="4" />
+                            <path d="M4 20c1.6-3.5 5-5 8-5s6.4 1.5 8 5" />
+                          </svg>
+                        </button>
+                        <div class="auth-menu" hidden data-auth-menu>
+                          <div class="auth-menu__head">
+                            <a class="auth-menu__name auth-menu__name-link" href="/account" data-auth-name data-auth-profile-link></a>
+                            <div class="auth-menu__username" data-auth-username></div>
+                          </div>
+                          <a class="auth-menu__item" href="/account">Cài đặt tài khoản</a>
+                          <a class="auth-menu__item" href="/account/saved">Đã lưu</a>
+                          <a class="auth-menu__item" href="/account/history">Lịch sử đọc</a>
+                          <button class="auth-menu__item" type="button" data-auth-logout>
+                            Đăng xuất
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </nav>
+                </div>
+                <div class="reader-dock__controls" data-reader-fixed>
+                  <div class="reader-fixed-inner">
+                    <%- include("partials/chapter-reader-controls", {
+                      manga,
+                      chapter,
+                      chapterTitle,
+                      chapterShortLabel,
+                      chapterList,
+                      prevChapter,
+                      nextChapter,
+                      buildChapterOptionLabel,
+                      dropdownClass: "reader-dropdown--down"
+                    }) %>
+                  </div>
+                </div>
+                <div class="reader-dock__page-nav" data-reader-page-nav>
+                  <button class="reader-float-btn reader-float-btn--nav" type="button" data-reader-page-first data-button-loading-skip aria-label="Trang đầu" title="Trang đầu">
+                    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M17 18l-6-6 6-6" />
+                      <path d="M11 18l-6-6 6-6" />
+                    </svg>
+                  </button>
+                  <button class="reader-float-btn reader-float-btn--nav" type="button" data-reader-page-prev data-button-loading-skip aria-label="Trang trước" title="Trang trước">
+                    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M15 18l-6-6 6-6" />
+                    </svg>
+                  </button>
+                  <div class="reader-dropdown reader-dropdown--down" data-reader-dropdown>
+                    <button class="reader-dropdown-trigger" type="button" data-reader-toggle data-button-loading-skip>
+                      <span class="reader-dropdown-label">
+                        <span data-reader-page-current>1</span> / <span data-reader-page-total><%= readerPageTotal %></span>
+                      </span>
+                      <svg class="reader-icon reader-dropdown-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </button>
+                    <div class="reader-dropdown-panel" data-reader-panel>
+                      <button class="reader-dropdown-nav" type="button" data-reader-scroll="up" data-button-loading-skip aria-label="Cuộn lên">
+                        <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M6 15l6-6 6 6" />
+                        </svg>
+                      </button>
+                      <div class="reader-dropdown-list" data-reader-list>
+                        <% pageUrls.forEach((_src, pageIndex) => { %>
+                          <button
+                            class="reader-dropdown-option <%= pageIndex === 0 ? "is-active" : "" %>"
+                            type="button"
+                            data-reader-option
+                            data-reader-page-index="<%= pageIndex %>"
+                          >
+                            <span class="reader-dropdown-option-text">Trang <%= pageIndex + 1 %></span>
+                          </button>
+                        <% }) %>
+                      </div>
+                      <button class="reader-dropdown-nav" type="button" data-reader-scroll="down" data-button-loading-skip aria-label="Cuộn xuống">
+                        <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M6 9l6 6 6-6" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <button class="reader-float-btn reader-float-btn--nav" type="button" data-reader-page-next data-button-loading-skip aria-label="Trang sau" title="Trang sau">
+                    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M9 18l6-6-6-6" />
+                    </svg>
+                  </button>
+                  <button class="reader-float-btn reader-float-btn--nav" type="button" data-reader-page-last data-button-loading-skip aria-label="Trang cuối" title="Trang cuối">
+                    <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M13 18l6-6-6-6" />
+                      <path d="M7 18l6-6-6-6" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="reader-dock__comments">
+                  <div class="reader-dock__comments-body" data-comment-scroll-container>
+                    <% const chapterCommentBasePath = `/manga/${manga.slug}/chapters/${encodeURIComponent(String(chapter.number))}`; %>
+                    <%- include("partials/manga-comments-section", {
+                      manga,
+                      comments,
+                      commentCount,
+                      commentPagination,
+                      commentComposerEnabled,
+                      commentDeleteByTeamMember,
+                      commentScope: "chapter",
+                      commentBasePathOverride: chapterCommentBasePath,
+                      commentInfiniteMode: true,
+                      commentInfiniteBatchSize: 10
+                    }) %>
+                  </div>
+                </div>
+              </div>
+            </aside>
+            <% } %>
+          </div>
+        </section>
+        <% } %>
+      </main>
+      <% if (hasReaderPages) { %>
+        <div class="reader-float" data-reader-float>
+          <div class="reader-float-inner">
             <div class="reader-fixed-inner">
               <%- include("partials/chapter-reader-controls", {
                 manga,
@@ -257,56 +554,43 @@
                 dropdownClass: ""
               }) %>
             </div>
-          </div>
-        </section>
-        <% } %>
-
-        <% if (!isChapterLocked) { %>
-          <% const chapterCommentBasePath = `/manga/${manga.slug}/chapters/${encodeURIComponent(String(chapter.number))}`; %>
-          <%- include("partials/manga-comments-section", {
-            manga,
-            comments,
-            commentCount,
-            commentPagination,
-            commentComposerEnabled,
-            commentDeleteByTeamMember,
-            commentScope: "chapter",
-            commentBasePathOverride: chapterCommentBasePath
-          }) %>
-        <% } %>
-      </main>
-      <% if (!isChapterLocked) { %>
-        <div class="reader-float" data-reader-float>
-          <div class="reader-float-inner">
-            <%- include("partials/chapter-reader-controls", {
-              manga,
-              chapter,
-              chapterTitle,
-              chapterShortLabel,
-              chapterList,
-              prevChapter,
-              nextChapter,
-              buildChapterOptionLabel,
-              dropdownClass: ""
-            }) %>
+            <button class="reader-float-btn reader-float-btn--quick" type="button" data-reader-top data-button-loading-skip aria-label="Lên đầu trang" title="Lên đầu">
+              <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>
+            </button>
+            <button class="reader-float-btn reader-float-btn--quick" type="button" data-reader-down data-button-loading-skip aria-label="Xuống cuối trang" title="Xuống cuối trang">
+              <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+            </button>
           </div>
         </div>
-        <div class="reader-quick" data-reader-quick>
-          <button class="reader-quick-btn" type="button" data-reader-top aria-label="Lên đầu trang">
-            <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M6 15l6-6 6 6" />
-            </svg>
-          </button>
-          <button
-            class="reader-quick-btn"
-            type="button"
-            data-reader-comments
-            aria-label="Xuống bình luận"
-          >
-            <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </button>
+        <div
+          class="reader-report-modal"
+          data-reader-report-modal
+          data-reader-report-submit-url="/manga/<%= encodeURIComponent(manga.slug) %>/chapters/<%= encodeURIComponent(String(chapter.number)) %>/report"
+          hidden
+        >
+          <div class="reader-report-modal__backdrop" data-reader-report-close></div>
+          <div class="reader-report-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="reader-report-title">
+            <h2 id="reader-report-title">Báo lỗi chương</h2>
+            <p class="reader-report-modal__desc">Chọn vấn đề bạn gặp phải để đội ngũ xử lý nhanh hơn.</p>
+            <div class="reader-report-modal__reasons" role="group" aria-label="Lý do báo lỗi">
+              <button type="button" class="reader-report-modal__reason" data-reader-report-reason="broken_images">Ảnh hỏng / không tải được</button>
+              <button type="button" class="reader-report-modal__reason" data-reader-report-reason="wrong_order">Thứ tự trang sai</button>
+              <button type="button" class="reader-report-modal__reason" data-reader-report-reason="translation_issue">Lỗi dịch / sai nội dung</button>
+              <button type="button" class="reader-report-modal__reason" data-reader-report-reason="other">Lỗi khác</button>
+            </div>
+            <textarea
+              class="reader-report-modal__note"
+              rows="3"
+              maxlength="600"
+              placeholder="Mô tả ngắn (tuỳ chọn)"
+              data-reader-report-note
+            ></textarea>
+            <p class="reader-report-modal__feedback" data-reader-report-feedback></p>
+            <div class="reader-report-modal__actions">
+              <button type="button" class="reader-report-modal__btn reader-report-modal__btn--ghost" data-reader-report-close>Huỷ</button>
+              <button type="button" class="reader-report-modal__btn" data-reader-report-submit>Gửi báo lỗi</button>
+            </div>
+          </div>
         </div>
       <% } %>
       <%- include("partials/comments-lazy-loader") %>

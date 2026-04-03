@@ -154,7 +154,7 @@
     };
   };
 
-  const createWidget = ({
+  const createWidgets = ({
     rootSelector,
     toggleSelector,
     menuSelector,
@@ -166,39 +166,43 @@
     channel,
     requiresTeamMembership
   }) => {
-    const root = document.querySelector(rootSelector);
-    if (!root) return null;
+    const roots = Array.from(document.querySelectorAll(rootSelector));
+    if (!roots.length) return [];
 
-    const toggle = root.querySelector(toggleSelector);
-    const menu = root.querySelector(menuSelector);
-    const badge = root.querySelector(badgeSelector);
-    const list = root.querySelector(listSelector);
-    const empty = root.querySelector(emptySelector);
-    const markAllBtn = root.querySelector(markAllSelector);
-    const moreLink = moreSelector ? root.querySelector(moreSelector) : null;
-    if (!toggle || !menu || !badge || !list || !empty || !markAllBtn) return null;
+    return roots
+      .map((root) => {
+        const toggle = root.querySelector(toggleSelector);
+        const menu = root.querySelector(menuSelector);
+        const badge = root.querySelector(badgeSelector);
+        const list = root.querySelector(listSelector);
+        const empty = root.querySelector(emptySelector);
+        const markAllBtn = root.querySelector(markAllSelector);
+        const moreLink = moreSelector ? root.querySelector(moreSelector) : null;
+        if (!toggle || !menu || !badge || !list || !empty || !markAllBtn) return null;
 
-    return {
-      root,
-      toggle,
-      menu,
-      badge,
-      list,
-      empty,
-      markAllBtn,
-      moreLink,
-      channel,
-      requiresTeamMembership: Boolean(requiresTeamMembership),
-      visible: !root.hidden,
-      loading: false,
-      unreadCount: 0,
-      notifications: [],
-      moreUrl: "/publish"
-    };
+        return {
+          root,
+          toggle,
+          menu,
+          badge,
+          list,
+          empty,
+          markAllBtn,
+          moreLink,
+          channel,
+          requiresTeamMembership: Boolean(requiresTeamMembership),
+          visible: !root.hidden,
+          loading: false,
+          unreadCount: 0,
+          notifications: [],
+          moreUrl: "/publish"
+        };
+      })
+      .filter(Boolean);
   };
 
   const widgets = [
-    createWidget({
+    ...createWidgets({
       rootSelector: "[data-notify-widget]",
       toggleSelector: "[data-notify-toggle]",
       menuSelector: "[data-notify-menu]",
@@ -209,7 +213,7 @@
       channel: "default",
       requiresTeamMembership: false
     }),
-    createWidget({
+    ...createWidgets({
       rootSelector: "[data-team-notify-widget]",
       toggleSelector: "[data-team-notify-toggle]",
       menuSelector: "[data-team-notify-menu]",
@@ -221,12 +225,25 @@
       channel: "team",
       requiresTeamMembership: true
     })
-  ].filter(Boolean);
+  ];
 
   if (!widgets.length) return;
 
-  const widgetByChannel = new Map(widgets.map((widget) => [widget.channel, widget]));
-  const initialTeamWidget = widgetByChannel.get("team");
+  const widgetsByChannel = new Map();
+  widgets.forEach((widget) => {
+    if (!widgetsByChannel.has(widget.channel)) {
+      widgetsByChannel.set(widget.channel, []);
+    }
+    widgetsByChannel.get(widget.channel).push(widget);
+  });
+
+  const getChannelWidgets = (channel) => widgetsByChannel.get(channel) || [];
+  const getPrimaryChannelWidget = (channel) => {
+    const channelWidgets = getChannelWidgets(channel);
+    return channelWidgets.length ? channelWidgets[0] : null;
+  };
+
+  const initialTeamWidget = getPrimaryChannelWidget("team");
 
   let signedIn = false;
   let inTeam = Boolean(initialTeamWidget && !initialTeamWidget.root.hidden);
@@ -436,14 +453,31 @@
     }
   };
 
+  const syncChannelWidgetsState = (channel, { notifications, unreadCount, moreUrl } = {}) => {
+    const channelWidgets = getChannelWidgets(channel);
+    if (!channelWidgets.length) return;
+
+    channelWidgets.forEach((channelWidget) => {
+      if (Array.isArray(notifications)) {
+        channelWidget.notifications = notifications.map((item) => ({ ...item }));
+      }
+      if (unreadCount != null) {
+        updateBadge(channelWidget, unreadCount);
+      }
+      if (channelWidget.moreLink && typeof moreUrl === "string" && moreUrl.startsWith("/")) {
+        channelWidget.moreUrl = moreUrl;
+      }
+      renderNotifications(channelWidget);
+    });
+  };
+
   const loadTeamMembershipState = async () => {
     if (!signedIn) {
       inTeam = false;
-      const teamWidget = widgetByChannel.get("team");
-      if (teamWidget) {
+      getChannelWidgets("team").forEach((teamWidget) => {
         teamWidget.moreUrl = "/publish";
         setWidgetVisible(teamWidget, false);
-      }
+      });
       return false;
     }
 
@@ -452,7 +486,7 @@
     }
 
     teamMembershipRequestPromise = (async () => {
-      const teamWidget = widgetByChannel.get("team");
+      const teamWidgets = getChannelWidgets("team");
       const { signal, cleanup } = createAbortTimeout(NOTIFY_FETCH_TIMEOUT_MS);
       let response = null;
       let data = null;
@@ -479,15 +513,15 @@
 
       if (data.inTeam !== true || !data.team) {
         inTeam = false;
-        if (teamWidget) {
+        teamWidgets.forEach((teamWidget) => {
           teamWidget.moreUrl = "/publish";
           setWidgetVisible(teamWidget, false);
-        }
+        });
         return false;
       }
 
       inTeam = true;
-      if (teamWidget) {
+      teamWidgets.forEach((teamWidget) => {
         const teamId = Number(data.team.id);
         const teamSlug = data.team.slug ? String(data.team.slug).trim() : "";
         teamWidget.moreUrl =
@@ -495,7 +529,7 @@
             ? `/team/${encodeURIComponent(String(Math.floor(teamId)))}/${encodeURIComponent(teamSlug)}?tab=notifications`
             : "/publish";
         setWidgetVisible(teamWidget, true);
-      }
+      });
 
       return true;
     })().finally(() => {
@@ -514,12 +548,13 @@
       if (!data) return;
 
       const items = Array.isArray(data.notifications) ? data.notifications : [];
-      widget.notifications = items.map((item) => normalizeNotification(item)).filter(Boolean);
-      updateBadge(widget, data.unreadCount);
-      if (widget.moreLink && data.moreUrl && String(data.moreUrl).startsWith("/")) {
-        widget.moreUrl = String(data.moreUrl);
-      }
-      renderNotifications(widget);
+      const normalized = items.map((item) => normalizeNotification(item)).filter(Boolean);
+      const nextMoreUrl = data.moreUrl && String(data.moreUrl).startsWith("/") ? String(data.moreUrl) : undefined;
+      syncChannelWidgetsState(widget.channel, {
+        notifications: normalized,
+        unreadCount: data.unreadCount,
+        moreUrl: nextMoreUrl
+      });
     } finally {
       widget.loading = false;
     }
@@ -535,11 +570,13 @@
     });
     if (!data) return false;
 
-    widget.notifications = widget.notifications.map((item) =>
+    const nextNotifications = widget.notifications.map((item) =>
       item.id === Math.floor(id) ? { ...item, isRead: true } : item
     );
-    updateBadge(widget, data.unreadCount);
-    renderNotifications(widget);
+    syncChannelWidgetsState(widget.channel, {
+      notifications: nextNotifications,
+      unreadCount: data.unreadCount
+    });
     return true;
   };
 
@@ -548,9 +585,11 @@
     const data = await requestNotificationApi({ url: `/notifications/read-all${channelQuery}`, method: "POST" });
     if (!data) return false;
 
-    widget.notifications = widget.notifications.map((item) => ({ ...item, isRead: true }));
-    updateBadge(widget, data.unreadCount);
-    renderNotifications(widget);
+    const nextNotifications = widget.notifications.map((item) => ({ ...item, isRead: true }));
+    syncChannelWidgetsState(widget.channel, {
+      notifications: nextNotifications,
+      unreadCount: data.unreadCount
+    });
     return true;
   };
 
@@ -657,12 +696,14 @@
 
   const handleRealtimePayload = (payload) => {
     if (payload && payload.unreadCount != null) {
-      const widget = widgetByChannel.get("default");
-      if (widget) updateBadge(widget, payload.unreadCount);
+      getChannelWidgets("default").forEach((widget) => {
+        updateBadge(widget, payload.unreadCount);
+      });
     }
     if (payload && payload.teamUnreadCount != null) {
-      const widget = widgetByChannel.get("team");
-      if (widget) updateBadge(widget, payload.teamUnreadCount);
+      getChannelWidgets("team").forEach((widget) => {
+        updateBadge(widget, payload.teamUnreadCount);
+      });
     }
     scheduleRealtimeRefresh();
   };
@@ -721,8 +762,9 @@
       return;
     }
 
-    const defaultWidget = widgetByChannel.get("default");
-    if (defaultWidget) setWidgetVisible(defaultWidget, true);
+    getChannelWidgets("default").forEach((defaultWidget) => {
+      setWidgetVisible(defaultWidget, true);
+    });
 
     await loadTeamMembershipState().catch(() => inTeam);
 
