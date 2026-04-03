@@ -59,7 +59,40 @@ const isProductionApp = appEnv === "production" || appEnv === "prod";
 const siteConfig = loadSiteConfig(path.join(__dirname, "config.json"));
 const siteBrandingConfig = siteConfig.branding || {};
 const siteSeoConfig = siteConfig.seo || {};
-const serverAssetVersion = Date.now();
+const resolveServerAssetVersion = () => {
+  const envVersion = (process.env.ASSET_VERSION || "").toString().trim();
+  if (envVersion) return envVersion;
+
+  const assetCandidates = [
+    path.join(__dirname, "public", "styles.css"),
+    path.join(__dirname, "public", "reader.js")
+  ];
+
+  const fingerprints = [];
+  assetCandidates.forEach((assetPath) => {
+    try {
+      const stat = fs.statSync(assetPath);
+      if (!stat || !stat.isFile()) return;
+      fingerprints.push(
+        `${path.basename(assetPath)}:${Number(stat.mtimeMs || 0)}:${Number(stat.size || 0)}`
+      );
+    } catch (_error) {
+      // Ignore missing assets and continue.
+    }
+  });
+
+  if (!fingerprints.length) {
+    return String(Date.now());
+  }
+
+  return crypto
+    .createHash("sha1")
+    .update(fingerprints.join("|"))
+    .digest("hex")
+    .slice(0, 16);
+};
+
+const serverAssetVersion = resolveServerAssetVersion();
 const serverSessionVersionSeed =
   (process.env.SERVER_SESSION_VERSION || process.env.SESSION_SECRET || "server-session-v1")
     .toString()
