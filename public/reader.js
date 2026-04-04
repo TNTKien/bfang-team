@@ -1120,6 +1120,9 @@ quickCommentsButtons.forEach((quickComments) => {
   const pageOptionButtons = Array.from(document.querySelectorAll("[data-reader-page-index]"));
   const modeOptionButtons = Array.from(document.querySelectorAll("[data-reader-mode-option]"));
   const modeToggleButtons = Array.from(document.querySelectorAll("[data-reader-mode-toggle]"));
+  const chapterBridge = pagesRoot.querySelector("[data-reader-chapter-bridge]");
+  const hasChapterBridge = chapterBridge instanceof HTMLElement;
+  const totalReaderSlides = orderedImages.length + (hasChapterBridge ? 1 : 0);
 
   const normalizeReaderMode = (value) => {
     const normalized = (value || "").toString().trim().toLowerCase();
@@ -1223,11 +1226,19 @@ quickCommentsButtons.forEach((quickComments) => {
 
   applyReaderModeStateToDom();
 
+  const resolveSlideElementByIndex = (index) => {
+    const safeIndex = Math.floor(Number(index) || 0);
+    if (hasChapterBridge && safeIndex === orderedImages.length) {
+      return chapterBridge;
+    }
+    return orderedImages[safeIndex] || null;
+  };
+
   const clampPageIndex = (value) => {
-    if (!orderedImages.length) return 0;
+    if (!totalReaderSlides) return 0;
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return 0;
-    return Math.max(0, Math.min(orderedImages.length - 1, Math.floor(parsed)));
+    return Math.max(0, Math.min(totalReaderSlides - 1, Math.floor(parsed)));
   };
 
   const setNavButtonState = (button, disabled) => {
@@ -1237,10 +1248,10 @@ quickCommentsButtons.forEach((quickComments) => {
   };
 
   const updatePageNavButtons = (pageIndex) => {
-    const hasPages = orderedImages.length > 0;
+    const hasPages = totalReaderSlides > 0;
     const safeIndex = clampPageIndex(pageIndex);
     const atFirst = safeIndex <= 0;
-    const atLast = safeIndex >= Math.max(0, orderedImages.length - 1);
+    const atLast = safeIndex >= Math.max(0, totalReaderSlides - 1);
 
     pageFirstButtons.forEach((button) => {
       setNavButtonState(button, !hasPages || atFirst);
@@ -1381,16 +1392,26 @@ quickCommentsButtons.forEach((quickComments) => {
   };
 
   const scrollToPageIndex = (targetIndex, behavior = "smooth") => {
-    if (!orderedImages.length) return;
+    if (!totalReaderSlides) return;
     const safeIndex = clampPageIndex(targetIndex);
-    const targetImage = orderedImages[safeIndex];
-    if (!targetImage || !targetImage.isConnected) return;
+    const targetElement = resolveSlideElementByIndex(safeIndex);
+    if (!targetElement || !targetElement.isConnected) return;
+    const targetImage = targetElement instanceof HTMLImageElement
+      ? targetElement
+      : targetElement.querySelector(".page-media--lazy");
 
     activePageIndex = safeIndex;
     updatePageIndicators(activePageIndex);
-    markPageAsViewed(activePageIndex);
-    queueLookAround(activePageIndex);
-    ensureImageVisible(targetImage);
+    if (safeIndex < orderedImages.length) {
+      markPageAsViewed(activePageIndex);
+      queueLookAround(activePageIndex);
+      if (targetImage instanceof HTMLImageElement) {
+        ensureImageVisible(targetImage);
+      }
+    } else if (orderedImages.length) {
+      markPageAsViewed(orderedImages.length - 1);
+      queueLookAround(orderedImages.length - 1);
+    }
 
     if (isHorizontalReaderModeActive()) {
       if (forceShowHorizontalProgressAfterTapNavigation) {
@@ -1401,12 +1422,12 @@ quickCommentsButtons.forEach((quickComments) => {
         }
       }
 
-      const targetMetrics = getHorizontalTargetMetrics(targetImage);
+      const targetMetrics = getHorizontalTargetMetrics(targetElement);
       const rawTargetLeft = targetMetrics.start;
       const maxScrollLeft = getMaxHorizontalScrollLeft();
       const targetLeft = Math.max(0, Math.min(maxScrollLeft, Math.round(rawTargetLeft)));
-      const targetDeferredSrc = getDeferredSrc(targetImage);
-      const targetLazyState = getLazyState(targetImage);
+      const targetDeferredSrc = targetImage instanceof HTMLImageElement ? getDeferredSrc(targetImage) : "";
+      const targetLazyState = targetImage instanceof HTMLImageElement ? getLazyState(targetImage) : "loaded";
       const targetReady = !targetDeferredSrc || targetLazyState === "loaded";
       const smoothNavigation = behavior === "smooth" && targetReady;
       window.dispatchEvent(new CustomEvent(READER_CANCEL_JUMP_COMMENTS_EVENT));
@@ -1449,7 +1470,7 @@ quickCommentsButtons.forEach((quickComments) => {
 
     forceShowHorizontalProgressAfterTapNavigation = false;
 
-    const targetTop = Math.max(0, Math.round(window.scrollY + targetImage.getBoundingClientRect().top - 12));
+    const targetTop = Math.max(0, Math.round(window.scrollY + targetElement.getBoundingClientRect().top - 12));
     window.dispatchEvent(new CustomEvent(READER_CANCEL_JUMP_COMMENTS_EVENT));
     closeAllDropdowns();
     window.scrollTo({ top: targetTop, behavior });
@@ -1479,7 +1500,7 @@ quickCommentsButtons.forEach((quickComments) => {
 
   pageLastButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      scrollToPageIndex(orderedImages.length - 1);
+      scrollToPageIndex(totalReaderSlides - 1);
     });
   });
 
@@ -1494,7 +1515,10 @@ quickCommentsButtons.forEach((quickComments) => {
   const updatePageIndicators = (pageIndex) => {
     const safeTotal = Math.max(1, totalPages || orderedImages.length || 1);
     const safeCurrentIndex = Number.isFinite(Number(pageIndex)) ? Math.floor(Number(pageIndex)) : 0;
-    const safeCurrent = Math.min(safeTotal, Math.max(1, safeCurrentIndex + 1));
+    const navIndex = clampPageIndex(safeCurrentIndex);
+    const safeCurrent = navIndex >= orderedImages.length
+      ? safeTotal
+      : Math.min(safeTotal, Math.max(1, navIndex + 1));
 
     pageCurrentIndicators.forEach((element) => {
       if (element) {
@@ -1508,10 +1532,10 @@ quickCommentsButtons.forEach((quickComments) => {
       }
     });
 
-    if (isHorizontalReaderModeActive() && orderedImages.length > 0) {
-      const activeImage = orderedImages[Math.max(0, Math.min(orderedImages.length - 1, safeCurrent - 1))];
-      if (activeImage && activeImage.isConnected) {
-        const targetMetrics = getHorizontalTargetMetrics(activeImage);
+    if (isHorizontalReaderModeActive() && totalReaderSlides > 0) {
+      const activeElement = resolveSlideElementByIndex(navIndex);
+      if (activeElement && activeElement.isConnected) {
+        const targetMetrics = getHorizontalTargetMetrics(activeElement);
         const maxScrollLeft = getMaxHorizontalScrollLeft();
         const targetLeft = Math.max(0, Math.min(maxScrollLeft, Math.round(targetMetrics.start)));
         const currentLeft = Math.max(0, Number(pagesRoot.scrollLeft) || 0);
@@ -1521,7 +1545,7 @@ quickCommentsButtons.forEach((quickComments) => {
       }
     }
 
-    updatePageNavButtons(safeCurrent - 1);
+    updatePageNavButtons(navIndex);
   };
   const thresholdRaw = Number(pagesRoot.dataset.readerViewThreshold);
   const requiredViewedPages = Number.isFinite(thresholdRaw) && thresholdRaw > 0
@@ -2084,7 +2108,7 @@ quickCommentsButtons.forEach((quickComments) => {
   };
 
   const resolveActivePageIndex = () => {
-    if (!orderedImages.length) return 0;
+    if (!totalReaderSlides) return 0;
 
     if (isHorizontalReaderModeActive()) {
       const currentScrollLeft = Math.max(0, Number(pagesRoot.scrollLeft) || 0);
@@ -2109,6 +2133,18 @@ quickCommentsButtons.forEach((quickComments) => {
         }
       }
 
+      if (hasChapterBridge && chapterBridge && chapterBridge.isConnected) {
+        const targetMetrics = getHorizontalTargetMetrics(chapterBridge);
+        const start = targetMetrics.start;
+        const end = targetMetrics.start + targetMetrics.width;
+        if (start <= focusLine && end >= focusLine) {
+          return orderedImages.length;
+        }
+        if (currentScrollLeft >= Math.max(0, start - 2)) {
+          return orderedImages.length;
+        }
+      }
+
       return orderedImages.length - 1;
     }
 
@@ -2123,10 +2159,24 @@ quickCommentsButtons.forEach((quickComments) => {
       }
     }
 
+    if (hasChapterBridge && chapterBridge && chapterBridge.isConnected) {
+      const bridgeRect = chapterBridge.getBoundingClientRect();
+      if (bridgeRect.top <= focusLine && bridgeRect.bottom >= focusLine) {
+        return orderedImages.length;
+      }
+    }
+
     for (let index = 0; index < orderedImages.length; index += 1) {
       const rect = orderedImages[index].getBoundingClientRect();
       if (rect.bottom > 0) {
         return index;
+      }
+    }
+
+    if (hasChapterBridge && chapterBridge && chapterBridge.isConnected) {
+      const bridgeRect = chapterBridge.getBoundingClientRect();
+      if (bridgeRect.bottom > 0) {
+        return orderedImages.length;
       }
     }
 
@@ -2136,7 +2186,10 @@ quickCommentsButtons.forEach((quickComments) => {
   const syncActiveWindow = () => {
     activePageIndex = resolveActivePageIndex();
     updatePageIndicators(activePageIndex);
-    markPageAsViewed(activePageIndex);
+    const viewTrackingIndex = orderedImages.length
+      ? Math.max(0, Math.min(orderedImages.length - 1, activePageIndex))
+      : 0;
+    markPageAsViewed(viewTrackingIndex);
     if (jumpToCommentsActive) {
       enqueueImagesTowardComments();
       drainLookAheadQueue();
@@ -2269,7 +2322,8 @@ quickCommentsButtons.forEach((quickComments) => {
   };
 
   const resolveHorizontalStepFromGesture = (deltaX) => {
-    return deltaX < 0 ? 1 : -1;
+    const ltrStep = deltaX < 0 ? 1 : -1;
+    return isHorizontalRtlReaderModeActive() ? -ltrStep : ltrStep;
   };
 
   const isAtHorizontalReaderStart = () => {

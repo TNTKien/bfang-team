@@ -251,7 +251,8 @@
                     prevChapter,
                     nextChapter,
                     buildChapterOptionLabel,
-                    dropdownClass: "reader-dropdown--down"
+                    dropdownClass: "reader-dropdown--down",
+                    showModeToggle: true
                   }) %>
                 </div>
               </div>
@@ -308,6 +309,49 @@
                   </div>
                 </div>
               <% }) %>
+              <% const currentChapterNumberValue = Number(chapter.number); %>
+              <% const nextChapterNumberValue = nextChapter ? Number(nextChapter.number) : Number.NaN; %>
+              <% const canGoNextChapter = Boolean(
+                nextChapter
+                && Number.isFinite(currentChapterNumberValue)
+                && Number.isFinite(nextChapterNumberValue)
+                && nextChapterNumberValue > currentChapterNumberValue
+              ); %>
+              <div class="page-card reader-chapter-bridge" data-reader-chapter-bridge>
+                <div class="page-frame reader-chapter-bridge__frame">
+                  <div class="reader-chapter-bridge__inner">
+                    <% if (canGoNextChapter) { %>
+                      <p class="reader-chapter-bridge__kicker">
+                        <i class="fa-solid fa-forward-step" aria-hidden="true"></i>
+                        Chương kế tiếp
+                      </p>
+                      <h2 class="reader-chapter-bridge__title"><%= buildChapterOptionLabel(nextChapter) %></h2>
+                      <a class="reader-chapter-bridge__cta" href="/manga/<%= manga.slug %>/chapters/<%= nextChapter.number %>">
+                        <i class="fa-solid fa-circle-right" aria-hidden="true"></i>
+                        <span>Đọc ngay chương sau</span>
+                      </a>
+                    <% } else { %>
+                      <p class="reader-chapter-bridge__kicker">
+                        <i class="fa-solid fa-flag-checkered" aria-hidden="true"></i>
+                        Bạn đã đọc tới chương cuối
+                      </p>
+                      <h2 class="reader-chapter-bridge__title"><%= manga.title %></h2>
+                    <% } %>
+                    <div class="reader-chapter-bridge__actions">
+                      <% if (prevChapter) { %>
+                        <a class="reader-chapter-bridge__action" href="/manga/<%= manga.slug %>/chapters/<%= prevChapter.number %>">
+                          <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+                          <span>Quay lại chương trước</span>
+                        </a>
+                      <% } %>
+                      <a class="reader-chapter-bridge__action" href="/manga/<%= manga.slug %>">
+                        <i class="fa-solid fa-book-open" aria-hidden="true"></i>
+                        <span>Trang chính truyện</span>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
             <% } else if (pages.length === 0) { %>
               <p class="note">Chưa có trang nào cho chương này.</p>
             <% } else { %>
@@ -455,7 +499,8 @@
                       prevChapter,
                       nextChapter,
                       buildChapterOptionLabel,
-                      dropdownClass: "reader-dropdown--down"
+                      dropdownClass: "reader-dropdown--down",
+                      showModeToggle: true
                     }) %>
                   </div>
                 </div>
@@ -554,7 +599,8 @@
                 prevChapter,
                 nextChapter,
                 buildChapterOptionLabel,
-                dropdownClass: ""
+                dropdownClass: "",
+                showModeToggle: false
               }) %>
             </div>
             <button class="reader-float-btn reader-float-btn--quick" type="button" data-reader-top data-button-loading-skip aria-label="Lên đầu trang" title="Lên đầu">
