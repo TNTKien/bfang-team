@@ -1308,6 +1308,7 @@ const initDb = async () => {
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_title_lower_prefix ON manga (lower(title) text_pattern_ops)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_slug_lower_prefix ON manga (lower(slug) text_pattern_ops)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_status_visible ON manga (is_hidden, status)");
+  await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_visible_status_updated ON manga (status, updated_at DESC, id DESC) WHERE is_hidden = 0");
 
   try {
     await dbRun("CREATE EXTENSION IF NOT EXISTS pg_trgm");
@@ -1489,6 +1490,17 @@ const initDb = async () => {
   await dbRun(
     "CREATE INDEX IF NOT EXISTS idx_manga_view_daily_stats_manga_id ON manga_view_daily_stats(manga_id)"
   );
+  await dbRun(
+    `
+      DO $$
+      BEGIN
+        IF to_regclass('public.manga_genres') IS NOT NULL THEN
+          EXECUTE 'CREATE INDEX IF NOT EXISTS idx_manga_genres_genre_manga ON manga_genres (genre_id, manga_id)';
+        END IF;
+      END
+      $$;
+    `
+  );
 
   await dbRun(
     `
@@ -1601,6 +1613,7 @@ const initDb = async () => {
   await dbRun(
     "CREATE INDEX IF NOT EXISTS idx_comments_manga_chapter_status_created ON comments (manga_id, chapter_number, status, created_at DESC)"
   );
+  await dbRun("CREATE INDEX IF NOT EXISTS idx_comments_visible_manga ON comments (manga_id) WHERE status = 'visible'");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_comments_author_user_id ON comments(author_user_id)");
   await dbRun(

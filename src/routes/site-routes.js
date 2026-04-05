@@ -887,7 +887,7 @@ const registerSiteRoutes = (app, deps) => {
     }
 
     const exactSlugRow = await dbGet(
-      `${mangaRouteLookupQueryBase} WHERE m.slug = ? AND COALESCE(m.is_hidden, 0) = 0`,
+      `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND m.slug = ?`,
       [requestedSlug]
     );
     if (exactSlugRow) {
@@ -917,7 +917,7 @@ const registerSiteRoutes = (app, deps) => {
       }
 
       const idMatchedRow = await dbGet(
-        `${mangaRouteLookupQueryBase} WHERE m.id = ? AND COALESCE(m.is_hidden, 0) = 0`,
+        `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND m.id = ?`,
         [mangaId]
       );
       if (idMatchedRow) {
@@ -937,7 +937,7 @@ const registerSiteRoutes = (app, deps) => {
     }
 
     const suffixRows = await dbAll(
-      `${mangaRouteLookupQueryBase} WHERE m.slug LIKE ? AND COALESCE(m.is_hidden, 0) = 0 LIMIT 2`,
+      `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND m.slug LIKE ? LIMIT 2`,
       [`%-${requestedSlug}`]
     );
     if (suffixRows.length === 1) {
@@ -7374,7 +7374,7 @@ const registerSiteRoutes = (app, deps) => {
             FROM chapters c
             GROUP BY c.manga_id
           ) chapter_stats ON chapter_stats.manga_id = m.id
-          WHERE COALESCE(m.is_hidden, 0) = 0
+                WHERE m.is_hidden = 0
             AND ${buildTeamMangaScopeSql("m")}
         `,
           buildTeamMangaScopeParams()
@@ -10013,7 +10013,7 @@ const registerSiteRoutes = (app, deps) => {
             (
               SELECT m.updated_at
               FROM manga m
-              WHERE COALESCE(m.is_hidden, 0) = 0
+              WHERE m.is_hidden = 0
                 AND ${MANGA_HAS_CHAPTER_SQL}
               ORDER BY m.updated_at DESC, m.id DESC
               LIMIT 1
@@ -10025,7 +10025,7 @@ const registerSiteRoutes = (app, deps) => {
               SELECT c.id::text
               FROM chapters c
               JOIN manga m ON m.id = c.manga_id
-              WHERE COALESCE(m.is_hidden, 0) = 0
+              WHERE m.is_hidden = 0
               ORDER BY c.id DESC
               LIMIT 1
             ),
@@ -10143,7 +10143,7 @@ const registerSiteRoutes = (app, deps) => {
             FROM manga m
             LEFT JOIN period_totals ON period_totals.manga_id = m.id
             LEFT JOIN chapter_totals ON chapter_totals.manga_id = m.id
-            WHERE COALESCE(m.is_hidden, 0) = 0
+            WHERE m.is_hidden = 0
               AND ${MANGA_HAS_CHAPTER_SQL}
               ${adultVisibilityClause}
               AND COALESCE(period_totals.period_views, 0) > 0
@@ -10171,7 +10171,7 @@ const registerSiteRoutes = (app, deps) => {
               COALESCE(chapter_totals.chapter_total_views, 0)::bigint AS manga_views
             FROM manga m
             LEFT JOIN chapter_totals ON chapter_totals.manga_id = m.id
-            WHERE COALESCE(m.is_hidden, 0) = 0
+            WHERE m.is_hidden = 0
               AND ${MANGA_HAS_CHAPTER_SQL}
               ${adultVisibilityClause}
             ORDER BY COALESCE(chapter_totals.chapter_total_views, 0) DESC, m.id DESC
@@ -10189,7 +10189,7 @@ const registerSiteRoutes = (app, deps) => {
       if (rankingMangaIds.length) {
         const placeholders = rankingMangaIds.map(() => "?").join(",");
         const rankingMangaRows = await dbAll(
-          `${listQueryBase} WHERE m.id IN (${placeholders}) AND COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`,
+          `${listQueryBase} WHERE m.id IN (${placeholders}) AND m.is_hidden = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`,
           rankingMangaIds
         );
         const mangaRowById = new Map(
@@ -10227,7 +10227,7 @@ const registerSiteRoutes = (app, deps) => {
         );
 
         const fallbackRows = await dbAll(
-          `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${Math.max(HOMEPAGE_LATEST_LIMIT * 3, HOMEPAGE_RANKING_LIMIT * 6)}`
+          `${listQueryBase} WHERE m.is_hidden = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${Math.max(HOMEPAGE_LATEST_LIMIT * 3, HOMEPAGE_RANKING_LIMIT * 6)}`
         );
 
         fallbackRows.forEach((row) => {
@@ -10438,7 +10438,7 @@ const registerSiteRoutes = (app, deps) => {
           if (featuredIds.length > 0) {
             const placeholders = featuredIds.map(() => "?").join(",");
             const rows = await dbAll(
-              `${listQueryBase} WHERE m.id IN (${placeholders}) AND COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`,
+        `${listQueryBase} WHERE m.id IN (${placeholders}) AND m.is_hidden = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`,
               featuredIds
             );
             const rowMap = new Map(rows.map((row) => [row.id, row]));
@@ -10447,12 +10447,12 @@ const registerSiteRoutes = (app, deps) => {
 
           if (featuredRows.length === 0) {
             featuredRows = await dbAll(
-              `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT 4`
+        `${listQueryBase} WHERE m.is_hidden = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT 4`
             );
           }
 
           const latestRows = await dbAll(
-            `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${HOMEPAGE_LATEST_LIMIT}`
+        `${listQueryBase} WHERE m.is_hidden = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${HOMEPAGE_LATEST_LIMIT}`
           );
           await ensureMangaDailyViewBaselineSynced();
           const topRankingDayRows = await resolveHomepageTopRankingByPeriod({
@@ -10538,14 +10538,14 @@ const registerSiteRoutes = (app, deps) => {
               WHERE c.status = 'visible'
                 AND c.parent_id IS NULL
                 AND COALESCE(c.client_request_id, '') NOT ILIKE 'forum-%'
-                AND COALESCE(m.is_hidden, 0) = 0
+                AND m.is_hidden = 0
                 ${adultVisibilityClause}
               ORDER BY c.id DESC
               LIMIT ${HOMEPAGE_RECENT_COMMENT_LIMIT}
             `
           );
           const totalSeriesRow = await dbGet(
-            `SELECT COUNT(*) as count FROM manga m WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`
+            `SELECT COUNT(*) as count FROM manga m WHERE m.is_hidden = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause}`
           );
           const totalsRow = await dbGet(
             `
@@ -10558,7 +10558,7 @@ const registerSiteRoutes = (app, deps) => {
           );
           const totalSeriesNoAdultRow = isAdultContentControlActive
             ? await dbGet(
-              `SELECT COUNT(*) as count FROM manga m WHERE COALESCE(m.is_hidden, 0) = 0 AND ${MANGA_HAS_CHAPTER_SQL} AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})`
+              `SELECT COUNT(*) as count FROM manga m WHERE m.is_hidden = 0 AND ${MANGA_HAS_CHAPTER_SQL} AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})`
             )
             : totalSeriesRow;
           const totalsNoAdultRow = isAdultContentControlActive
@@ -10567,7 +10567,7 @@ const registerSiteRoutes = (app, deps) => {
                 SELECT COUNT(*) as total_chapters
                 FROM chapters c
                 JOIN manga m ON m.id = c.manga_id
-                WHERE COALESCE(m.is_hidden, 0) = 0
+                WHERE m.is_hidden = 0
                   AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})
               `
             )
@@ -11360,7 +11360,7 @@ const registerSiteRoutes = (app, deps) => {
         `
           SELECT status, COUNT(*) as count
           FROM manga m
-          WHERE COALESCE(m.is_hidden, 0) = 0
+          WHERE m.is_hidden = 0
             AND ${MANGA_HAS_CHAPTER_SQL}
             AND status IS NOT NULL
             AND TRIM(status) <> ''
@@ -11547,7 +11547,7 @@ const registerSiteRoutes = (app, deps) => {
       const conditions = [];
       const params = [];
 
-      conditions.push("COALESCE(m.is_hidden, 0) = 0");
+    conditions.push("m.is_hidden = 0");
       conditions.push(MANGA_HAS_CHAPTER_SQL);
       if (!includeAdultForRequest) {
         conditions.push(`NOT (${MANGA_HAS_ADULT_GENRE_SQL})`);

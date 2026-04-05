@@ -1334,10 +1334,15 @@ app.get(
       return res.redirect(nextTarget);
     }
 
-    const mangaCountRow = await dbGet("SELECT COUNT(*) as count FROM manga");
-    const chapterCountRow = await dbGet("SELECT COUNT(*) as count FROM chapters");
-    const commentCountRow = await dbGet("SELECT COUNT(*) as count FROM comments");
-    const memberCountRow = await dbGet("SELECT COUNT(*) as count FROM users");
+    const statsRow = await dbGet(
+      `
+        SELECT
+          (SELECT COUNT(*) FROM manga) AS manga_count,
+          (SELECT COUNT(*) FROM chapters) AS chapter_count,
+          (SELECT COUNT(*) FROM comments) AS comment_count,
+          (SELECT COUNT(*) FROM users) AS member_count
+      `
+    );
     const latestMangaRows = await dbAll(`${listQuery} LIMIT 5`);
     const latestComments = await dbAll(
       `
@@ -1356,10 +1361,10 @@ app.get(
       title: "Admin Dashboard",
       adminUser: adminConfig.user,
       stats: {
-        totalSeries: mangaCountRow ? mangaCountRow.count : 0,
-        totalChapters: chapterCountRow ? chapterCountRow.count : 0,
-        totalComments: commentCountRow ? commentCountRow.count : 0,
-        totalMembers: memberCountRow ? memberCountRow.count : 0
+        totalSeries: statsRow ? statsRow.manga_count : 0,
+        totalChapters: statsRow ? statsRow.chapter_count : 0,
+        totalComments: statsRow ? statsRow.comment_count : 0,
+        totalMembers: statsRow ? statsRow.member_count : 0
       },
       latestManga: latestMangaRows.map(mapMangaListRow),
       latestComments
