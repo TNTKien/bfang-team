@@ -12,15 +12,27 @@ const run = async () => {
   });
 
   try {
-    const insertedFromMirror = await pool.query(`
-      INSERT INTO manga_translation_teams (manga_id, team_id)
-      SELECT m.id, m.translation_team_id
-      FROM manga m
-      JOIN translation_teams t ON t.id = m.translation_team_id
-      WHERE m.translation_team_id IS NOT NULL
-      ON CONFLICT DO NOTHING
-      RETURNING manga_id, team_id
+    const legacyColumnCheck = await pool.query(`
+      SELECT 1 AS ok
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'manga'
+        AND column_name = 'translation_team_id'
+      LIMIT 1
     `);
+    const hasLegacyTranslationTeamId = Boolean(legacyColumnCheck.rows[0] && legacyColumnCheck.rows[0].ok);
+
+    const insertedFromMirror = hasLegacyTranslationTeamId
+      ? await pool.query(`
+          INSERT INTO manga_translation_teams (manga_id, team_id)
+          SELECT m.id, m.translation_team_id
+          FROM manga m
+          JOIN translation_teams t ON t.id = m.translation_team_id
+          WHERE m.translation_team_id IS NOT NULL
+          ON CONFLICT DO NOTHING
+          RETURNING manga_id, team_id
+        `)
+      : { rowCount: 0, rows: [] };
 
     const insertedFromGroupName = await pool.query(`
       INSERT INTO manga_translation_teams (manga_id, team_id)
@@ -50,15 +62,10 @@ const run = async () => {
       WITH linked AS (
         SELECT
           m.id AS manga_id,
-          COALESCE(
-            MIN(CASE WHEN mtt.team_id = m.translation_team_id THEN mtt.team_id END),
-            MIN(mtt.team_id)
-          ) AS primary_team_id,
           string_agg(
             t.name,
             ' / '
             ORDER BY
-              CASE WHEN mtt.team_id = m.translation_team_id THEN 0 ELSE 1 END,
               mtt.team_id ASC,
               lower(t.name) ASC,
               t.id ASC
@@ -70,12 +77,30 @@ const run = async () => {
       )
       UPDATE manga m
       SET
-        translation_team_id = linked.primary_team_id,
         group_name = linked.group_name
       FROM linked
       WHERE linked.manga_id = m.id
-      RETURNING m.id, m.translation_team_id, m.group_name
+      RETURNING m.id, m.group_name
     `);
+
+    if (hasLegacyTranslationTeamId) {
+      await pool.query("DROP INDEX IF EXISTS idx_manga_translation_team_id");
+      await pool.query(`
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_manga_translation_team_id'
+              AND conrelid = 'manga'::regclass
+          ) THEN
+            ALTER TABLE manga DROP CONSTRAINT fk_manga_translation_team_id;
+          END IF;
+        END
+        $$;
+      `);
+      await pool.query("ALTER TABLE manga DROP COLUMN IF EXISTS translation_team_id");
+    }
 
     console.log(
       JSON.stringify(

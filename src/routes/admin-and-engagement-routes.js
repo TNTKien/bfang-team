@@ -695,11 +695,9 @@ const listMangaLinkedTeams = async ({ mangaId, dbAllFn = dbAll }) => {
         t.name,
         t.slug
       FROM manga_translation_teams mtt
-      JOIN manga m ON m.id = mtt.manga_id
       JOIN translation_teams t ON t.id = mtt.team_id
       WHERE mtt.manga_id = ?
       ORDER BY
-        CASE WHEN t.id = m.translation_team_id THEN 0 ELSE 1 END,
         mtt.team_id ASC,
         lower(t.name) ASC,
         t.id ASC
@@ -767,15 +765,14 @@ const replaceMangaLinkedTeams = async ({
   }
 
   await dbRunFn(
-    "UPDATE manga SET group_name = ?, translation_team_id = ? WHERE id = ?",
-    [safeGroupName, normalizedTeamIds[0], Math.floor(safeMangaId)]
+    "UPDATE manga SET group_name = ? WHERE id = ?",
+    [safeGroupName, Math.floor(safeMangaId)]
   );
 
   return {
     groupName: safeGroupName,
     teamIds: normalizedTeamIds,
-    teams: selectedTeams,
-    translationTeamId: normalizedTeamIds[0]
+    teams: selectedTeams
   };
 };
 
@@ -911,7 +908,6 @@ const buildGroupTeamSelectionsForForm = async ({
   mangaId,
   teamManageScope,
   groupName,
-  translationTeamId,
   dbAllFn = dbAll
 }) => {
   const linkedTeams = await listMangaLinkedTeams({ mangaId, dbAllFn });
@@ -923,12 +919,8 @@ const buildGroupTeamSelectionsForForm = async ({
     });
   }
 
-  const primaryTeamId = Number(translationTeamId);
-  const primaryTeams = Number.isFinite(primaryTeamId) && primaryTeamId > 0
-    ? await listApprovedTeamsByIds({ teamIds: [Math.floor(primaryTeamId)], dbAllFn })
-    : [];
   const groupNameTeams = await listApprovedTeamsByGroupName({ groupName: groupName || "", dbAllFn });
-  const selectedTeams = mergeUniqueTeamSelections(primaryTeams, groupNameTeams);
+  const selectedTeams = mergeUniqueTeamSelections(groupNameTeams);
   return ensureTeamScopeIncludedInSelection({
     teams: selectedTeams,
     teamManageScope,
@@ -1040,7 +1032,7 @@ const teamLeaderMangaGuard = asyncHandler(async (req, res, next) => {
     return sendTeamManageForbidden(req, res, "Mã truyện không hợp lệ.");
   }
 
-  const mangaRow = await dbGet("SELECT id, group_name, translation_team_id FROM manga WHERE id = ?", [
+  const mangaRow = await dbGet("SELECT id, group_name FROM manga WHERE id = ?", [
     Math.floor(mangaId)
   ]);
   const scopeOwnsManga = await isMangaLinkedToTeam({
@@ -1055,7 +1047,6 @@ const teamLeaderMangaGuard = asyncHandler(async (req, res, next) => {
   req.teamManagedManga = {
     id: Number(mangaRow.id) || Math.floor(mangaId),
     groupName: (mangaRow.group_name || "").toString().trim(),
-    translationTeamId: Number(mangaRow.translation_team_id) || 0,
     linkedTeamIds: linkedTeams.map((teamRow) => teamRow.id)
   };
   return next();
@@ -1072,7 +1063,7 @@ const teamLeaderChapterGuard = asyncHandler(async (req, res, next) => {
 
   const chapterRow = await dbGet(
     `
-      SELECT c.id, c.manga_id, m.group_name, m.translation_team_id
+      SELECT c.id, c.manga_id, m.group_name
       FROM chapters c
       JOIN manga m ON m.id = c.manga_id
       WHERE c.id = ?
@@ -1109,7 +1100,7 @@ const teamLeaderDraftGuard = asyncHandler(async (req, res, next) => {
   }
 
   const mangaRow = await dbGet(
-    "SELECT id, group_name, translation_team_id FROM manga WHERE id = ? LIMIT 1",
+    "SELECT id, group_name FROM manga WHERE id = ? LIMIT 1",
     [Number(draftRow.manga_id)]
   );
   const scopeOwnsManga = mangaRow
@@ -1832,7 +1823,6 @@ app.post(
           slug,
           author,
           group_name,
-          translation_team_id,
           other_names,
           genres,
           status,
@@ -1844,14 +1834,13 @@ app.post(
           is_oneshot,
           oneshot_locked
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         [
           title,
           draftSlug,
           author,
           groupSelection.groupName,
-          groupSelection.teamIds[0],
           otherNames,
           genres,
           status,
@@ -1974,8 +1963,7 @@ app.get(
     const groupTeamSelections = await buildGroupTeamSelectionsForForm({
       mangaId: mangaRow.id,
       teamManageScope,
-      groupName: mangaRow.group_name || "",
-      translationTeamId: mangaRow.translation_team_id
+      groupName: mangaRow.group_name || ""
     });
     const initialGroupName =
       buildGroupNameFromApprovedTeams(groupTeamSelections) ||
@@ -2201,7 +2189,6 @@ app.post(
           slug = ?,
           author = ?,
           group_name = ?,
-          translation_team_id = ?,
           other_names = ?,
           genres = ?,
           status = ?,
@@ -2217,7 +2204,6 @@ app.post(
           slug,
           author,
           groupSelection.groupName,
-          groupSelection.teamIds[0],
           otherNames,
           genres,
           status,

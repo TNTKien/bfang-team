@@ -1288,8 +1288,7 @@ const initDb = async () => {
       other_names TEXT,
       cover_updated_at BIGINT,
       is_oneshot BOOLEAN NOT NULL DEFAULT false,
-      oneshot_locked BOOLEAN NOT NULL DEFAULT false,
-      translation_team_id INTEGER
+      oneshot_locked BOOLEAN NOT NULL DEFAULT false
     )
   `
   );
@@ -1305,12 +1304,10 @@ const initDb = async () => {
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS cover_updated_at BIGINT");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS is_oneshot BOOLEAN NOT NULL DEFAULT false");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS oneshot_locked BOOLEAN NOT NULL DEFAULT false");
-  await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS translation_team_id INTEGER");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_visible_updated ON manga (is_hidden, updated_at DESC, id DESC)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_title_lower_prefix ON manga (lower(title) text_pattern_ops)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_slug_lower_prefix ON manga (lower(slug) text_pattern_ops)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_status_visible ON manga (is_hidden, status)");
-  await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_translation_team_id ON manga (translation_team_id)");
 
   try {
     await dbRun("CREATE EXTENSION IF NOT EXISTS pg_trgm");
@@ -1834,28 +1831,29 @@ const initDb = async () => {
     `
   );
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_translation_teams_team_id ON manga_translation_teams(team_id, manga_id)");
-  await dbRun(
+  const legacyTranslationTeamIdColumn = await dbGet(
     `
-      UPDATE manga m
-      SET translation_team_id = NULL
-      WHERE m.translation_team_id IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1
-          FROM translation_teams t
-          WHERE t.id = m.translation_team_id
-        )
+      SELECT 1 AS ok
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'manga'
+        AND column_name = 'translation_team_id'
+      LIMIT 1
     `
-  );
-  await dbRun(
-    `
-      INSERT INTO manga_translation_teams (manga_id, team_id)
-      SELECT m.id, m.translation_team_id
-      FROM manga m
-      JOIN translation_teams t ON t.id = m.translation_team_id
-      WHERE m.translation_team_id IS NOT NULL
-      ON CONFLICT DO NOTHING
-    `
-  );
+  ).catch(() => null);
+  const hasLegacyTranslationTeamId = Boolean(legacyTranslationTeamIdColumn && legacyTranslationTeamIdColumn.ok);
+  if (hasLegacyTranslationTeamId) {
+    await dbRun(
+      `
+        INSERT INTO manga_translation_teams (manga_id, team_id)
+        SELECT m.id, m.translation_team_id
+        FROM manga m
+        JOIN translation_teams t ON t.id = m.translation_team_id
+        WHERE m.translation_team_id IS NOT NULL
+        ON CONFLICT DO NOTHING
+      `
+    );
+  }
   await dbRun(
     `
       INSERT INTO manga_translation_teams (manga_id, team_id)
@@ -1885,15 +1883,10 @@ const initDb = async () => {
       WITH linked AS (
         SELECT
           m.id AS manga_id,
-          COALESCE(
-            MIN(CASE WHEN mtt.team_id = m.translation_team_id THEN mtt.team_id END),
-            MIN(mtt.team_id)
-          ) AS primary_team_id,
           string_agg(
             t.name,
             ' / '
             ORDER BY
-              CASE WHEN mtt.team_id = m.translation_team_id THEN 0 ELSE 1 END,
               mtt.team_id ASC,
               lower(t.name) ASC,
               t.id ASC
@@ -1905,32 +1898,31 @@ const initDb = async () => {
       )
       UPDATE manga m
       SET
-        translation_team_id = linked.primary_team_id,
         group_name = linked.group_name
       FROM linked
       WHERE linked.manga_id = m.id
     `
   );
-  await dbRun(
-    `
-      DO $$
-      BEGIN
-        IF NOT EXISTS (
-          SELECT 1
-          FROM pg_constraint
-          WHERE conname = 'fk_manga_translation_team_id'
-            AND conrelid = 'manga'::regclass
-        ) THEN
-          ALTER TABLE manga
-            ADD CONSTRAINT fk_manga_translation_team_id
-            FOREIGN KEY (translation_team_id)
-            REFERENCES translation_teams(id)
-            ON DELETE SET NULL;
-        END IF;
-      END
-      $$;
-    `
-  );
+  if (hasLegacyTranslationTeamId) {
+    await dbRun("DROP INDEX IF EXISTS idx_manga_translation_team_id");
+    await dbRun(
+      `
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_manga_translation_team_id'
+              AND conrelid = 'manga'::regclass
+          ) THEN
+            ALTER TABLE manga DROP CONSTRAINT fk_manga_translation_team_id;
+          END IF;
+        END
+        $$;
+      `
+    );
+    await dbRun("ALTER TABLE manga DROP COLUMN IF EXISTS translation_team_id");
+  }
 
   await dbRun(
     `
