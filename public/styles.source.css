@@ -20082,6 +20082,26 @@ body.reader-page.reader-page--reader-mode.reader-dock-resizing * {
   margin-left: 0;
 }
 
+.reader-dock__comments #comments .comment-compose-shell .comment-compose-meta {
+  grid-column: 1 / -1 !important;
+}
+
+.reader-dock__comments #comments .comment-compose-meta > .comment-submit {
+  margin-left: auto;
+}
+
+@media (min-width: 1120px) {
+  body.reader-page.reader-page--reader-mode:not(.reader-dock-compact):not(.reader-dock-ultra-compact) .reader-dock__comments #comments .comment-submit {
+    width: 100%;
+    margin-left: auto;
+    justify-content: flex-end;
+  }
+
+  body.reader-page.reader-page--reader-mode:not(.reader-dock-compact):not(.reader-dock-ultra-compact) .reader-dock__comments #comments .comment-compose-meta {
+    grid-column: 1 / -1;
+  }
+}
+
 .reader-dock__comments #comments .comment-textarea {
   max-width: 100%;
 }
@@ -20369,6 +20389,7 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-
 
 body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell .comment-compose-meta,
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell .comment-compose-meta {
+  grid-column: 1 / -1;
   align-items: center;
   gap: 0.22rem;
   min-width: 0;
@@ -20396,6 +20417,15 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-
   height: 26px;
 }
 
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools > .comment-picker,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools > .comment-picker,
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools > .comment-picker__toggle,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools > .comment-picker__toggle {
+  width: 26px;
+  min-width: 26px;
+  flex: 0 0 26px;
+}
+
 body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle svg,
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle svg {
   width: 15px;
@@ -20404,16 +20434,20 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-
 
 body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools .comment-char-counter,
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools .comment-char-counter {
-  margin-left: auto;
+  margin-left: 0;
   padding-left: 0.14rem;
   height: 26px;
   font-size: 0.62rem;
   white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-form--inline-submit .comment-compose-shell .comment-submit,
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-form--inline-submit .comment-compose-shell .comment-submit {
   align-self: flex-end;
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
   margin: 0;
 }
 
@@ -20422,6 +20456,19 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-
   width: 28px;
   min-width: 28px;
   height: 28px;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-meta > .comment-tools,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-meta > .comment-tools {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-meta > .comment-submit {
+  width: 28px !important;
+  min-width: 28px !important;
+  flex: 0 0 28px !important;
+  margin-left: 0 !important;
 }
 
 body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-submit__icon,
@@ -20445,6 +20492,13 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-
   height: 24px;
 }
 
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools > .comment-picker,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools > .comment-picker__toggle {
+  width: 24px;
+  min-width: 24px;
+  flex: 0 0 24px;
+}
+
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle svg {
   width: 14px;
   height: 14px;
@@ -20454,6 +20508,13 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-
   width: 26px;
   min-width: 26px;
   height: 26px;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-meta > .comment-submit {
+  width: 26px !important;
+  min-width: 26px !important;
+  flex: 0 0 26px !important;
+  margin-left: 0 !important;
 }
 
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact .reader-dock__comments #comments .comment-avatar {
@@ -20771,6 +20832,60 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact .reader-dock
 }
 
 @media (max-width: 1119px) {
+  .section.container.reader.reader-shell {
+    width: 100dvw;
+    max-width: 100dvw;
+    margin-left: calc(50% - 50dvw);
+    margin-right: calc(50% - 50dvw);
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .reader-mobile-top,
+  .reader-dock {
+    width: 100dvw;
+    max-width: 100dvw;
+    margin-left: calc(50% - 50dvw);
+    margin-right: calc(50% - 50dvw);
+  }
+
+  .reader-mobile-top .reader-fixed-inner,
+  .reader-float-inner .reader-fixed-inner,
+  .reader-dock__controls .reader-fixed-inner--dock-collapsible {
+    width: 100% !important;
+    max-width: none;
+  }
+
+  body.reader-page.reader-page--reader-mode:is(.reader-reading-horizontal, .reader-reading-horizontal-rtl) .reader-shell__content .reader-pages {
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+    min-height: 100vh;
+    min-height: 100dvh;
+    height: auto !important;
+    touch-action: pan-y !important;
+    overscroll-behavior-y: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body.reader-page.reader-page--reader-mode:is(.reader-reading-horizontal, .reader-reading-horizontal-rtl) .reader-shell__content .reader-pages .page-card:not(.reader-chapter-bridge),
+  body.reader-page.reader-page--reader-mode:is(.reader-reading-horizontal, .reader-reading-horizontal-rtl) .reader-shell__content .page-frame:not(.reader-chapter-bridge__frame) {
+    min-height: 100vh;
+    min-height: 100dvh;
+    height: auto !important;
+  }
+
+  body.reader-page.reader-page--reader-mode:is(.reader-reading-horizontal, .reader-reading-horizontal-rtl) .reader-shell__content .reader-pages .page-card.reader-chapter-bridge,
+  body.reader-page.reader-page--reader-mode:is(.reader-reading-horizontal, .reader-reading-horizontal-rtl) .reader-shell__content .reader-pages .page-card.reader-chapter-bridge .page-frame.reader-chapter-bridge__frame {
+    min-height: 0 !important;
+    height: auto !important;
+  }
+
+  body.reader-page.reader-page--reader-mode:is(.reader-reading-horizontal, .reader-reading-horizontal-rtl) .reader-shell__content .reader-pages.is-pull-resist {
+    transform: none !important;
+    transition: none !important;
+  }
+
   body.reader-page.reader-page--reader-mode:not(.reader-horizontal-progress-hidden):is(.reader-reading-horizontal, .reader-reading-horizontal-rtl) .reader-horizontal-progress {
     position: fixed;
     left: 50%;
@@ -20806,6 +20921,28 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact .reader-dock
     justify-content: space-between;
     border-bottom: 1px solid #242424;
     padding-bottom: 0.26rem;
+  }
+
+  .reader-mobile-top .reader-mobile-top__controls {
+    margin-left: -0.3rem;
+    margin-right: -0.42rem;
+  }
+
+  .reader-dock__panel,
+  .reader-dock__controls {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .reader-dock__controls .reader-fixed-inner--dock-collapsible {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  body.reader-page.reader-page--reader-mode .reader-dock__controls .reader-fixed-inner--dock-collapsible,
+  body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible,
+  body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible {
+    grid-template-columns: 34px minmax(0, 1fr) 34px !important;
   }
 
   .reader-mobile-top .reader-fixed-inner {

@@ -233,6 +233,59 @@
       height: 15px;
     }
 
+    @media (max-width: 1119.98px) {
+      .section.container.reader.reader-shell {
+        width: 100dvw;
+        max-width: 100dvw;
+        margin-left: calc(50% - 50dvw);
+        margin-right: calc(50% - 50dvw);
+        padding-left: 0;
+        padding-right: 0;
+      }
+
+      .reader-mobile-top,
+      .reader-dock {
+        width: 100dvw;
+        max-width: 100dvw;
+        margin-left: calc(50% - 50dvw);
+        margin-right: calc(50% - 50dvw);
+      }
+
+      .reader-mobile-top .reader-mobile-top__controls {
+        margin-left: -0.3rem;
+        margin-right: -0.42rem;
+      }
+
+      .reader-dock__panel,
+      .reader-dock__controls {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+      }
+
+      .reader-dock__controls .reader-fixed-inner--dock-collapsible {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+      }
+
+      .reader-dock-collapse-toggle,
+      .reader-dock-collapse-toggle--head {
+        display: none !important;
+      }
+
+      .reader-mobile-top .reader-fixed-inner,
+      .reader-float-inner .reader-fixed-inner,
+      .reader-dock__controls .reader-fixed-inner--dock-collapsible {
+        width: 100% !important;
+        max-width: none;
+      }
+
+      body.reader-page.reader-page--reader-mode .reader-dock__controls .reader-fixed-inner--dock-collapsible,
+      body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible,
+      body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible {
+        grid-template-columns: 34px minmax(0, 1fr) 34px !important;
+      }
+    }
+
     @media (min-width: 1120px) {
       body.reader-page.reader-page--reader-mode.reader-dock-collapsed {
         --reader-dock-width: 52px;
@@ -447,8 +500,13 @@
         transform: rotate(180deg);
       }
     }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-preinit .reader-dock__comments #comments .comment-box {
+      visibility: hidden;
+      pointer-events: none;
+    }
   </style>
-  <body class="reader-page<%= hasReaderPages ? " reader-page--reader-mode" : "" %>">
+  <body class="reader-page<%= hasReaderPages ? " reader-page--reader-mode reader-dock-preinit" : "" %>">
     <script nonce="<%= cspNonce || '' %>">
       (() => {
         const body = document.body;

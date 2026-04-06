@@ -15,11 +15,17 @@ const READER_JUMP_CHAPTER_TOP_EVENT = "bfang:reader-jump-chapter-top";
 const READER_JUMP_CHAPTER_BOTTOM_EVENT = "bfang:reader-jump-chapter-bottom";
 const READER_MODE_STORAGE_KEY = "bfang:reader-mode";
 const READER_DOCK_COLLAPSED_STORAGE_KEY = "bfang:reader-dock-collapsed";
+const READER_DOCK_PREINIT_CLASS = "reader-dock-preinit";
 const READER_MODE_VERTICAL = "vertical";
 const READER_MODE_HORIZONTAL = "horizontal";
 const READER_MODE_HORIZONTAL_RTL = "horizontal-rtl";
 const READER_MODE_HORIZONTAL_CLASS = "reader-reading-horizontal";
 const READER_MODE_HORIZONTAL_RTL_CLASS = "reader-reading-horizontal-rtl";
+
+const clearReaderDockPreinitState = () => {
+  if (!document.body) return;
+  document.body.classList.remove(READER_DOCK_PREINIT_CLASS);
+};
 
 const dispatchReaderToast = (message, tone = "info") => {
   const text = (message || "").toString().trim();
@@ -49,8 +55,14 @@ const dispatchReaderToast = (message, tone = "info") => {
 
 (() => {
   const dock = document.querySelector(".reader-dock");
-  if (!(dock instanceof HTMLElement)) return;
-  if (typeof window.matchMedia !== "function") return;
+  if (!(dock instanceof HTMLElement)) {
+    clearReaderDockPreinitState();
+    return;
+  }
+  if (typeof window.matchMedia !== "function") {
+    clearReaderDockPreinitState();
+    return;
+  }
 
   const dockToggleButtons = Array.from(
     document.querySelectorAll("[data-reader-dock-toggle]")
@@ -289,6 +301,7 @@ const dispatchReaderToast = (message, tone = "info") => {
   };
 
   syncDockWidthForViewport();
+  clearReaderDockPreinitState();
 
   if (dockCommentsRoot instanceof HTMLElement && typeof MutationObserver === "function") {
     const timeObserver = new MutationObserver(() => {
@@ -1441,7 +1454,12 @@ quickCommentsButtons.forEach((quickComments) => {
     if (!isMobileHorizontalReaderModeActive()) return;
     if (!pagesRoot || !pagesRoot.isConnected) return;
 
-    const viewportHeight = Number(window.innerHeight) || Number(document.documentElement?.clientHeight) || 0;
+    const visualViewportHeight = Number(window.visualViewport && window.visualViewport.height);
+    const viewportHeight = Number.isFinite(visualViewportHeight) && visualViewportHeight > 0
+      ? visualViewportHeight
+      : Number(window.innerHeight) || Number(document.documentElement?.clientHeight) || 0;
+    const visualViewportOffsetTop = Number(window.visualViewport && window.visualViewport.offsetTop);
+    const viewportOffsetTop = Number.isFinite(visualViewportOffsetTop) ? visualViewportOffsetTop : 0;
     if (!viewportHeight) return;
 
     const rootRect = pagesRoot.getBoundingClientRect();
@@ -1450,7 +1468,7 @@ quickCommentsButtons.forEach((quickComments) => {
     }
 
     const currentCenter = rootRect.top + rootRect.height * 0.5;
-    const targetCenter = viewportHeight * 0.5;
+    const targetCenter = viewportOffsetTop + viewportHeight * 0.5;
     const delta = currentCenter - targetCenter;
     if (Math.abs(delta) < 1) return;
 
@@ -1459,6 +1477,38 @@ quickCommentsButtons.forEach((quickComments) => {
     if (Math.abs(nextTop - currentTop) < 1) return;
 
     window.scrollTo({ top: nextTop, behavior: "auto" });
+  };
+
+  const getMobileHorizontalRecenterDelta = () => {
+    if (!isMobileHorizontalReaderModeActive()) return Number.NaN;
+    if (!pagesRoot || !pagesRoot.isConnected) return Number.NaN;
+
+    const visualViewportHeight = Number(window.visualViewport && window.visualViewport.height);
+    const viewportHeight = Number.isFinite(visualViewportHeight) && visualViewportHeight > 0
+      ? visualViewportHeight
+      : Number(window.innerHeight) || Number(document.documentElement?.clientHeight) || 0;
+    const visualViewportOffsetTop = Number(window.visualViewport && window.visualViewport.offsetTop);
+    const viewportOffsetTop = Number.isFinite(visualViewportOffsetTop) ? visualViewportOffsetTop : 0;
+    if (!viewportHeight) return Number.NaN;
+
+    const rootRect = pagesRoot.getBoundingClientRect();
+    if (!rootRect || !Number.isFinite(rootRect.top) || !Number.isFinite(rootRect.height) || rootRect.height <= 0) {
+      return Number.NaN;
+    }
+
+    const currentCenter = rootRect.top + rootRect.height * 0.5;
+    const targetCenter = viewportOffsetTop + viewportHeight * 0.5;
+    return currentCenter - targetCenter;
+  };
+
+  const getMobileHorizontalRecenterThreshold = () => {
+    return 6;
+  };
+
+  const shouldMobileHorizontalRecenter = () => {
+    const delta = getMobileHorizontalRecenterDelta();
+    const threshold = getMobileHorizontalRecenterThreshold();
+    return Number.isFinite(delta) && Math.abs(delta) >= threshold;
   };
 
   const stopHorizontalScrollAnimation = () => {
@@ -1566,7 +1616,6 @@ quickCommentsButtons.forEach((quickComments) => {
 
       if (isMobileHorizontalReaderModeActive()) {
         clearHorizontalPullResistance(false);
-        recenterMobileHorizontalViewport();
         scheduleHorizontalProgressHiddenStateSync();
       }
 
@@ -1584,14 +1633,12 @@ quickCommentsButtons.forEach((quickComments) => {
 
       if (isMobileHorizontalReaderModeActive()) {
         window.requestAnimationFrame(() => {
-          recenterMobileHorizontalViewport();
           scheduleHorizontalProgressHiddenStateSync();
         });
       }
 
       window.setTimeout(() => {
         if (isMobileHorizontalReaderModeActive()) {
-          recenterMobileHorizontalViewport();
           scheduleHorizontalProgressHiddenStateSync();
         }
         scheduleActiveWindowSync();
@@ -2461,6 +2508,7 @@ quickCommentsButtons.forEach((quickComments) => {
   let swipeStartY = 0;
   let touchMoved = false;
   let touchStartAt = 0;
+  let touchTriggeredRecenter = false;
   let touchSuppressTapClick = false;
   let skipHalfClickForErrorRetry = false;
   let horizontalPullResetTimer = 0;
@@ -2532,6 +2580,16 @@ quickCommentsButtons.forEach((quickComments) => {
     pagesRoot.classList.add("is-pull-resist");
     pagesRoot.style.removeProperty("transition");
     pagesRoot.style.setProperty("--reader-horizontal-pull-offset", `${Math.round(offsetPx)}px`);
+  };
+
+  const scheduleMobileHorizontalViewportRecenter = () => {
+    if (!isMobileHorizontalReaderModeActive()) return;
+    window.requestAnimationFrame(() => {
+      recenterMobileHorizontalViewport();
+      window.setTimeout(() => {
+        recenterMobileHorizontalViewport();
+      }, 120);
+    });
   };
 
   pagesRoot.addEventListener(
@@ -2629,11 +2687,15 @@ quickCommentsButtons.forEach((quickComments) => {
       const touch = event.touches[0];
       touchTracking = true;
       touchMoved = false;
+      touchTriggeredRecenter = false;
       touchSuppressTapClick = false;
       skipHalfClickForErrorRetry = false;
       swipeStartX = Number(touch.clientX) || 0;
       swipeStartY = Number(touch.clientY) || 0;
       touchStartAt = Date.now();
+      if (isMobileHorizontalReaderModeActive()) {
+        clearHorizontalPullResistance(false);
+      }
     },
     { passive: true }
   );
@@ -2646,7 +2708,7 @@ quickCommentsButtons.forEach((quickComments) => {
       const deltaX = (Number(touch.clientX) || 0) - swipeStartX;
       const deltaY = (Number(touch.clientY) || 0) - swipeStartY;
 
-      if (isMobileHorizontalReaderModeActive()) {
+      if (!isMobileHorizontalReaderModeActive()) {
         const atReaderStart = isAtHorizontalReaderStart();
         const downwardDominant = deltaY > 6 && Math.abs(deltaY) > Math.abs(deltaX) * 1.08;
         if (atReaderStart && downwardDominant) {
@@ -2685,6 +2747,24 @@ quickCommentsButtons.forEach((quickComments) => {
         absX > absY * HORIZONTAL_SWIPE_INTENT_RATIO &&
         elapsedMs <= HORIZONTAL_SWIPE_MAX_DURATION;
 
+      const shouldRecenterOnTouchEnd =
+        isMobileHorizontalReaderModeActive() &&
+        !touchMoved &&
+        !shouldSwipePage &&
+        shouldMobileHorizontalRecenter();
+
+      if (shouldRecenterOnTouchEnd) {
+        touchTriggeredRecenter = true;
+        touchSuppressTapClick = true;
+        suppressClickUntil = Date.now() + 220;
+        clearHorizontalPullResistance(false);
+        scheduleMobileHorizontalViewportRecenter();
+        touchTracking = false;
+        touchMoved = false;
+        touchStartAt = 0;
+        return;
+      }
+
       if (shouldSwipePage) {
         touchSuppressTapClick = true;
         suppressClickUntil = Date.now() + 220;
@@ -2695,7 +2775,7 @@ quickCommentsButtons.forEach((quickComments) => {
         suppressClickUntil = Date.now() + 170;
       }
 
-      clearHorizontalPullResistance(true);
+      clearHorizontalPullResistance(!isMobileHorizontalReaderModeActive());
       touchTracking = false;
       touchMoved = false;
       touchStartAt = 0;
@@ -2732,24 +2812,22 @@ quickCommentsButtons.forEach((quickComments) => {
 
   pagesRoot.addEventListener("click", (event) => {
     if (!isHorizontalReaderModeActive()) {
+      touchTriggeredRecenter = false;
       touchSuppressTapClick = false;
       skipHalfClickForErrorRetry = false;
       return;
     }
     if (!event || event.defaultPrevented) {
+      touchTriggeredRecenter = false;
       skipHalfClickForErrorRetry = false;
+      return;
+    }
+    if (touchTriggeredRecenter) {
+      touchTriggeredRecenter = false;
       return;
     }
     if (skipHalfClickForErrorRetry) {
       skipHalfClickForErrorRetry = false;
-      return;
-    }
-    if (Date.now() < suppressClickUntil) {
-      touchSuppressTapClick = false;
-      return;
-    }
-    if (touchSuppressTapClick) {
-      touchSuppressTapClick = false;
       return;
     }
     if (isInteractiveTarget(event.target)) return;
@@ -2762,12 +2840,31 @@ quickCommentsButtons.forEach((quickComments) => {
       if (lazyState === "error") return;
     }
 
+    const isMobileHorizontalTap = isMobileHorizontalReaderModeActive();
+    if (isMobileHorizontalTap && shouldMobileHorizontalRecenter()) {
+      touchSuppressTapClick = false;
+      suppressClickUntil = 0;
+      clearHorizontalPullResistance(false);
+      scheduleMobileHorizontalViewportRecenter();
+      return;
+    }
+
     const rootRect = pagesRoot.getBoundingClientRect();
     if (!rootRect || !Number.isFinite(rootRect.width) || rootRect.width <= 0) return;
     const clickX = Number(event.clientX);
     if (!Number.isFinite(clickX)) return;
 
     const relativeX = (clickX - rootRect.left) / rootRect.width;
+
+    if (Date.now() < suppressClickUntil) {
+      touchSuppressTapClick = false;
+      return;
+    }
+    if (touchSuppressTapClick) {
+      touchSuppressTapClick = false;
+      return;
+    }
+
     const direction = isHorizontalRtlReaderModeActive()
       ? relativeX > 0.5
         ? -1
