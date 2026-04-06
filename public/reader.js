@@ -11,7 +11,10 @@ const READER_CANCEL_JUMP_COMMENTS_EVENT = "bfang:reader-cancel-jump-comments";
 const READER_COMMENTS_LAYOUT_EVENT = "bfang:reader-comments-layout";
 const READER_LAYOUT_CHANGED_EVENT = "bfang:reader-layout-changed";
 const READER_HORIZONTAL_PAGE_NAV_EVENT = "bfang:reader-horizontal-page-nav";
+const READER_JUMP_CHAPTER_TOP_EVENT = "bfang:reader-jump-chapter-top";
+const READER_JUMP_CHAPTER_BOTTOM_EVENT = "bfang:reader-jump-chapter-bottom";
 const READER_MODE_STORAGE_KEY = "bfang:reader-mode";
+const READER_DOCK_COLLAPSED_STORAGE_KEY = "bfang:reader-dock-collapsed";
 const READER_MODE_VERTICAL = "vertical";
 const READER_MODE_HORIZONTAL = "horizontal";
 const READER_MODE_HORIZONTAL_RTL = "horizontal-rtl";
@@ -43,6 +46,96 @@ const dispatchReaderToast = (message, tone = "info") => {
     );
   }
 };
+
+(() => {
+  const dock = document.querySelector(".reader-dock");
+  if (!(dock instanceof HTMLElement)) return;
+  if (typeof window.matchMedia !== "function") return;
+
+  const dockToggleButtons = Array.from(
+    document.querySelectorAll("[data-reader-dock-toggle]")
+  ).filter((button) => button instanceof HTMLButtonElement);
+  if (!dockToggleButtons.length) return;
+
+  const readerModeQuery = window.matchMedia("(min-width: 1120px)");
+  let isDockCollapsed = false;
+
+  try {
+    isDockCollapsed =
+      window.localStorage.getItem(READER_DOCK_COLLAPSED_STORAGE_KEY) === "1";
+  } catch (_error) {
+    isDockCollapsed = false;
+  }
+
+  const updateDockToggleUi = (collapsed) => {
+    dockToggleButtons.forEach((button) => {
+      const label = collapsed
+        ? "Mở rộng bảng điều khiển đọc truyện"
+        : "Thu gọn bảng điều khiển đọc truyện";
+      button.setAttribute("aria-pressed", collapsed ? "true" : "false");
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      const textNode = button.querySelector("[data-reader-dock-toggle-text]");
+      if (textNode instanceof HTMLElement) {
+        textNode.textContent = label;
+      }
+    });
+  };
+
+  const applyDockCollapsedState = ({ persist = false, dispatchLayoutChange = true } = {}) => {
+    if (!document.body) return;
+    const isDesktop = readerModeQuery.matches;
+    const shouldCollapse = isDesktop && isDockCollapsed;
+
+    document.body.classList.toggle("reader-dock-collapsed", shouldCollapse);
+    if (!shouldCollapse) {
+      document.body.classList.remove("reader-dock-resizing");
+    }
+
+    updateDockToggleUi(shouldCollapse);
+
+    if (persist) {
+      try {
+        window.localStorage.setItem(
+          READER_DOCK_COLLAPSED_STORAGE_KEY,
+          isDockCollapsed ? "1" : "0"
+        );
+      } catch (_error) {
+        // Ignore storage write failures in private mode or restricted contexts.
+      }
+    }
+
+    if (dispatchLayoutChange && typeof window.CustomEvent === "function") {
+      window.dispatchEvent(
+        new window.CustomEvent(READER_LAYOUT_CHANGED_EVENT, {
+          detail: {
+            dockCollapsed: shouldCollapse
+          }
+        })
+      );
+    }
+  };
+
+  dockToggleButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      isDockCollapsed = !isDockCollapsed;
+      applyDockCollapsedState({ persist: true, dispatchLayoutChange: true });
+    });
+  });
+
+  const handleViewportChange = () => {
+    applyDockCollapsedState({ persist: false, dispatchLayoutChange: true });
+  };
+
+  if (typeof readerModeQuery.addEventListener === "function") {
+    readerModeQuery.addEventListener("change", handleViewportChange);
+  } else if (typeof readerModeQuery.addListener === "function") {
+    readerModeQuery.addListener(handleViewportChange);
+  }
+  window.addEventListener("resize", handleViewportChange, { passive: true });
+
+  applyDockCollapsedState({ persist: false, dispatchLayoutChange: false });
+})();
 
 (() => {
   const dock = document.querySelector(".reader-dock");
@@ -844,12 +937,29 @@ if (readerFloat) {
 quickTopButtons.forEach((quickTop) => {
   quickTop.addEventListener("click", () => {
     window.dispatchEvent(new CustomEvent(READER_CANCEL_JUMP_COMMENTS_EVENT));
+    if (
+      document.body &&
+      (document.body.classList.contains(READER_MODE_HORIZONTAL_CLASS) ||
+        document.body.classList.contains(READER_MODE_HORIZONTAL_RTL_CLASS))
+    ) {
+      window.dispatchEvent(new CustomEvent(READER_JUMP_CHAPTER_TOP_EVENT));
+      return;
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 });
 
 quickDownButtons.forEach((quickDown) => {
   quickDown.addEventListener("click", () => {
+    if (
+      document.body &&
+      (document.body.classList.contains(READER_MODE_HORIZONTAL_CLASS) ||
+        document.body.classList.contains(READER_MODE_HORIZONTAL_RTL_CLASS))
+    ) {
+      window.dispatchEvent(new CustomEvent(READER_JUMP_CHAPTER_BOTTOM_EVENT));
+      return;
+    }
+
     const doc = document.documentElement;
     const body = document.body;
     const docHeight = doc ? Number(doc.scrollHeight) : 0;
@@ -862,9 +972,30 @@ quickDownButtons.forEach((quickDown) => {
 
 quickCommentsButtons.forEach((quickComments) => {
   quickComments.addEventListener("click", () => {
-    if (commentsSection) {
+    if (!commentsSection) return;
+
+    const jumpToComments = () => {
       window.dispatchEvent(new CustomEvent(READER_JUMP_COMMENTS_EVENT));
+    };
+
+    if (document.body && document.body.classList.contains("reader-dock-collapsed")) {
+      const dockToggleButtons = Array.from(
+        document.querySelectorAll("[data-reader-dock-toggle]")
+      ).filter((button) => button instanceof HTMLElement);
+      const visibleToggleButton = dockToggleButtons.find(
+        (button) => button.offsetParent !== null
+      );
+      const fallbackToggleButton = dockToggleButtons[0] || null;
+      const targetToggleButton = visibleToggleButton || fallbackToggleButton;
+
+      if (targetToggleButton) {
+        targetToggleButton.click();
+        window.setTimeout(jumpToComments, 140);
+        return;
+      }
     }
+
+    jumpToComments();
   });
 });
 
@@ -1479,6 +1610,33 @@ quickCommentsButtons.forEach((quickComments) => {
       scheduleActiveWindowSync();
     }, 260);
   };
+
+  const jumpToChapterStart = () => {
+    if (!totalReaderSlides) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    const behavior = isHorizontalReaderModeActive() ? "auto" : "smooth";
+    scrollToPageIndex(0, behavior);
+  };
+
+  const jumpToChapterEnd = () => {
+    if (!totalReaderSlides) {
+      const doc = document.documentElement;
+      const body = document.body;
+      const docHeight = doc ? Number(doc.scrollHeight) : 0;
+      const bodyHeight = body ? Number(body.scrollHeight) : 0;
+      const viewportHeight = Number(window.innerHeight) || 0;
+      const maxTop = Math.max(0, Math.max(docHeight, bodyHeight) - Math.max(0, viewportHeight));
+      window.scrollTo({ top: maxTop, behavior: "smooth" });
+      return;
+    }
+    const behavior = isHorizontalReaderModeActive() ? "auto" : "smooth";
+    scrollToPageIndex(totalReaderSlides - 1, behavior);
+  };
+
+  window.addEventListener(READER_JUMP_CHAPTER_TOP_EVENT, jumpToChapterStart);
+  window.addEventListener(READER_JUMP_CHAPTER_BOTTOM_EVENT, jumpToChapterEnd);
 
   pageFirstButtons.forEach((button) => {
     button.addEventListener("click", () => {

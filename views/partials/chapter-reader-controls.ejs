@@ -1,5 +1,27 @@
 <% const safeDropdownClass = (dropdownClass || "").toString().trim(); %>
 <% const shouldShowModeToggle = typeof showModeToggle === "undefined" ? true : Boolean(showModeToggle); %>
+<% const shouldShowDockCollapseToggle = typeof showDockCollapseToggle === "undefined" ? false : Boolean(showDockCollapseToggle); %>
+<% const shouldUseIconOnlyModeToggle = typeof iconOnlyModeToggle === "undefined" ? false : Boolean(iconOnlyModeToggle); %>
+<% if (shouldShowDockCollapseToggle) { %>
+  <button
+    class="reader-dock-collapse-toggle"
+    type="button"
+    data-reader-dock-toggle
+    data-button-loading-skip
+    aria-pressed="false"
+    aria-label="Thu gọn bảng điều khiển đọc truyện"
+    title="Thu gọn bảng điều khiển đọc truyện"
+  >
+    <span class="reader-dock-collapse-toggle__icon" aria-hidden="true">
+      <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 5h4v14H4z" />
+        <path d="M14 7l-4 5 4 5" />
+        <path d="M20 5h-8v14h8" />
+      </svg>
+    </span>
+    <span class="sr-only" data-reader-dock-toggle-text>Thu gọn bảng điều khiển đọc truyện</span>
+  </button>
+<% } %>
 <% if (prevChapter) { %>
   <a
     class="reader-float-btn reader-float-btn--nav"
@@ -19,7 +41,17 @@
   </span>
 <% } %>
 <div class="reader-dropdown<%= safeDropdownClass ? ` ${safeDropdownClass}` : "" %>" data-reader-dropdown>
-  <button class="reader-dropdown-trigger" type="button" data-reader-toggle data-button-loading-skip>
+  <button
+    class="reader-dropdown-trigger"
+    type="button"
+    data-reader-toggle
+    data-button-loading-skip
+    aria-label="Chọn chương"
+    title="Chọn chương"
+  >
+    <span class="reader-dropdown-trigger-icon" aria-hidden="true">
+      <i class="fa-solid fa-list-ul"></i>
+    </span>
     <span class="reader-dropdown-label">
       <%= chapterShortLabel %><% if (chapterTitle) { %> — <%= chapterTitle %><% } %>
     </span>
@@ -72,7 +104,7 @@
 <% } %>
 <% if (shouldShowModeToggle) { %>
   <button
-    class="reader-mode-toggle"
+    class="reader-mode-toggle<%= shouldUseIconOnlyModeToggle ? " reader-mode-toggle--icon-only" : "" %>"
     type="button"
     data-reader-mode-toggle
     data-reader-mode="vertical"

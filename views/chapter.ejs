@@ -32,7 +32,458 @@
     headScripts: chapterHeadScripts,
     headPreconnectOrigins: chapterPageOrigin ? [chapterPageOrigin] : []
   }) %>
+  <style>
+    .reader-fixed-inner--dock-collapsible {
+      display: grid !important;
+      align-items: center;
+      column-gap: 0.38rem;
+      grid-template-columns: 34px 34px minmax(0, 1fr) 34px 34px;
+    }
+
+    .reader-dock__controls .reader-fixed-inner--dock-collapsible {
+      grid-template-columns: 34px 34px minmax(0, 1fr) 34px 34px !important;
+      column-gap: 0.38rem !important;
+      width: 100% !important;
+      max-width: none;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-float-btn--nav,
+    .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dock-collapse-toggle,
+    .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-mode-toggle {
+      width: 34px;
+      min-width: 34px;
+      height: 34px;
+      min-height: 34px;
+      padding: 0;
+    }
+
+    .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dropdown {
+      min-width: 0;
+      width: 100% !important;
+      flex: 1 1 auto !important;
+    }
+
+    .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dropdown .reader-dropdown-trigger,
+    .reader-dock__page-nav > .reader-dropdown .reader-dropdown-trigger {
+      width: 100%;
+      min-height: 34px;
+    }
+
+    .reader-dock__page-nav > .reader-float-btn--nav {
+      width: 34px;
+      min-width: 34px;
+      height: 34px;
+      min-height: 34px;
+      padding: 0;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible {
+      grid-template-columns: 34px 34px minmax(0, 1fr) 34px 34px !important;
+      column-gap: 0.38rem !important;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-float-btn--nav,
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dock-collapse-toggle,
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-mode-toggle,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-float-btn--nav,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dock-collapse-toggle,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-mode-toggle {
+      width: 34px !important;
+      min-width: 34px !important;
+      height: 34px !important;
+      min-height: 34px !important;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dropdown,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dropdown {
+      width: 100% !important;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav {
+      grid-template-columns: 34px 34px minmax(0, 1fr) 34px 34px !important;
+      column-gap: 0.38rem !important;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-float-btn--nav,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-float-btn--nav {
+      width: 34px !important;
+      min-width: 34px !important;
+      height: 34px !important;
+      min-height: 34px !important;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown {
+      width: 100% !important;
+      min-width: 0;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown .reader-dropdown-trigger,
+    body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown .reader-dropdown-trigger {
+      width: 100% !important;
+      min-height: 34px !important;
+    }
+
+    .reader-dropdown-trigger-icon {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted-foreground, #b3b3b3);
+      font-size: 0.92rem;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .reader-dock-collapse-toggle {
+      width: 34px;
+      height: 34px;
+      min-width: 34px;
+      border: 1px solid #2d2d2d;
+      border-radius: 0.2rem;
+      background: #161616;
+      color: #d8d8d8;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .reader-dock-collapse-toggle:hover,
+    .reader-dock-collapse-toggle:focus-visible {
+      background: #1f1f1f;
+      color: #f5f5f5;
+    }
+
+    .reader-dock-collapse-toggle__icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.22s ease;
+    }
+
+    .reader-dock-collapse-toggle--head {
+      display: none;
+    }
+
+    .reader-dock__tool--comments {
+      display: none;
+      position: relative;
+    }
+
+    .reader-dock__tool--mode-collapsed,
+    .reader-dock__tool--manga-home-collapsed,
+    .reader-dock__tool--jump-top,
+    .reader-dock__tool--jump-down {
+      display: none;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tool--comments .notify-badge,
+    body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__notify-widget .notify-badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      min-width: 18px;
+      height: 16px;
+      padding: 0 0.2rem;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.62rem;
+      line-height: 1;
+      font-weight: 600;
+      color: #fff;
+      background: #ef4444;
+      border: 1px solid rgba(0, 0, 0, 0.32);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.32);
+      pointer-events: none;
+    }
+
+    body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tool--comments .notify-badge[hidden],
+    body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__notify-widget .notify-badge[hidden] {
+      display: none;
+    }
+
+    .reader-fixed-inner--dock-collapsible .reader-mode-toggle--icon-only {
+      width: 34px;
+      min-width: 34px;
+      height: 34px;
+      min-height: 34px;
+      padding: 0;
+      gap: 0;
+      justify-content: center;
+    }
+
+    .reader-fixed-inner--dock-collapsible .reader-mode-toggle--icon-only .reader-mode-toggle__label {
+      display: none;
+    }
+
+    .reader-fixed-inner--dock-collapsible .reader-mode-toggle--icon-only .reader-mode-toggle__icon,
+    .reader-fixed-inner--dock-collapsible .reader-mode-toggle--icon-only .reader-mode-toggle__icon .reader-icon {
+      width: 15px;
+      height: 15px;
+    }
+
+    @media (min-width: 1120px) {
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed {
+        --reader-dock-width: 52px;
+        --reader-dock-right-gap: 0px;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__resize-handle {
+        display: none !important;
+        pointer-events: none;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__panel {
+        padding: 0.24rem 0.1rem 0.3rem;
+        grid-template-rows: minmax(0, 1fr);
+        align-content: stretch;
+        justify-items: center;
+        gap: 0.2rem;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__head {
+        display: none;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__head-top--desktop {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.2rem;
+        width: 100%;
+        height: 100%;
+        align-self: stretch;
+        overflow: visible;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        align-items: center;
+        width: 100%;
+        height: 100%;
+        flex: 1 1 auto;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > * {
+        display: none !important;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock-collapse-toggle--head,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget:not([hidden]),
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--comments,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--mode-collapsed,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--manga-home-collapsed,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--home-collapsed,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-top,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-down {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock-collapse-toggle--head {
+        order: 1;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account {
+        order: 2;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget:not([hidden]) {
+        order: 3;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--comments {
+        order: 4;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--mode-collapsed {
+        order: 5;
+        gap: 0;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--manga-home-collapsed {
+        order: 89;
+        margin-top: auto;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--home-collapsed {
+        order: 90;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-top {
+        order: 91;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-down {
+        order: 92;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock-collapse-toggle--head,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--mode-collapsed,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--manga-home-collapsed,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--home-collapsed,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-top,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-down,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--comments,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget:not([hidden]) .notify-trigger,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account .reader-dock__tool,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account .auth-trigger {
+        width: 30px;
+        min-width: 30px;
+        height: 30px;
+        min-height: 30px;
+        padding: 0;
+        border-radius: 0.56rem;
+        border: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        color: #ececec;
+        justify-content: center;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock-collapse-toggle--head:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock-collapse-toggle--head:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--mode-collapsed:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--mode-collapsed:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--manga-home-collapsed:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--manga-home-collapsed:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--home-collapsed:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--home-collapsed:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-top:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-top:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-down:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-down:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--comments:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--comments:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget:not([hidden]) .notify-trigger:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget:not([hidden]) .notify-trigger:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account .reader-dock__tool:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account .reader-dock__tool:focus-visible,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account .auth-trigger:hover,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account .auth-trigger:focus-visible {
+        background: rgba(255, 255, 255, 0.12) !important;
+        color: #ffffff;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock-collapse-toggle--head .reader-icon,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--mode-collapsed .reader-icon,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--manga-home-collapsed .reader-icon,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--home-collapsed .reader-icon,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-top .reader-icon,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-down .reader-icon,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget:not([hidden]) .reader-icon,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account .reader-icon {
+        width: 16px;
+        height: 16px;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--manga-home-collapsed i,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--home-collapsed i,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-top i,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--jump-down i,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__tool--comments i {
+        font-size: 0.9rem;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget:not([hidden]) .notify-trigger svg,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account .auth-trigger__fallback {
+        width: 16px;
+        height: 16px;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__account {
+        width: 30px;
+        min-width: 30px;
+        flex: 0 0 30px;
+        position: relative;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__tools > .reader-dock__notify-widget[hidden] {
+        display: none !important;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__controls,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__page-nav {
+        display: none;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dropdown-label,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dropdown-caret,
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-mode-toggle__label {
+        display: none;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__comments {
+        display: none;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock__head-top--desktop .auth-menu {
+        left: auto !important;
+        right: calc(100% + 0.34rem) !important;
+        top: 0 !important;
+        bottom: auto !important;
+        transform: none !important;
+        max-height: min(76vh, 420px);
+        overflow: auto;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-collapsed .reader-dock-collapse-toggle__icon {
+        transform: rotate(180deg);
+      }
+    }
+  </style>
   <body class="reader-page<%= hasReaderPages ? " reader-page--reader-mode" : "" %>">
+    <script nonce="<%= cspNonce || '' %>">
+      (() => {
+        const body = document.body;
+        if (!body || !body.classList || !body.classList.contains("reader-page--reader-mode")) {
+          return;
+        }
+
+        let readerMode = "vertical";
+        let dockCollapsed = false;
+
+        try {
+          const storedMode = (window.localStorage.getItem("bfang:reader-mode") || "")
+            .toString()
+            .trim()
+            .toLowerCase();
+          if (storedMode === "horizontal" || storedMode === "horizontal-rtl") {
+            readerMode = storedMode;
+          }
+
+          dockCollapsed =
+            window.localStorage.getItem("bfang:reader-dock-collapsed") === "1";
+        } catch (_error) {
+          readerMode = "vertical";
+          dockCollapsed = false;
+        }
+
+        const isHorizontal = readerMode === "horizontal" || readerMode === "horizontal-rtl";
+        const isHorizontalRtl = readerMode === "horizontal-rtl";
+
+        body.classList.toggle("reader-reading-horizontal", isHorizontal);
+        body.classList.toggle("reader-reading-horizontal-rtl", isHorizontalRtl);
+        body.classList.toggle("reader-dock-collapsed", dockCollapsed);
+        body.dataset.readerMode = readerMode;
+      })();
+    </script>
     <div class="site">
       <% if (!hasReaderPages) { %>
         <%- include("partials/header") %>
@@ -395,6 +846,9 @@
           <% } %>
             </div>
             <% if (pageUrls && pageUrls.length) { %>
+            <% const dockCommentCountRaw = Number(commentCount); %>
+            <% const dockCommentCount = Number.isFinite(dockCommentCountRaw) && dockCommentCountRaw > 0 ? Math.floor(dockCommentCountRaw) : 0; %>
+            <% const dockCommentBadgeLabel = dockCommentCount > 19 ? "19+" : String(dockCommentCount); %>
             <aside class="reader-dock" aria-label="Bảng điều khiển đọc truyện">
               <button
                 class="reader-dock__resize-handle"
@@ -413,8 +867,29 @@
                     <p class="reader-dock__chapter"><%= chapterHeadingLabel %><% if (chapterTitle) { %>: <%= chapterTitle %><% } %></p>
                   </div>
                   <nav class="reader-dock__tools" aria-label="Lối tắt đọc truyện">
-                    <a class="reader-dock__tool" href="/" aria-label="Trang chủ" title="Trang chủ">
+                    <button
+                      class="reader-dock-collapse-toggle reader-dock-collapse-toggle--head"
+                      type="button"
+                      data-reader-dock-toggle
+                      data-button-loading-skip
+                      aria-pressed="false"
+                      aria-label="Thu gọn bảng điều khiển đọc truyện"
+                      title="Thu gọn bảng điều khiển đọc truyện"
+                    >
+                      <span class="reader-dock-collapse-toggle__icon" aria-hidden="true">
+                        <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M4 5h4v14H4z" />
+                          <path d="M14 7l-4 5 4 5" />
+                          <path d="M20 5h-8v14h8" />
+                        </svg>
+                      </span>
+                      <span class="sr-only" data-reader-dock-toggle-text>Thu gọn bảng điều khiển đọc truyện</span>
+                    </button>
+                    <a class="reader-dock__tool reader-dock__tool--home-collapsed" href="/" aria-label="Trang chủ" title="Trang chủ">
                       <i class="fa-solid fa-house" aria-hidden="true"></i>
+                    </a>
+                    <a class="reader-dock__tool reader-dock__tool--manga-home-collapsed" href="/manga/<%= manga.slug %>" aria-label="Trang chính truyện" title="Trang chính truyện">
+                      <i class="fa-solid fa-book-open" aria-hidden="true"></i>
                     </a>
                     <button class="reader-dock__tool" type="button" data-reader-report data-button-loading-skip aria-label="Báo lỗi trang" title="Báo lỗi">
                       <i class="fa-regular fa-flag" aria-hidden="true"></i>
@@ -486,10 +961,74 @@
                         </div>
                       </div>
                     </div>
+                    <button
+                      class="reader-dock__tool reader-dock__tool--comments"
+                      type="button"
+                      data-reader-comments
+                      data-button-loading-skip
+                      aria-label="Bình luận"
+                      title="Bình luận"
+                    >
+                      <i class="fa-regular fa-comment-dots" aria-hidden="true"></i>
+                      <span class="notify-badge"><%= dockCommentBadgeLabel %></span>
+                    </button>
+                    <button
+                      class="reader-dock__tool reader-dock__tool--mode-collapsed reader-mode-toggle reader-mode-toggle--icon-only"
+                      type="button"
+                      data-reader-mode-toggle
+                      data-reader-mode="vertical"
+                      data-button-loading-skip
+                      aria-pressed="false"
+                      aria-label="Chế độ đọc dọc, bấm để chuyển đọc ngang trái sang phải"
+                      title="Chế độ đọc dọc, bấm để chuyển đọc ngang trái sang phải"
+                    >
+                      <span class="reader-mode-toggle__icon reader-mode-toggle__icon--vertical" aria-hidden="true">
+                        <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M12 4v16" />
+                          <path d="M8.5 7.5L12 4l3.5 3.5" />
+                          <path d="M8.5 16.5L12 20l3.5-3.5" />
+                        </svg>
+                      </span>
+                      <span class="reader-mode-toggle__icon reader-mode-toggle__icon--horizontal" aria-hidden="true">
+                        <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M4 12h16" />
+                          <path d="M16 8l4 4-4 4" />
+                          <path d="M8 7v10" />
+                        </svg>
+                      </span>
+                      <span class="reader-mode-toggle__icon reader-mode-toggle__icon--horizontal-rtl" aria-hidden="true">
+                        <svg class="reader-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M4 12h16" />
+                          <path d="M8 8l-4 4 4 4" />
+                          <path d="M16 7v10" />
+                        </svg>
+                      </span>
+                      <span class="reader-mode-toggle__label" data-reader-mode-label>Dọc</span>
+                    </button>
+                    <button
+                      class="reader-dock__tool reader-dock__tool--jump-top"
+                      type="button"
+                      data-reader-top
+                      data-button-loading-skip
+                      aria-label="Lên đầu chương"
+                      title="Lên đầu chương"
+                    >
+                      <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>
+                    </button>
+                    <button
+                      class="reader-dock__tool reader-dock__tool--jump-down"
+                      type="button"
+                      data-reader-down
+                      data-button-loading-skip
+                      aria-label="Xuống cuối chương"
+                      title="Xuống cuối chương"
+                    >
+                      <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                    </button>
                   </nav>
                 </div>
                 <div class="reader-dock__controls" data-reader-fixed>
-                  <div class="reader-fixed-inner">
+                  <div class="reader-fixed-inner reader-fixed-inner--dock-collapsible">
                     <%- include("partials/chapter-reader-controls", {
                       manga,
                       chapter,
@@ -500,7 +1039,9 @@
                       nextChapter,
                       buildChapterOptionLabel,
                       dropdownClass: "reader-dropdown--down",
-                      showModeToggle: true
+                      showModeToggle: true,
+                      showDockCollapseToggle: true,
+                      iconOnlyModeToggle: true
                     }) %>
                   </div>
                 </div>
@@ -517,7 +1058,10 @@
                     </svg>
                   </button>
                   <div class="reader-dropdown reader-dropdown--down" data-reader-dropdown>
-                    <button class="reader-dropdown-trigger" type="button" data-reader-toggle data-button-loading-skip>
+                    <button class="reader-dropdown-trigger" type="button" data-reader-toggle data-button-loading-skip aria-label="Chọn trang" title="Chọn trang">
+                      <span class="reader-dropdown-trigger-icon" aria-hidden="true">
+                        <i class="fa-solid fa-file-lines"></i>
+                      </span>
                       <span class="reader-dropdown-label">
                         <span data-reader-page-current>1</span> / <span data-reader-page-total><%= readerPageTotal %></span>
                       </span>
@@ -600,7 +1144,9 @@
                 nextChapter,
                 buildChapterOptionLabel,
                 dropdownClass: "",
-                showModeToggle: false
+                showModeToggle: false,
+                showDockCollapseToggle: false,
+                iconOnlyModeToggle: false
               }) %>
             </div>
             <button class="reader-float-btn reader-float-btn--quick" type="button" data-reader-top data-button-loading-skip aria-label="Lên đầu trang" title="Lên đầu">

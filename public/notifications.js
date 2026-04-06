@@ -2,6 +2,7 @@
   window.__BFANG_NOTIFICATIONS_BOOTED = true;
 
   const COMMENT_TARGET_REVEAL_EVENT = "bfang:reveal-comment-target";
+  const READER_LAYOUT_CHANGED_EVENT = "bfang:reader-layout-changed";
   const NOTIFY_MENU_EDGE_GAP = 8;
   const NOTIFY_MENU_TOP_GAP = 8;
   const NOTIFY_MENU_MAX_WIDTH = 360;
@@ -319,6 +320,23 @@
     }
   };
 
+  const isCollapsedReaderDockWidget = (widget) =>
+    Boolean(
+      widget &&
+        widget.root &&
+        typeof widget.root.closest === "function" &&
+        widget.root.closest(".reader-dock") &&
+        document.body &&
+        document.body.classList.contains("reader-dock-collapsed")
+    );
+
+  const formatBadgeText = (widget, safeCount) => {
+    if (isCollapsedReaderDockWidget(widget)) {
+      return safeCount > 19 ? "19+" : String(safeCount);
+    }
+    return safeCount > 99 ? "99+" : String(safeCount);
+  };
+
   const updateBadge = (widget, countValue) => {
     const count = Number(countValue);
     const safeCount = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
@@ -329,7 +347,7 @@
       return;
     }
     widget.badge.hidden = false;
-    widget.badge.textContent = safeCount > 99 ? "99+" : String(safeCount);
+    widget.badge.textContent = formatBadgeText(widget, safeCount);
   };
 
   const renderNotifications = (widget) => {
@@ -852,6 +870,13 @@
     if (event.key !== "Escape") return;
     widgets.forEach((widget) => {
       setMenuOpen(widget, false);
+    });
+  });
+
+  window.addEventListener(READER_LAYOUT_CHANGED_EVENT, () => {
+    widgets.forEach((widget) => {
+      if (!widget || widget.root.hidden) return;
+      updateBadge(widget, widget.unreadCount);
     });
   });
 

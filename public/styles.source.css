@@ -20332,6 +20332,130 @@ body.reader-page.reader-page--reader-mode.reader-dock-compact .reader-dock__comm
   gap: 0.2rem;
 }
 
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-form,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-form {
+  gap: 0.34rem;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-authbar,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-authbar {
+  gap: 0.36rem;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-authbar .button,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-authbar .button {
+  min-height: 28px;
+  padding: 0.34rem 0.62rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell {
+  grid-template-columns: minmax(0, 1fr) 28px;
+  column-gap: 0.28rem;
+  row-gap: 0.14rem;
+  padding: 0.38rem 0.42rem 0.34rem;
+  border-radius: 0.72rem;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell .comment-textarea,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell .comment-textarea {
+  min-height: 44px;
+  padding: 0.1rem 0.04rem 0;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell .comment-compose-meta,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell .comment-compose-meta {
+  align-items: center;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools {
+  min-height: 26px;
+  gap: 0.14rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools::-webkit-scrollbar,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools::-webkit-scrollbar {
+  display: none;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle {
+  width: 26px;
+  height: 26px;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle svg,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools .comment-char-counter,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-tools .comment-char-counter {
+  margin-left: auto;
+  padding-left: 0.14rem;
+  height: 26px;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-form--inline-submit .comment-compose-shell .comment-submit,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-form--inline-submit .comment-compose-shell .comment-submit {
+  align-self: flex-end;
+  margin: 0;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-submit .button.comment-submit__button,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-submit .button.comment-submit__button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-submit__icon,
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-submit__icon {
+  font-size: 0.74rem;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell {
+  grid-template-columns: minmax(0, 1fr) 26px;
+  column-gap: 0.24rem;
+  padding: 0.34rem 0.38rem 0.3rem;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell .comment-textarea {
+  min-height: 40px;
+  font-size: 0.86rem;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle {
+  width: 24px;
+  height: 24px;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-picker__toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-submit .button.comment-submit__button {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+}
+
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact .reader-dock__comments #comments .comment-avatar {
   width: 20px;
   height: 20px;
