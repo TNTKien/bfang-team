@@ -66,7 +66,7 @@ const createForumApiImageProcessUtils = ({
         pipeline = sharp(sourceBuffer).rotate();
       }
 
-      webpBuffer = await pipeline.webp({ quality: 60, effort: 6 }).toBuffer();
+      webpBuffer = await pipeline.webp({ quality: 85, effort: 6 }).toBuffer();
     } catch (_err) {
       webpBuffer = null;
     }

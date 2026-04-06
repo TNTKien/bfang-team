@@ -28,7 +28,7 @@ const EMOJI_LIST = [
 const CLIENT_UPLOAD_MAX_FILE_BYTES = 12 * 1024 * 1024;
 const CLIENT_UPLOAD_MAX_JSON_BYTES = 740 * 1024;
 const CLIENT_RESIZE_MAX_HEIGHT = 1500;
-const CLIENT_UPLOAD_WEBP_QUALITY = 0.6;
+const CLIENT_UPLOAD_WEBP_QUALITY = 0.85;
 const FALLBACK_AVATAR_SRC = "/logobfang.svg";
 
 const estimateDataUrlBytes = (dataUrl: string): number => {
