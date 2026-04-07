@@ -1,4 +1,4 @@
-const SW_VERSION = "v4";
+const SW_VERSION = "v5";
 const CACHE_PREFIX = "bfang";
 const STATIC_CACHE_NAME = `${CACHE_PREFIX}-static-${SW_VERSION}`;
 const PAGE_CACHE_NAME = `${CACHE_PREFIX}-page-${SW_VERSION}`;
