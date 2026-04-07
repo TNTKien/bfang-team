@@ -3234,7 +3234,6 @@ quickCommentsButtons.forEach((quickComments) => {
     const image = new Image();
     prefetchRefs.push(image);
     image.decoding = "async";
-    image.referrerPolicy = "no-referrer";
     try {
       image.fetchPriority = "low";
     } catch (_err) {
