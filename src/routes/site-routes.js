@@ -138,9 +138,12 @@ const registerSiteRoutes = (app, deps) => {
   const TEAM_COMMUNITY_LOOKUP_TIMEOUT_MS = 5000;
   const TEAM_COMMUNITY_NAME_SUCCESS_TTL_MS = 6 * 60 * 60 * 1000;
   const TEAM_COMMUNITY_NAME_FAILURE_TTL_MS = 15 * 60 * 1000;
+  const TEAM_COMMUNITY_CACHE_MAX_ENTRIES = 256;
+  const ROUTE_MEMORY_CACHE_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
   const CHAT_MESSAGE_MAX_LENGTH = 300;
   const CHAT_POST_COOLDOWN_MS = 2000;
   const CHAT_IMAGE_PREVIEW_TEXT = "Đã gửi ảnh";
+  const SITEMAP_CACHE_MAX_ENTRIES = 32;
   const TEAM_BADGE_LEADER_COLOR = "#ef4444";
   const TEAM_BADGE_MEMBER_COLOR = "#3b82f6";
   const TEAM_BADGE_LEADER_PRIORITY_FALLBACK = 55;
@@ -246,6 +249,13 @@ const registerSiteRoutes = (app, deps) => {
     if (!Number.isFinite(parsed) || parsed <= 0) return 90;
     return Math.floor(parsed);
   })();
+
+  const clearBufferedUploadFile = (file) => {
+    if (!file || typeof file !== "object") return;
+    if (Object.prototype.hasOwnProperty.call(file, "buffer")) {
+      file.buffer = null;
+    }
+  };
 
   const normalizeEndpointCacheInput = (value) => {
     if (Array.isArray(value)) {
@@ -2335,7 +2345,42 @@ const registerSiteRoutes = (app, deps) => {
   const normalizeTeamFacebookUrl = (value) => normalizeProfileFacebook(value || "");
   const normalizeTeamDiscordUrl = (value) => normalizeProfileDiscord(value || "");
 
+  const pruneTeamCommunityNameCache = (nowMs) => {
+    const safeNowMs = Number.isFinite(nowMs) ? Math.floor(nowMs) : Date.now();
+    const liveEntries = [];
+
+    teamCommunityNameCache.forEach((entry, key) => {
+      const expiresAt = Number(entry && entry.expiresAt);
+      if (!Number.isFinite(expiresAt) || expiresAt <= safeNowMs) {
+        teamCommunityNameCache.delete(key);
+        return;
+      }
+
+      liveEntries.push({
+        key,
+        updatedAt: Number(entry && entry.updatedAt) || 0,
+        expiresAt
+      });
+    });
+
+    const overflow = teamCommunityNameCache.size - TEAM_COMMUNITY_CACHE_MAX_ENTRIES;
+    if (overflow <= 0) return;
+
+    liveEntries
+      .sort((left, right) => {
+        if (left.updatedAt !== right.updatedAt) {
+          return left.updatedAt - right.updatedAt;
+        }
+        return left.expiresAt - right.expiresAt;
+      })
+      .slice(0, overflow)
+      .forEach((entry) => {
+        teamCommunityNameCache.delete(entry.key);
+      });
+  };
+
   const readCachedTeamCommunityName = (cacheKey) => {
+    pruneTeamCommunityNameCache(Date.now());
     const key = (cacheKey || "").toString().trim();
     if (!key) return null;
     const cached = teamCommunityNameCache.get(key);
@@ -2344,6 +2389,7 @@ const registerSiteRoutes = (app, deps) => {
       teamCommunityNameCache.delete(key);
       return null;
     }
+    cached.updatedAt = Date.now();
     return (cached.value || "").toString().trim();
   };
 
@@ -2351,11 +2397,14 @@ const registerSiteRoutes = (app, deps) => {
     const key = (cacheKey || "").toString().trim();
     if (!key) return;
     const safeValue = (value || "").toString().trim();
+    const now = Date.now();
     const ttl = success ? TEAM_COMMUNITY_NAME_SUCCESS_TTL_MS : TEAM_COMMUNITY_NAME_FAILURE_TTL_MS;
     teamCommunityNameCache.set(key, {
       value: safeValue,
-      expiresAt: Date.now() + ttl
+      expiresAt: now + ttl,
+      updatedAt: now
     });
+    pruneTeamCommunityNameCache(now);
   };
 
   const fetchWithTimeout = async (url, options = {}) => {
@@ -4210,9 +4259,30 @@ const registerSiteRoutes = (app, deps) => {
     }
   };
 
+  const isActiveChatStreamResponse = (response) => Boolean(response && !response.writableEnded && !response.destroyed);
+
+  const sweepChatStreamClients = (userId) => {
+    const safeUserId = (userId || "").toString().trim();
+    if (!safeUserId) return;
+
+    const bucket = chatStreamClientsByUserId.get(safeUserId);
+    if (!bucket || !bucket.size) return;
+
+    bucket.forEach((client, clientId) => {
+      if (!isActiveChatStreamResponse(client && client.response)) {
+        bucket.delete(clientId);
+      }
+    });
+
+    if (!bucket.size) {
+      chatStreamClientsByUserId.delete(safeUserId);
+    }
+  };
+
   const addChatStreamClient = (userId, response) => {
     const safeUserId = (userId || "").toString().trim();
     if (!safeUserId || !response) return "";
+    sweepChatStreamClients(safeUserId);
     let bucket = chatStreamClientsByUserId.get(safeUserId);
     if (!bucket) {
       bucket = new Map();
@@ -4247,6 +4317,7 @@ const registerSiteRoutes = (app, deps) => {
     if (!ids.length) return;
 
     ids.forEach((userId) => {
+      sweepChatStreamClients(userId);
       const bucket = chatStreamClientsByUserId.get(userId);
       if (!bucket || !bucket.size) return;
 
@@ -4261,6 +4332,49 @@ const registerSiteRoutes = (app, deps) => {
       });
     });
   };
+
+  const pruneSitemapCacheByOrigin = (nowMs) => {
+    const safeNowMs = Number.isFinite(nowMs) ? Math.floor(nowMs) : Date.now();
+    const liveEntries = [];
+
+    sitemapCacheByOrigin.forEach((entry, key) => {
+      const expiresAt = Number(entry && entry.expiresAt);
+      if (!Number.isFinite(expiresAt) || expiresAt <= safeNowMs) {
+        sitemapCacheByOrigin.delete(key);
+        return;
+      }
+
+      liveEntries.push({
+        key,
+        updatedAt: Number(entry && entry.updatedAt) || 0,
+        expiresAt
+      });
+    });
+
+    const overflow = sitemapCacheByOrigin.size - SITEMAP_CACHE_MAX_ENTRIES;
+    if (overflow <= 0) return;
+
+    liveEntries
+      .sort((left, right) => {
+        if (left.updatedAt !== right.updatedAt) {
+          return left.updatedAt - right.updatedAt;
+        }
+        return left.expiresAt - right.expiresAt;
+      })
+      .slice(0, overflow)
+      .forEach((entry) => {
+        sitemapCacheByOrigin.delete(entry.key);
+      });
+  };
+
+  const routeMemoryCacheSweepTimer = setInterval(() => {
+    const now = Date.now();
+    pruneTeamCommunityNameCache(now);
+    pruneSitemapCacheByOrigin(now);
+  }, ROUTE_MEMORY_CACHE_SWEEP_INTERVAL_MS);
+  if (routeMemoryCacheSweepTimer && typeof routeMemoryCacheSweepTimer.unref === "function") {
+    routeMemoryCacheSweepTimer.unref();
+  }
 
   const getUnreadChatMessageCount = async (userId) => {
     const safeUserId = (userId || "").toString().trim();
@@ -5217,6 +5331,9 @@ const registerSiteRoutes = (app, deps) => {
 
       req.on("close", cleanup);
       req.on("aborted", cleanup);
+      res.on("close", cleanup);
+      res.on("finish", cleanup);
+      res.on("error", cleanup);
     })
   );
 
@@ -6358,10 +6475,15 @@ const registerSiteRoutes = (app, deps) => {
       const stamp = Date.now();
       let avatarUrl = "";
       let coverUrl = "";
+      let avatarInputBuffer = Buffer.isBuffer(avatarFile && avatarFile.buffer) ? avatarFile.buffer : null;
+      let coverInputBuffer = Buffer.isBuffer(coverFile && coverFile.buffer) ? coverFile.buffer : null;
+
+      clearBufferedUploadFile(avatarFile);
+      clearBufferedUploadFile(coverFile);
 
       try {
-        if (avatarFile) {
-          const avatarOutput = await sharp(avatarFile.buffer)
+        if (avatarInputBuffer) {
+          const avatarOutput = await sharp(avatarInputBuffer)
             .rotate()
             .resize({ width: 256, height: 256, fit: "cover" })
             .webp({ quality: 80, effort: 6 })
@@ -6372,8 +6494,8 @@ const registerSiteRoutes = (app, deps) => {
           await fs.promises.writeFile(avatarFilePath, avatarOutput);
         }
 
-        if (coverFile) {
-          const coverOutput = await sharp(coverFile.buffer)
+        if (coverInputBuffer) {
+          const coverOutput = await sharp(coverInputBuffer)
             .rotate()
             .resize({ width: 1500, height: 420, fit: "cover" })
             .webp({ quality: 82, effort: 6 })
@@ -6389,6 +6511,11 @@ const registerSiteRoutes = (app, deps) => {
           activeTab: "overview"
         });
         return res.redirect(canonicalPath);
+      } finally {
+        avatarInputBuffer = null;
+        coverInputBuffer = null;
+        clearBufferedUploadFile(avatarFile);
+        clearBufferedUploadFile(coverFile);
       }
 
       const setFields = [];
@@ -6465,41 +6592,49 @@ const registerSiteRoutes = (app, deps) => {
         return res.redirect(canonicalPath);
       }
 
+      let inputBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
       let output = null;
+      clearBufferedUploadFile(req.file);
       try {
-        output = await sharp(req.file.buffer)
-          .rotate()
-          .resize({ width: 256, height: 256, fit: "cover" })
-          .webp({ quality: 80, effort: 6 })
-          .toBuffer();
-      } catch (_err) {
+        try {
+          output = await sharp(inputBuffer)
+            .rotate()
+            .resize({ width: 256, height: 256, fit: "cover" })
+            .webp({ quality: 80, effort: 6 })
+            .toBuffer();
+        } catch (_err) {
+          const canonicalPath = buildTeamEditPath(managedTeam.team_id, managedTeam.team_slug || requestedSlug || "");
+          setTeamPageFlash(req, managedTeam.team_id, {
+            settingsStatus: "invalid",
+            activeTab: "overview"
+          });
+          return res.redirect(canonicalPath);
+        }
+
+        const safeTeamId = Math.floor(Number(managedTeam.team_id) || 0);
+        const fileName = `team-${safeTeamId}-avatar.webp`;
+        const filePath = path.join(avatarsDir, fileName);
+        const stamp = Date.now();
+        const avatarUrl = `/uploads/avatars/${fileName}?v=${stamp}`;
+
+        await fs.promises.writeFile(filePath, output);
+        await dbRun("UPDATE translation_teams SET avatar_url = ?, updated_at = ? WHERE id = ?", [
+          avatarUrl,
+          stamp,
+          safeTeamId
+        ]);
+
         const canonicalPath = buildTeamEditPath(managedTeam.team_id, managedTeam.team_slug || requestedSlug || "");
         setTeamPageFlash(req, managedTeam.team_id, {
-          settingsStatus: "invalid",
+          settingsStatus: "avatar_updated",
           activeTab: "overview"
         });
         return res.redirect(canonicalPath);
+      } finally {
+        inputBuffer = null;
+        output = null;
+        clearBufferedUploadFile(req.file);
       }
-
-      const safeTeamId = Math.floor(Number(managedTeam.team_id) || 0);
-      const fileName = `team-${safeTeamId}-avatar.webp`;
-      const filePath = path.join(avatarsDir, fileName);
-      const stamp = Date.now();
-      const avatarUrl = `/uploads/avatars/${fileName}?v=${stamp}`;
-
-      await fs.promises.writeFile(filePath, output);
-      await dbRun("UPDATE translation_teams SET avatar_url = ?, updated_at = ? WHERE id = ?", [
-        avatarUrl,
-        stamp,
-        safeTeamId
-      ]);
-
-      const canonicalPath = buildTeamEditPath(managedTeam.team_id, managedTeam.team_slug || requestedSlug || "");
-      setTeamPageFlash(req, managedTeam.team_id, {
-        settingsStatus: "avatar_updated",
-        activeTab: "overview"
-      });
-      return res.redirect(canonicalPath);
     })
   );
 
@@ -6545,41 +6680,49 @@ const registerSiteRoutes = (app, deps) => {
         return res.redirect(canonicalPath);
       }
 
+      let inputBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
       let output = null;
+      clearBufferedUploadFile(req.file);
       try {
-        output = await sharp(req.file.buffer)
-          .rotate()
-          .resize({ width: 1500, height: 420, fit: "cover" })
-          .webp({ quality: 82, effort: 6 })
-          .toBuffer();
-      } catch (_err) {
+        try {
+          output = await sharp(inputBuffer)
+            .rotate()
+            .resize({ width: 1500, height: 420, fit: "cover" })
+            .webp({ quality: 82, effort: 6 })
+            .toBuffer();
+        } catch (_err) {
+          const canonicalPath = buildTeamEditPath(managedTeam.team_id, managedTeam.team_slug || requestedSlug || "");
+          setTeamPageFlash(req, managedTeam.team_id, {
+            settingsStatus: "invalid",
+            activeTab: "overview"
+          });
+          return res.redirect(canonicalPath);
+        }
+
+        const safeTeamId = Math.floor(Number(managedTeam.team_id) || 0);
+        const fileName = `team-${safeTeamId}-cover.webp`;
+        const filePath = path.join(coversDir, fileName);
+        const stamp = Date.now();
+        const coverUrl = `/uploads/covers/${fileName}?v=${stamp}`;
+
+        await fs.promises.writeFile(filePath, output);
+        await dbRun("UPDATE translation_teams SET cover_url = ?, updated_at = ? WHERE id = ?", [
+          coverUrl,
+          stamp,
+          safeTeamId
+        ]);
+
         const canonicalPath = buildTeamEditPath(managedTeam.team_id, managedTeam.team_slug || requestedSlug || "");
         setTeamPageFlash(req, managedTeam.team_id, {
-          settingsStatus: "invalid",
+          settingsStatus: "cover_updated",
           activeTab: "overview"
         });
         return res.redirect(canonicalPath);
+      } finally {
+        inputBuffer = null;
+        output = null;
+        clearBufferedUploadFile(req.file);
       }
-
-      const safeTeamId = Math.floor(Number(managedTeam.team_id) || 0);
-      const fileName = `team-${safeTeamId}-cover.webp`;
-      const filePath = path.join(coversDir, fileName);
-      const stamp = Date.now();
-      const coverUrl = `/uploads/covers/${fileName}?v=${stamp}`;
-
-      await fs.promises.writeFile(filePath, output);
-      await dbRun("UPDATE translation_teams SET cover_url = ?, updated_at = ? WHERE id = ?", [
-        coverUrl,
-        stamp,
-        safeTeamId
-      ]);
-
-      const canonicalPath = buildTeamEditPath(managedTeam.team_id, managedTeam.team_slug || requestedSlug || "");
-      setTeamPageFlash(req, managedTeam.team_id, {
-        settingsStatus: "cover_updated",
-        activeTab: "overview"
-      });
-      return res.redirect(canonicalPath);
     })
   );
 
@@ -8113,12 +8256,14 @@ const registerSiteRoutes = (app, deps) => {
       const origin = getPublicOriginFromRequest(req) || "";
       const cacheKey = origin || "__default__";
       const now = Date.now();
+      pruneSitemapCacheByOrigin(now);
       const cached = sitemapCacheByOrigin.get(cacheKey);
 
       res.type("application/xml");
       res.set("Cache-Control", "public, max-age=600, stale-while-revalidate=3600");
 
       if (cached && cached.expiresAt > now) {
+        cached.updatedAt = now;
         const requestEtag = (req.get("if-none-match") || "").toString();
         if (requestEtag && requestEtag.includes(cached.etag)) {
           res.set("ETag", cached.etag);
@@ -8319,7 +8464,8 @@ const registerSiteRoutes = (app, deps) => {
       sitemapCacheByOrigin.set(cacheKey, {
         etag,
         xmlBody,
-        expiresAt: now + sitemapCacheTtlMs
+        expiresAt: now + sitemapCacheTtlMs,
+        updatedAt: now
       });
 
       res.set("ETag", etag);
@@ -9890,38 +10036,46 @@ const registerSiteRoutes = (app, deps) => {
         return res.status(400).json({ ok: false, error: "Chưa chọn ảnh avatar." });
       }
 
+      let inputBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
       let output = null;
+      clearBufferedUploadFile(req.file);
       try {
-        output = await sharp(req.file.buffer)
-          .rotate()
-          .resize({ width: 256, height: 256, fit: "cover" })
-          .webp({ quality: 76, effort: 6 })
-          .toBuffer();
-      } catch (_err) {
-        return res.status(400).json({ ok: false, error: "Ảnh avatar không hợp lệ." });
+        try {
+          output = await sharp(inputBuffer)
+            .rotate()
+            .resize({ width: 256, height: 256, fit: "cover" })
+            .webp({ quality: 76, effort: 6 })
+            .toBuffer();
+        } catch (_err) {
+          return res.status(400).json({ ok: false, error: "Ảnh avatar không hợp lệ." });
+        }
+
+        const userId = String(user.id || "").trim();
+        const safeId = userId.replace(/[^a-z0-9_-]+/gi, "").slice(0, 80) || "user";
+        const fileName = `u-${safeId}.webp`;
+        const filePath = path.join(avatarsDir, fileName);
+        const stamp = Date.now();
+
+        await fs.promises.writeFile(filePath, output);
+        const avatarUrl = `/uploads/avatars/${fileName}?v=${stamp}`;
+
+        try {
+          await ensureUserRowFromAuthUser(user);
+          await dbRun("UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?", [
+            avatarUrl,
+            stamp,
+            userId
+          ]);
+        } catch (err) {
+          console.warn("Failed to update user avatar", err);
+        }
+
+        return res.json({ ok: true, avatarUrl });
+      } finally {
+        inputBuffer = null;
+        output = null;
+        clearBufferedUploadFile(req.file);
       }
-
-      const userId = String(user.id || "").trim();
-      const safeId = userId.replace(/[^a-z0-9_-]+/gi, "").slice(0, 80) || "user";
-      const fileName = `u-${safeId}.webp`;
-      const filePath = path.join(avatarsDir, fileName);
-      const stamp = Date.now();
-
-      await fs.promises.writeFile(filePath, output);
-      const avatarUrl = `/uploads/avatars/${fileName}?v=${stamp}`;
-
-      try {
-        await ensureUserRowFromAuthUser(user);
-        await dbRun("UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?", [
-          avatarUrl,
-          stamp,
-          userId
-        ]);
-      } catch (err) {
-        console.warn("Failed to update user avatar", err);
-      }
-
-      return res.json({ ok: true, avatarUrl });
     })
   );
 
@@ -11130,18 +11284,28 @@ const registerSiteRoutes = (app, deps) => {
         return res.status(400).json({ ok: false, error: "Không tìm thấy ảnh để tải lên." });
       }
 
-      const uploaded = await uploadImageBufferToGoogleDrive({
-        buffer: req.file.buffer,
-        mimeType: req.file.mimetype,
-        originalName: req.file.originalname,
-        prefix: "messages"
-      });
+      let uploadBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+      const mimeType = req.file.mimetype;
+      const originalName = req.file.originalname;
+      clearBufferedUploadFile(req.file);
 
-      return res.json({
-        ok: true,
-        imageUrl: uploaded.imageUrl,
-        fileId: uploaded.fileId || ""
-      });
+      try {
+        const uploaded = await uploadImageBufferToGoogleDrive({
+          buffer: uploadBuffer,
+          mimeType,
+          originalName,
+          prefix: "messages"
+        });
+
+        return res.json({
+          ok: true,
+          imageUrl: uploaded.imageUrl,
+          fileId: uploaded.fileId || ""
+        });
+      } finally {
+        uploadBuffer = null;
+        clearBufferedUploadFile(req.file);
+      }
     })
   );
 
@@ -13433,18 +13597,28 @@ const registerSiteRoutes = (app, deps) => {
         return res.status(400).json({ ok: false, error: "Không tìm thấy ảnh để tải lên." });
       }
 
-      const uploaded = await uploadImageBufferToGoogleDrive({
-        buffer: req.file.buffer,
-        mimeType: req.file.mimetype,
-        originalName: req.file.originalname,
-        prefix: "comments"
-      });
+      let uploadBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+      const mimeType = req.file.mimetype;
+      const originalName = req.file.originalname;
+      clearBufferedUploadFile(req.file);
 
-      return res.json({
-        ok: true,
-        imageUrl: uploaded.imageUrl,
-        fileId: uploaded.fileId || ""
-      });
+      try {
+        const uploaded = await uploadImageBufferToGoogleDrive({
+          buffer: uploadBuffer,
+          mimeType,
+          originalName,
+          prefix: "comments"
+        });
+
+        return res.json({
+          ok: true,
+          imageUrl: uploaded.imageUrl,
+          fileId: uploaded.fileId || ""
+        });
+      } finally {
+        uploadBuffer = null;
+        clearBufferedUploadFile(req.file);
+      }
     })
   );
 

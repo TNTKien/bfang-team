@@ -130,7 +130,8 @@ const getStorageClient = () => {
 const b2UploadBuffer = async ({ fileName, buffer, contentType, cacheControl }) => {
   const config = getB2Config();
   const key = (fileName || "").toString().trim().replace(/^\/+/, "");
-  if (!isB2Ready(config) || !key || !buffer) {
+  let uploadBuffer = buffer;
+  if (!isB2Ready(config) || !key || !uploadBuffer) {
     throw new Error("Upload ảnh thất bại.");
   }
 
@@ -139,15 +140,20 @@ const b2UploadBuffer = async ({ fileName, buffer, contentType, cacheControl }) =
   const payload = {
     Bucket: config.bucketId,
     Key: key,
-    Body: buffer,
+    Body: uploadBuffer,
     ContentType: contentType || "application/octet-stream"
   };
   if (cacheControlValue) {
     payload.CacheControl = cacheControlValue;
   }
-  await s3.send(
-    new PutObjectCommand(payload)
-  );
+  try {
+    await s3.send(
+      new PutObjectCommand(payload)
+    );
+  } finally {
+    payload.Body = undefined;
+    uploadBuffer = null;
+  }
 
   return {
     fileName: key,
@@ -1398,6 +1404,42 @@ const runChapterProcessingJob = async (chapterId) => {
       if (!id) return;
       existingSourceById.set(id, file);
     });
+  }
+
+  const shouldSnapshotExistingSources = Boolean(existingPrefix && existingPrefix === finalPrefix);
+  if (shouldSnapshotExistingSources && existingSourceById.size) {
+    const snapshotPrefix = `${draftPrefix}/existing-snapshot`;
+    const snapshotIds = Array.from(new Set(pageIds.filter((pageId) => existingSourceById.has(pageId))));
+
+    try {
+      for (let index = 0; index < snapshotIds.length; index += 1) {
+        const pageId = snapshotIds[index];
+        const existingSource = existingSourceById.get(pageId);
+        const sourceFileId = existingSource && existingSource.fileId ? String(existingSource.fileId) : "";
+        if (!sourceFileId) {
+          throw new Error("Không đọc được ảnh chương hiện tại để sắp xếp lại.");
+        }
+
+        const snapshotFileName = `${snapshotPrefix}/${pageId}.webp`;
+        const copied = await b2CopyFile({
+          sourceFileId,
+          destinationFileName: snapshotFileName
+        });
+
+        existingSourceById.set(pageId, {
+          fileName: copied.fileName,
+          fileId: copied.fileId,
+          uploadTimestamp: Date.now()
+        });
+      }
+    } catch (err) {
+      await updateChapterProcessing({
+        chapterId: chapterRow.id,
+        state: "failed",
+        error: (err && err.message) || "Không thể tạo bản sao tạm để sắp xếp lại ảnh chương."
+      });
+      return;
+    }
   }
 
   let donePages = 0;

@@ -1150,12 +1150,16 @@ const uploadImageBufferToGoogleDrive = async ({ buffer, mimeType, originalName, 
     requestBody.parents = [GOOGLE_DRIVE_FOLDER_ID];
   }
 
+  let sourceBuffer = buffer;
+  let mediaBody = null;
+
   try {
+    mediaBody = Readable.from(sourceBuffer);
     const createResult = await drive.files.create({
       requestBody,
       media: {
         mimeType: safeMimeType,
-        body: Readable.from(buffer)
+        body: mediaBody
       },
       fields: "id,name,mimeType",
       supportsAllDrives: true
@@ -1192,6 +1196,9 @@ const uploadImageBufferToGoogleDrive = async ({ buffer, mimeType, originalName, 
     );
     wrapped.statusCode = error && error.statusCode ? error.statusCode : 500;
     throw wrapped;
+  } finally {
+    mediaBody = null;
+    sourceBuffer = null;
   }
 };
 
@@ -1485,6 +1492,7 @@ const FORBIDDEN_WORD_MAX_LENGTH = 80;
 const READING_HISTORY_MAX_ITEMS = 10;
 const ONESHOT_GENRE_NAME = "Oneshot";
 const notificationStreamClientsByUserId = new Map();
+const COMMENT_BOT_SIGNAL_STORE_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 
 const formatChapterNumberValue = (value) => {
   const chapterNumber = Number(value);
@@ -1878,6 +1886,22 @@ const clearCommentBotSignals = (userId) => {
   const normalizedUserId = (userId || "").toString().trim();
   if (!normalizedUserId) return;
   commentBotSignalStore.delete(normalizedUserId);
+};
+
+const scheduleCommentBotSignalStoreCleanup = () => {
+  const run = () => {
+    try {
+      pruneCommentBotSignalStore(Date.now());
+    } catch (error) {
+      console.warn("Comment bot signal cleanup failed", error);
+    }
+  };
+
+  run();
+  const timer = setInterval(run, COMMENT_BOT_SIGNAL_STORE_PRUNE_INTERVAL_MS);
+  if (timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
 };
 
 const readCommentTurnstileToken = (req) => {
@@ -5018,6 +5042,7 @@ const startServer = async (context = null) => {
   scheduleSessionStoreCleanup();
   scheduleCoverTempCleanup();
   scheduleChapterDraftCleanup();
+  scheduleCommentBotSignalStoreCleanup();
   scheduleNotificationCleanup();
   resumeChapterProcessingJobs().catch((err) => {
     console.warn("Failed to resume chapter processing jobs", err);

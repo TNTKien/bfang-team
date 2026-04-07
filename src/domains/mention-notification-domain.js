@@ -588,9 +588,31 @@ const writeNotificationStreamEvent = (response, eventName, payload) => {
   }
 };
 
+const isActiveNotificationStreamResponse = (response) => Boolean(response && !response.writableEnded && !response.destroyed);
+
+const sweepNotificationStreamClients = (userId) => {
+  const id = (userId || "").toString().trim();
+  if (!id) return;
+
+  const bucket = notificationStreamClientsByUserId.get(id);
+  if (!bucket || !bucket.size) return;
+
+  bucket.forEach((client, clientId) => {
+    if (!isActiveNotificationStreamResponse(client && client.response)) {
+      bucket.delete(clientId);
+    }
+  });
+
+  if (!bucket.size) {
+    notificationStreamClientsByUserId.delete(id);
+  }
+};
+
 const addNotificationStreamClient = (userId, response) => {
   const id = (userId || "").toString().trim();
   if (!id || !response) return "";
+
+  sweepNotificationStreamClients(id);
 
   let bucket = notificationStreamClientsByUserId.get(id);
   if (!bucket) {
@@ -620,6 +642,8 @@ const removeNotificationStreamClient = (userId, clientId) => {
 const publishNotificationStreamUpdate = async ({ userId, reason }) => {
   const id = (userId || "").toString().trim();
   if (!id) return;
+
+  sweepNotificationStreamClients(id);
 
   const bucket = notificationStreamClientsByUserId.get(id);
   if (!bucket || !bucket.size) return;

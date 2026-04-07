@@ -82,6 +82,13 @@ const registerForumApiRoutes = (app, deps) => {
     if (!Number.isFinite(parsed) || parsed <= 0) return 45;
     return Math.floor(parsed);
   })();
+
+  const clearBufferedUploadFile = (file) => {
+    if (!file || typeof file !== "object") return;
+    if (Object.prototype.hasOwnProperty.call(file, "buffer")) {
+      file.buffer = null;
+    }
+  };
   const ENDPOINT_CACHE_FORUM_POST_DETAIL_TTL_SECONDS = (() => {
     const parsed = Number(process.env.ENDPOINT_CACHE_FORUM_POST_DETAIL_TTL_SECONDS);
     if (!Number.isFinite(parsed) || parsed <= 0) return 120;
@@ -994,18 +1001,28 @@ const registerForumApiRoutes = (app, deps) => {
         return res.status(400).json({ ok: false, error: "Không tìm thấy ảnh để tải lên." });
       }
 
-      const uploaded = await uploadImageBufferToGoogleDrive({
-        buffer: req.file.buffer,
-        mimeType: req.file.mimetype,
-        originalName: req.file.originalname,
-        prefix: "forum-comments",
-      });
+      let uploadBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+      const mimeType = req.file.mimetype;
+      const originalName = req.file.originalname;
+      clearBufferedUploadFile(req.file);
 
-      return res.json({
-        ok: true,
-        imageUrl: uploaded.imageUrl,
-        fileId: uploaded.fileId || "",
-      });
+      try {
+        const uploaded = await uploadImageBufferToGoogleDrive({
+          buffer: uploadBuffer,
+          mimeType,
+          originalName,
+          prefix: "forum-comments",
+        });
+
+        return res.json({
+          ok: true,
+          imageUrl: uploaded.imageUrl,
+          fileId: uploaded.fileId || "",
+        });
+      } finally {
+        uploadBuffer = null;
+        clearBufferedUploadFile(req.file);
+      }
     })
   );
 
@@ -1260,12 +1277,22 @@ const registerForumApiRoutes = (app, deps) => {
         return res.status(400).json({ ok: false, error: `Tối đa ${FORUM_POST_MAX_IMAGE_COUNT} ảnh mỗi bài viết.` });
       }
 
-      const processedImages = [];
+      const nowMs = Date.now();
+      const finalPrefix = buildForumPostFinalPrefix({
+        forumPrefix: config.forumPrefix,
+        token: `post-${postId}`,
+        nowMs,
+      });
+      const uploadedKeys = [];
+      let uploadedCount = 0;
       for (const image of images) {
         const imageId = toText(image && image.id);
-        const dataUrl = toText(image && image.dataUrl);
+        let dataUrl = toText(image && image.dataUrl);
         const placeholder = buildForumLocalImagePlaceholder(imageId);
         if (!placeholder) {
+          if (uploadedKeys.length > 0) {
+            await deleteForumImageKeys(uploadedKeys, { skipReferenceCheck: true }).catch(() => null);
+          }
           return res.status(400).json({ ok: false, error: "ID ảnh cục bộ không hợp lệ." });
         }
         if (!outputContent.includes(placeholder)) {
@@ -1276,6 +1303,9 @@ const registerForumApiRoutes = (app, deps) => {
         try {
           webpBuffer = await processForumDataUrlImage(dataUrl);
         } catch (err) {
+          if (uploadedKeys.length > 0) {
+            await deleteForumImageKeys(uploadedKeys, { skipReferenceCheck: true }).catch(() => null);
+          }
           const code = toText(err && err.code);
           if (code === "invalid_data_url") {
             return res.status(400).json({ ok: false, error: "Dữ liệu ảnh không hợp lệ." });
@@ -1296,51 +1326,30 @@ const registerForumApiRoutes = (app, deps) => {
           }
           return res.status(400).json({ ok: false, error: "Không thể xử lý ảnh." });
         }
-
-        processedImages.push({
-          id: imageId,
-          placeholder,
-          buffer: webpBuffer,
-        });
-      }
-
-      if (!processedImages.length) {
-        return res.json({ ok: true, content: outputContent, uploadedCount: 0 });
-      }
-
-      const nowMs = Date.now();
-      const finalPrefix = buildForumPostFinalPrefix({
-        forumPrefix: config.forumPrefix,
-        token: `post-${postId}`,
-        nowMs,
-      });
-
-      const uploadedKeys = [];
-      const finalUrlById = new Map();
-
-      try {
-        for (let index = 0; index < processedImages.length; index += 1) {
-          const item = processedImages[index];
-          const destinationName = `${finalPrefix}/${String(index + 1).padStart(3, "0")}.webp`;
+        try {
+          const destinationName = `${finalPrefix}/${String(uploadedCount + 1).padStart(3, "0")}.webp`;
           await b2UploadBuffer({
             fileName: destinationName,
-            buffer: item.buffer,
+            buffer: webpBuffer,
             contentType: "image/webp",
           });
           uploadedKeys.push(destinationName);
-          finalUrlById.set(item.id, `${imageBaseUrl}/${destinationName}`);
+          uploadedCount += 1;
+          const finalUrl = `${imageBaseUrl}/${destinationName}`;
+          outputContent = replaceAllLiteral(outputContent, placeholder, finalUrl);
+        } catch (_err) {
+          if (uploadedKeys.length > 0) {
+            await deleteForumImageKeys(uploadedKeys, { skipReferenceCheck: true }).catch(() => null);
+          }
+          return res.status(500).json({ ok: false, error: "Upload ảnh thất bại." });
+        } finally {
+          dataUrl = "";
+          webpBuffer = null;
         }
-      } catch (_err) {
-        if (uploadedKeys.length > 0) {
-          await deleteForumImageKeys(uploadedKeys, { skipReferenceCheck: true }).catch(() => null);
-        }
-        return res.status(500).json({ ok: false, error: "Upload ảnh thất bại." });
       }
 
-      for (const item of processedImages) {
-        const finalUrl = toText(finalUrlById.get(item.id));
-        if (!finalUrl) continue;
-        outputContent = replaceAllLiteral(outputContent, item.placeholder, finalUrl);
+      if (!uploadedCount) {
+        return res.json({ ok: true, content: outputContent, uploadedCount: 0 });
       }
 
       const hasPendingLocalPlaceholders = new RegExp(
@@ -1373,13 +1382,13 @@ const registerForumApiRoutes = (app, deps) => {
           console.warn("forum finalize image cleanup failed", err);
         }
       }
-      return res.json({
-        ok: true,
-        content: outputContent,
-        uploadedCount: processedImages.length,
-        removedImageCount: removedImageKeys.length,
-        deletedImageCount,
-        pendingPlaceholders: hasPendingLocalPlaceholders,
+        return res.json({
+          ok: true,
+          content: outputContent,
+          uploadedCount,
+          removedImageCount: removedImageKeys.length,
+          deletedImageCount,
+          pendingPlaceholders: hasPendingLocalPlaceholders,
       });
     })
   );
@@ -1454,7 +1463,7 @@ const registerForumApiRoutes = (app, deps) => {
         return res.status(410).json({ ok: false, error: "Draft đã hết hạn. Vui lòng tạo bài viết mới." });
       }
 
-      const imageDataUrl = toText(req && req.body ? req.body.imageDataUrl : "");
+      let imageDataUrl = toText(req && req.body ? req.body.imageDataUrl : "");
       let webpBuffer = null;
       try {
         webpBuffer = await processForumDataUrlImage(imageDataUrl);
@@ -1494,6 +1503,9 @@ const registerForumApiRoutes = (app, deps) => {
         });
       } catch (_err) {
         return res.status(500).json({ ok: false, error: "Upload ảnh thất bại." });
+      } finally {
+        imageDataUrl = "";
+        webpBuffer = null;
       }
 
       const imageUrl = `${imageBaseUrl}/${fileName}`;

@@ -119,6 +119,13 @@ const NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER = "manga_bookmark_new_chapter
 const chapterPageFilePrefixAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const chapterPageFilePrefixLength = 5;
 
+const clearBufferedUploadFile = (file) => {
+  if (!file || typeof file !== "object") return;
+  if (Object.prototype.hasOwnProperty.call(file, "buffer")) {
+    file.buffer = null;
+  }
+};
+
 const normalizeUploadApiBaseUrl = (value) => {
   const raw = (value || "").toString().trim();
   if (!raw) return "";
@@ -1307,14 +1314,19 @@ app.post(
     }
 
     let coverBuffer = null;
+    let inputBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    clearBufferedUploadFile(req.file);
     try {
-      coverBuffer = await convertCoverToWebp(req.file.buffer);
+      coverBuffer = await convertCoverToWebp(inputBuffer);
     } catch (err) {
       const message =
         err && err.message && err.message.startsWith("Ảnh bìa")
           ? err.message
           : "Ảnh bìa không hợp lệ hoặc quá lớn.";
       return res.status(400).json({ error: message });
+    } finally {
+      inputBuffer = null;
+      clearBufferedUploadFile(req.file);
     }
 
     const token = createCoverTempToken();
@@ -1799,14 +1811,19 @@ app.post(
     let coverBuffer = null;
     let coverTempUsed = "";
     if (req.file && req.file.buffer) {
+      let inputBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+      clearBufferedUploadFile(req.file);
       try {
-        coverBuffer = await convertCoverToWebp(req.file.buffer);
+        coverBuffer = await convertCoverToWebp(inputBuffer);
       } catch (err) {
         const message =
           err && err.message && err.message.startsWith("Ảnh bìa")
             ? err.message
             : "Ảnh bìa không hợp lệ hoặc quá lớn.";
         return res.status(400).send(message);
+      } finally {
+        inputBuffer = null;
+        clearBufferedUploadFile(req.file);
       }
     }
 
@@ -2109,14 +2126,19 @@ app.post(
     let coverTempUsed = "";
 
     if (req.file && req.file.buffer) {
+      let inputBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+      clearBufferedUploadFile(req.file);
       try {
-        nextCoverBuffer = await convertCoverToWebp(req.file.buffer);
+        nextCoverBuffer = await convertCoverToWebp(inputBuffer);
       } catch (err) {
         const message =
           err && err.message && err.message.startsWith("Ảnh bìa")
             ? err.message
             : "Ảnh bìa không hợp lệ hoặc quá lớn.";
         return res.status(400).send(message);
+      } finally {
+        inputBuffer = null;
+        clearBufferedUploadFile(req.file);
       }
     } else if (coverTempToken) {
       const tempBuffer = await loadCoverTempBuffer(coverTempToken);
@@ -2883,7 +2905,8 @@ app.post(
       return res.status(400).send("Chưa chọn ảnh trang.");
     }
 
-    const webpBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    let webpBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    clearBufferedUploadFile(req.file);
     if (!isLikelyWebpBuffer(webpBuffer)) {
       return res.status(400).send("Ảnh trang phải là định dạng WebP.");
     }
@@ -2903,6 +2926,9 @@ app.post(
     } catch (err) {
       console.warn("Draft page upload failed", err);
       return res.status(500).send("Upload ảnh thất bại.");
+    } finally {
+      webpBuffer = null;
+      clearBufferedUploadFile(req.file);
     }
 
     await touchChapterDraft(token);
@@ -3720,7 +3746,8 @@ app.post(
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
         const pageNumber = index + 1;
-        const webpBuffer = Buffer.isBuffer(file && file.buffer) ? file.buffer : null;
+        let webpBuffer = Buffer.isBuffer(file && file.buffer) ? file.buffer : null;
+        clearBufferedUploadFile(file);
         if (!isLikelyWebpBuffer(webpBuffer)) {
           return res.status(400).send("Ảnh trang phải là định dạng WebP.");
         }
@@ -3740,10 +3767,16 @@ app.post(
           buffer: webpBuffer,
           contentType: "image/webp"
         });
+        webpBuffer = null;
       }
     } catch (err) {
       console.warn("Chapter pages upload failed", err);
       return res.status(500).send("Upload ảnh thất bại.");
+    } finally {
+      files.forEach(clearBufferedUploadFile);
+      if (Array.isArray(req.files)) {
+        req.files.length = 0;
+      }
     }
 
     await dbRun(
@@ -3828,7 +3861,8 @@ app.post(
       return res.status(400).send("Chưa chọn ảnh trang.");
     }
 
-    const webpBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    let webpBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    clearBufferedUploadFile(req.file);
     if (!isLikelyWebpBuffer(webpBuffer)) {
       return res.status(400).send("Ảnh trang phải là định dạng WebP.");
     }
@@ -3854,6 +3888,9 @@ app.post(
     } catch (err) {
       console.warn("Chapter page upload failed", err);
       return res.status(500).send("Upload ảnh thất bại.");
+    } finally {
+      webpBuffer = null;
+      clearBufferedUploadFile(req.file);
     }
 
     const url = `${config.cdnBaseUrl}/${prefix}/${pageName}`;

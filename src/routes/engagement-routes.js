@@ -546,6 +546,9 @@ const registerEngagementRoutes = (app, deps) => {
 
       req.on("close", cleanup);
       req.on("aborted", cleanup);
+      res.on("close", cleanup);
+      res.on("finish", cleanup);
+      res.on("error", cleanup);
     })
   );
 
