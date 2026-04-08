@@ -74,6 +74,7 @@
               data-allow-replace="1"
               data-chapter-upload-api-base-url="<%= chapterUploadApiBaseUrl || "" %>"
               data-chapter-upload-api-proof="<%= chapterUploadApiProof || "" %>"
+              data-is-webtoon="<%= isWebtoonManga ? "1" : "0" %>"
             >
               <input type="hidden" name="draft_token" value="<%= draftToken %>" data-draft-token-input />
               <input type="hidden" name="draft_pages" value="<%= JSON.stringify(existingPageIds || []) %>" data-draft-pages-input />

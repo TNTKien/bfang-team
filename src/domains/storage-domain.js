@@ -1,3 +1,9 @@
+const {
+  CHAPTER_PAGE_MAX_HEIGHT,
+  CHAPTER_PAGE_WEBP_QUALITY,
+  createConvertChapterPageToWebp
+} = require("../utils/chapter-page-webp");
+
 const createStorageDomain = (deps) => {
   const {
     CopyObjectCommand,
@@ -15,6 +21,10 @@ const createStorageDomain = (deps) => {
     parseEnvBoolean,
     sharp,
   } = deps;
+
+const chapterPageMaxHeight = CHAPTER_PAGE_MAX_HEIGHT;
+const chapterPageWebpQuality = CHAPTER_PAGE_WEBP_QUALITY;
+const convertChapterPageToWebp = createConvertChapterPageToWebp({ sharp });
 
 const imageFileExtensionPattern = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
 const defaultImageCacheControl = (
@@ -1724,21 +1734,6 @@ const reconcileStaleChapterProcessingById = async (chapterId) => {
   } catch (_err) {
     return false;
   }
-};
-
-const chapterPageMaxHeight = 1800;
-const chapterPageWebpQuality = 77;
-
-const convertChapterPageToWebp = async (inputBuffer) => {
-  if (!inputBuffer) return null;
-  return sharp(inputBuffer)
-    .rotate()
-    .resize({
-      height: chapterPageMaxHeight,
-      withoutEnlargement: true
-    })
-    .webp({ quality: chapterPageWebpQuality, effort: 6 })
-    .toBuffer();
 };
 
   return {

@@ -46,6 +46,7 @@
               data-chapter-numbers="<%= JSON.stringify(chapterNumbers || []) %>"
               data-chapter-upload-api-base-url="<%= chapterUploadApiBaseUrl || "" %>"
               data-chapter-upload-api-proof="<%= chapterUploadApiProof || "" %>"
+              data-is-webtoon="<%= isWebtoonManga ? "1" : "0" %>"
             >
               <input type="hidden" name="draft_token" value="<%= draftToken %>" data-draft-token-input />
               <input type="hidden" name="draft_pages" value="[]" data-draft-pages-input />

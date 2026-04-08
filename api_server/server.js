@@ -7,6 +7,7 @@ const express = require("express");
 const multer = require("multer");
 const { Pool } = require("pg");
 const sharp = require("sharp");
+const { createConvertChapterPageToWebp } = require("./utils/chapter-page-webp");
 const {
   CopyObjectCommand,
   DeleteObjectsCommand,
@@ -42,8 +43,6 @@ const CHAPTER_PAGE_MAX_SIZE_BYTES = 12 * 1024 * 1024;
 const UPLOAD_SESSION_TTL_MS = 3 * 60 * 60 * 1000;
 const UPLOAD_SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 const CHAPTER_DRAFT_TTL_MS = 3 * 60 * 60 * 1000;
-const CHAPTER_PAGE_MAX_HEIGHT = 1800;
-const CHAPTER_PAGE_WEBP_QUALITY = 77;
 const CHAPTER_PAGE_FILE_PREFIX_PATTERN = /^[a-zA-Z]{5}$/;
 const CHAPTER_PAGE_FILE_PREFIX_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const CHAPTER_PAGE_FILE_PREFIX_LENGTH = 5;
@@ -88,6 +87,8 @@ const s3 = new S3Client({
 
 const app = express();
 app.disable("x-powered-by");
+
+const convertChapterPageToWebp = createConvertChapterPageToWebp({ sharp });
 
 function normalizeOrigin(value) {
   const raw = (value == null ? "" : String(value)).trim();
@@ -579,34 +580,16 @@ function verifyChapterDraftProof({ token, proof }) {
   return { ok: true, expiresAt };
 }
 
-function normalizeTeamGroupName(value) {
-  return (value == null ? "" : String(value))
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function splitTeamGroupDisplayTokens(value) {
-  return (value == null ? "" : String(value))
-    .replace(/\s*[\/&+;|,]\s*/g, ",")
-    .replace(/\s+x\s+/gi, ",")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function groupNameMatchesTeam(groupName, teamName) {
-  const normalizedGroup = normalizeTeamGroupName(groupName);
-  const normalizedTeam = normalizeTeamGroupName(teamName);
-  if (!normalizedGroup || !normalizedTeam) return false;
-  if (normalizedGroup === normalizedTeam) return true;
-
-  const tokens = splitTeamGroupDisplayTokens(groupName)
-    .map((item) => normalizeTeamGroupName(item))
-    .filter(Boolean);
-
-  if (tokens.includes(normalizedTeam)) return true;
-  return false;
+function normalizeTeamIdList(values) {
+  const list = Array.isArray(values) ? values : [];
+  return Array.from(
+    new Set(
+      list
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.floor(value))
+    )
+  );
 }
 
 function isLikelyWebpBuffer(value) {
@@ -619,16 +602,23 @@ function isLikelyWebpBuffer(value) {
   return true;
 }
 
-async function convertChapterPageToWebp(inputBuffer) {
-  if (!inputBuffer) return null;
-  return sharp(inputBuffer)
-    .rotate()
-    .resize({
-      height: CHAPTER_PAGE_MAX_HEIGHT,
-      withoutEnlargement: true
-    })
-    .webp({ quality: CHAPTER_PAGE_WEBP_QUALITY, effort: 6 })
-    .toBuffer();
+async function isMangaTaggedWebtoon(mangaId) {
+  const safeMangaId = Number(mangaId);
+  if (!Number.isFinite(safeMangaId) || safeMangaId <= 0) return false;
+
+  const row = await dbGet(
+    `
+      SELECT 1 AS is_webtoon
+      FROM manga_genres mg
+      JOIN genres g ON g.id = mg.genre_id
+      WHERE mg.manga_id = $1
+        AND lower(trim(g.name)) = $2
+      LIMIT 1
+    `,
+    [Math.floor(safeMangaId), "webtoon"]
+  );
+
+  return Boolean(row);
 }
 
 function buildTeamMemberPermissionsFromRow(row) {
@@ -648,15 +638,26 @@ function buildTeamMemberPermissionsFromRow(row) {
   };
 }
 
-function resolveMangaPermissions({ memberships, groupName }) {
+function resolveMangaPermissions({ memberships, linkedTeamIds }) {
   const list = Array.isArray(memberships) ? memberships : [];
+  const linkedTeamIdSet = new Set(normalizeTeamIdList(linkedTeamIds));
+  if (!linkedTeamIdSet.size) {
+    return {
+      canAddChapter: false,
+      canEditChapter: false,
+      canDeleteChapter: false,
+      canUploadChapter: false
+    };
+  }
+
   let canAddChapter = false;
   let canEditChapter = false;
   let canDeleteChapter = false;
 
   for (const membership of list) {
-    if (!membership || !membership.teamName) continue;
-    if (!groupNameMatchesTeam(groupName, membership.teamName)) continue;
+    const teamId = Number(membership && membership.teamId);
+    if (!Number.isFinite(teamId) || teamId <= 0) continue;
+    if (!linkedTeamIdSet.has(Math.floor(teamId))) continue;
     const permissions = membership.permissions || {};
     canAddChapter = canAddChapter || Boolean(permissions.canAddChapter);
     canEditChapter = canEditChapter || Boolean(permissions.canEditChapter);
@@ -760,8 +761,9 @@ async function listAuthorizedManga(memberships) {
     const permissions = member && member.permissions ? member.permissions : null;
     return Boolean(permissions && (permissions.canAddChapter || permissions.canEditChapter));
   });
+  const eligibleTeamIds = normalizeTeamIdList(eligibleMemberships.map((member) => member && member.teamId));
 
-  if (!eligibleMemberships.length) return [];
+  if (!eligibleMemberships.length || !eligibleTeamIds.length) return [];
 
   const mangaRows = await dbAll(
     `
@@ -777,18 +779,40 @@ async function listAuthorizedManga(memberships) {
         m.cover_updated_at,
         m.updated_at,
         COALESCE(m.is_hidden, 0) as is_hidden,
-        COALESCE(m.is_oneshot, false) as is_oneshot
+        COALESCE(m.is_oneshot, false) as is_oneshot,
+        array_agg(DISTINCT linked_mtt.team_id ORDER BY linked_mtt.team_id) AS linked_team_ids
       FROM manga m
+      JOIN manga_translation_teams linked_mtt ON linked_mtt.manga_id = m.id
+      WHERE EXISTS (
+        SELECT 1
+        FROM manga_translation_teams eligible_mtt
+        WHERE eligible_mtt.manga_id = m.id
+          AND eligible_mtt.team_id = ANY($1::int[])
+      )
+      GROUP BY
+        m.id,
+        m.title,
+        m.slug,
+        m.author,
+        m.group_name,
+        m.status,
+        m.description,
+        m.cover,
+        m.cover_updated_at,
+        m.updated_at,
+        m.is_hidden,
+        m.is_oneshot
       ORDER BY m.updated_at DESC, m.id DESC
       LIMIT 900
-    `
+    `,
+    [eligibleTeamIds]
   );
 
   const filtered = mangaRows
     .map((row) => {
       const permissions = resolveMangaPermissions({
-        memberships: eligibleMemberships,
-        groupName: row && row.group_name ? row.group_name : ""
+        memberships,
+        linkedTeamIds: row && row.linked_team_ids
       });
 
       if (!permissions.canUploadChapter) return null;
@@ -899,9 +923,18 @@ async function resolveAuthorizedManga({ userId, mangaId }) {
   }
 
   const memberships = await listApprovedMemberships(safeUserId);
+  const linkedTeamRows = await dbAll(
+    `
+      SELECT team_id
+      FROM manga_translation_teams
+      WHERE manga_id = $1
+      ORDER BY team_id ASC
+    `,
+    [Math.floor(safeMangaId)]
+  );
   const permissions = resolveMangaPermissions({
     memberships,
-    groupName: manga && manga.group_name ? manga.group_name : ""
+    linkedTeamIds: linkedTeamRows.map((row) => row && row.team_id)
   });
 
   const isHidden = Number(manga && manga.is_hidden != null ? manga.is_hidden : 0) === 1;
@@ -1423,9 +1456,16 @@ app.post(
         return jsonError(res, 400, "Missing page file");
       }
 
+      const draftMangaId = Number(draft && draft.manga_id);
+      if (!Number.isFinite(draftMangaId) || draftMangaId <= 0) {
+        return jsonError(res, 500, "Draft manga id is invalid");
+      }
+
+      const isWebtoonManga = await isMangaTaggedWebtoon(draftMangaId);
+
       let webpBuffer = null;
       try {
-        webpBuffer = await convertChapterPageToWebp(req.file.buffer);
+        webpBuffer = await convertChapterPageToWebp(req.file.buffer, { isWebtoon: isWebtoonManga });
       } catch (_err) {
         return jsonError(res, 400, "Invalid image file");
       }
@@ -1515,6 +1555,7 @@ app.post("/v1/uploads/start", requireApiKey, async (req, res) => {
     }
 
     const mangaId = Number(access.manga.id) || 0;
+    const isWebtoonManga = await isMangaTaggedWebtoon(mangaId);
     const isOneshotManga = toBooleanFlag(access.manga.is_oneshot, false);
     const requestedChapterNumber = parseChapterNumberInput(req.body ? req.body.chapterNumber : null);
     const chapterNumber = isOneshotManga ? 0 : requestedChapterNumber;
@@ -1611,6 +1652,7 @@ app.post("/v1/uploads/start", requireApiKey, async (req, res) => {
       ok: true,
       sessionId: session.id,
       mangaId,
+      isWebtoonManga,
       chapterNumber,
       chapterNumberText,
       totalPages,

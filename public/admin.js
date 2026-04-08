@@ -6062,6 +6062,7 @@
   const hasUploadApiProof = Boolean(chapterUploadApiProof);
   const useUploadApiServer = hasUploadApiTarget && hasUploadApiProof;
   const allowReplace = form.dataset.allowReplace === "1";
+  const isWebtoonManga = form.dataset.isWebtoon === "1";
 
   const numberInput = form.querySelector("[data-chapter-number-input]");
   const positionSelect = form.querySelector("[data-chapter-position-select]");
@@ -6166,6 +6167,11 @@
     return type === "image/jpeg" || type === "image/webp";
   };
 
+  const isSupportedDirectUploadMimeType = (value) => {
+    const type = (value || "").toString().trim().toLowerCase();
+    return type === "image/jpeg" || type === "image/png" || type === "image/webp";
+  };
+
   const readImageDimensions = (file) =>
     new Promise((resolve, reject) => {
       if (!(file instanceof Blob)) {
@@ -6226,7 +6232,7 @@
     };
 
     const dimensions = await readImageDimensions(file).catch(() => null);
-    if (dimensions && Number(dimensions.height) > 1800) {
+    if (!isWebtoonManga && dimensions && Number(dimensions.height) > 1800) {
       options.maxWidthOrHeight = 1800;
     }
 
@@ -6276,8 +6282,8 @@
       if (!isSupportedApiUploadMimeType(preparedType)) {
         throw new Error("Ảnh upload lên api_server chỉ hỗ trợ JPG, PNG, WebP, AVIF hoặc BMP.");
       }
-    } else if (preparedType !== "image/webp") {
-      throw new Error("Ảnh upload lên server chính phải là định dạng WebP.");
+    } else if (!isSupportedDirectUploadMimeType(preparedType)) {
+      throw new Error("Ảnh upload lên server chính chỉ hỗ trợ JPG, PNG hoặc WebP.");
     }
 
     item.uploadFile = prepared;

@@ -118,10 +118,20 @@ jobs:
           mapfile -t windows_files < <(find release-assets/windows -maxdepth 1 -type f -name "*.exe" -printf "%f\n" | sort)
           mapfile -t mac_files < <(find release-assets/macos -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.zip" \) -printf "%f\n" | sort)
 
+          format_download_link() {
+            local file="$1"
+            local encoded_file
+
+            encoded_file="$(node -e "process.stdout.write(encodeURIComponent(process.argv[1]))" "$file")"
+
+            printf -- '- `%s` — [Download](https://github.com/%s/releases/download/%s/%s)' \
+              "$file" "${GITHUB_REPOSITORY}" "$tag" "$encoded_file"
+          }
+
           windows_links=()
           if [ "${#windows_files[@]}" -gt 0 ]; then
             for file in "${windows_files[@]}"; do
-              windows_links+=("- [${file}](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${file})")
+              windows_links+=("$(format_download_link "$file")")
             done
           else
             windows_links+=("- Build artifact will appear here after the release upload finishes.")
@@ -130,7 +140,7 @@ jobs:
           mac_links=()
           if [ "${#mac_files[@]}" -gt 0 ]; then
             for file in "${mac_files[@]}"; do
-              mac_links+=("- [${file}](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${file})")
+              mac_links+=("$(format_download_link "$file")")
             done
           else
             mac_links+=("- Build artifact will appear here after the release upload finishes.")
@@ -140,9 +150,6 @@ jobs:
             echo "# Moetruyen"
             echo
             echo "Desktop build v${version} for the latest \`main\` branch snapshot."
-            echo
-            echo "> [!WARNING]"
-            echo "> This is a pre-release build intended for testing. It may change without notice."
             echo
             echo "## Downloads"
             echo

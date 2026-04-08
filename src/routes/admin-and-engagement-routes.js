@@ -20,6 +20,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     buildMangaSlug,
     cacheBust,
     chapterDraftTtlMs,
+    convertChapterPageToWebp,
     convertCoverToWebp,
     avatarsDir,
     coversDir,
@@ -186,6 +187,35 @@ const isLikelyWebpBuffer = (value) => {
   if (riffTag !== "RIFF" || webpTag !== "WEBP") return false;
   if (chunkTag !== "VP8 " && chunkTag !== "VP8L" && chunkTag !== "VP8X") return false;
   return true;
+};
+
+const isMangaTaggedWebtoon = async ({ mangaId, dbGetFn = dbGet }) => {
+  const safeMangaId = Number(mangaId);
+  if (!Number.isFinite(safeMangaId) || safeMangaId <= 0) return false;
+
+  const row = await dbGetFn(
+    `
+      SELECT 1 AS is_webtoon
+      FROM manga_genres mg
+      JOIN genres g ON g.id = mg.genre_id
+      WHERE mg.manga_id = ?
+        AND lower(trim(g.name)) = ?
+      LIMIT 1
+    `,
+    [Math.floor(safeMangaId), "webtoon"]
+  );
+
+  return Boolean(row);
+};
+
+const convertChapterUploadBufferToWebp = async ({ inputBuffer, isWebtoon }) => {
+  const webpBuffer = await convertChapterPageToWebp(inputBuffer, {
+    isWebtoon: Boolean(isWebtoon)
+  });
+  if (!isLikelyWebpBuffer(webpBuffer)) {
+    throw new Error("Ảnh trang không hợp lệ.");
+  }
+  return webpBuffer;
 };
 
 const notifyBookmarkedUsersForNewChapter = async ({ mangaId, chapterNumber }) => {
@@ -2758,6 +2788,7 @@ app.get(
       .map((row) => (row ? Number(row.number) : NaN))
       .filter((value) => Number.isFinite(value) && value >= 0);
     const isOneshotManga = toBooleanFlag(mangaRow.is_oneshot);
+    const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: mangaRow.id });
 
     if (isOneshotManga && chapterNumbers.length > 0) {
       return res.redirect(`/admin/manga/${mangaRow.id}/chapters?status=oneshot_exists`);
@@ -2811,6 +2842,7 @@ app.get(
       chapterGroupName,
       chapterNumbers,
       isOneshotManga,
+      isWebtoonManga,
       nextNumber,
       today,
       b2Ready,
@@ -2905,10 +2937,20 @@ app.post(
       return res.status(400).send("Chưa chọn ảnh trang.");
     }
 
-    let webpBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: draft.manga_id });
+    let sourceBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    let webpBuffer = null;
     clearBufferedUploadFile(req.file);
-    if (!isLikelyWebpBuffer(webpBuffer)) {
-      return res.status(400).send("Ảnh trang phải là định dạng WebP.");
+    try {
+      webpBuffer = await convertChapterUploadBufferToWebp({
+        inputBuffer: sourceBuffer,
+        isWebtoon: isWebtoonManga
+      });
+    } catch (_err) {
+      return res.status(400).send("Ảnh trang không hợp lệ.");
+    } finally {
+      sourceBuffer = null;
+      clearBufferedUploadFile(req.file);
     }
 
     const prefix = (draft.pages_prefix || "").toString().trim();
@@ -3370,6 +3412,7 @@ app.get(
     const pagesUpdatedAt = Number(chapterRow.pages_updated_at) || 0;
     const pageCount = Math.max(Number(chapterRow.pages) || 0, 0);
     const padLength = Math.max(3, String(pageCount).length);
+    const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: chapterRow.manga_id });
 
     const chapterNumberRows = await dbAll(
       "SELECT number FROM chapters WHERE manga_id = ? ORDER BY number ASC",
@@ -3433,6 +3476,7 @@ app.get(
       draftTtlLabel,
       chapterUploadApiBaseUrl,
       chapterUploadApiProof,
+      isWebtoonManga,
       initialPages,
       existingPages,
       existingPageIds,
@@ -3741,15 +3785,25 @@ app.post(
     const padLength = Math.max(3, String(files.length).length);
     const updatedAt = Date.now();
     const chapterDate = new Date(updatedAt).toISOString();
+    const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: chapterRow.manga_id });
 
     try {
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
         const pageNumber = index + 1;
-        let webpBuffer = Buffer.isBuffer(file && file.buffer) ? file.buffer : null;
+        let sourceBuffer = Buffer.isBuffer(file && file.buffer) ? file.buffer : null;
+        let webpBuffer = null;
         clearBufferedUploadFile(file);
-        if (!isLikelyWebpBuffer(webpBuffer)) {
-          return res.status(400).send("Ảnh trang phải là định dạng WebP.");
+        try {
+          webpBuffer = await convertChapterUploadBufferToWebp({
+            inputBuffer: sourceBuffer,
+            isWebtoon: isWebtoonManga
+          });
+        } catch (_err) {
+          return res.status(400).send("Ảnh trang không hợp lệ.");
+        } finally {
+          sourceBuffer = null;
+          clearBufferedUploadFile(file);
         }
 
         const pageName = buildChapterPageFileName({
@@ -3861,10 +3915,20 @@ app.post(
       return res.status(400).send("Chưa chọn ảnh trang.");
     }
 
-    let webpBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: chapterRow.manga_id });
+    let sourceBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
+    let webpBuffer = null;
     clearBufferedUploadFile(req.file);
-    if (!isLikelyWebpBuffer(webpBuffer)) {
-      return res.status(400).send("Ảnh trang phải là định dạng WebP.");
+    try {
+      webpBuffer = await convertChapterUploadBufferToWebp({
+        inputBuffer: sourceBuffer,
+        isWebtoon: isWebtoonManga
+      });
+    } catch (_err) {
+      return res.status(400).send("Ảnh trang không hợp lệ.");
+    } finally {
+      sourceBuffer = null;
+      clearBufferedUploadFile(req.file);
     }
 
     const prefix = `${config.chapterPrefix}/manga-${chapterRow.manga_id}/ch-${chapterRow.number}`;

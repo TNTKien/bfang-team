@@ -23,6 +23,9 @@ const RETRY_BASE_DELAY_MS = 1200;
 const RETRY_MAX_DELAY_MS = 30000;
 const RETRY_JITTER_RATIO = 0.35;
 const RETRYABLE_HTTP_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const CHAPTER_PAGE_MAX_HEIGHT = 1800;
+const CHAPTER_PAGE_WEBP_QUALITY = 77;
+const WEBTOON_TARGET_WIDTH = 1000;
 const SIDEBAR_COLLAPSE_WIDTH = 1180;
 const LOG_COLLAPSE_HEIGHT = 860;
 const STORAGE_ENDPOINT_KEY = "desktop_api_endpoint";
@@ -2071,15 +2074,33 @@ function resetAuthState() {
   setOverallBreakdown({ success: 0, failed: 0, skipped: 0 });
 }
 
-async function compressImageToWebp(filePath) {
+async function compressImageToWebp(filePath, options = {}) {
   const inputBuffer = await fsp.readFile(filePath);
-  return sharp(inputBuffer)
-    .rotate()
-    .resize({
-      height: 1800,
+  const metadata = await sharp(inputBuffer).metadata();
+  const orientedWidth = Number(
+    metadata && metadata.autoOrient && Number.isFinite(Number(metadata.autoOrient.width))
+      ? metadata.autoOrient.width
+      : metadata && metadata.width
+  );
+  const isWebtoonManga = Boolean(options && options.isWebtoon);
+
+  let pipeline = sharp(inputBuffer).rotate();
+  if (isWebtoonManga) {
+    if (Number.isFinite(orientedWidth) && orientedWidth > WEBTOON_TARGET_WIDTH) {
+      pipeline = pipeline.resize({
+        width: WEBTOON_TARGET_WIDTH,
+        withoutEnlargement: true
+      });
+    }
+  } else {
+    pipeline = pipeline.resize({
+      height: CHAPTER_PAGE_MAX_HEIGHT,
       withoutEnlargement: true
-    })
-    .webp({ quality: 77, effort: 6 })
+    });
+  }
+
+  return pipeline
+    .webp({ quality: CHAPTER_PAGE_WEBP_QUALITY, effort: 6 })
     .toBuffer();
 }
 
@@ -2142,6 +2163,7 @@ async function performChapterUpload({
   if (!sessionId) {
     throw new Error("Mã phiên upload không hợp lệ");
   }
+  const isWebtoonManga = Boolean(startPayload && startPayload.isWebtoonManga);
 
   let completeRequestStarted = false;
 
@@ -2164,7 +2186,7 @@ async function performChapterUpload({
 
         try {
           const compressed = await withRetry(
-            () => compressImageToWebp(sourceFilePath),
+            () => compressImageToWebp(sourceFilePath, { isWebtoon: isWebtoonManga }),
             retryCount,
             (attempt, err, retryMeta) => {
               if (typeof onRetry === "function") {
