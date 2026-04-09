@@ -46,6 +46,12 @@ const main = () => {
   });
 
   runNodeScript({
+    title: "Run deferred init maintenance",
+    scriptName: "run-init-maintenance.js",
+    scriptArgs: ["--apply"]
+  });
+
+  runNodeScript({
     title: "Repair forum rows in comments",
     scriptName: "repair-forum-storage.js",
     scriptArgs: ["--apply"]

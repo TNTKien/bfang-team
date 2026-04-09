@@ -455,6 +455,92 @@ const createInitDbDomain = (deps) => {
     return true;
   };
 
+  const runDeferredInitMaintenance = async () => {
+    const results = [];
+    const runTask = async (key, handler) => {
+      const applied = await runInitMigrationOnce(key, handler);
+      results.push({ key, applied });
+      return applied;
+    };
+
+    await runTask("migrate_legacy_user_badges_v1", async () => {
+      const badgeMigrationNow = Date.now();
+      await dbRun(
+        `
+        INSERT INTO user_badges (user_id, badge_id, created_at)
+        SELECT u.id, b.id, ?
+        FROM users u
+        JOIN badges b ON lower(b.label) = lower(u.badge)
+        WHERE u.badge IS NOT NULL AND TRIM(u.badge) <> ''
+          AND b.code !~* '^team_[0-9]+_(leader|member)$'
+        ON CONFLICT DO NOTHING
+      `,
+        [badgeMigrationNow]
+      );
+    });
+
+    await runTask("backfill_default_member_badges_v1", async () => {
+      const memberBadgeRow = await dbGet("SELECT id FROM badges WHERE lower(code) = 'member' LIMIT 1");
+      if (!(memberBadgeRow && memberBadgeRow.id)) return;
+      await dbRun(
+        `
+        INSERT INTO user_badges (user_id, badge_id, created_at)
+        SELECT u.id, ?, ?
+        FROM users u
+        WHERE u.id IS NOT NULL AND TRIM(u.id) <> ''
+        ON CONFLICT DO NOTHING
+      `,
+        [memberBadgeRow.id, Date.now()]
+      );
+    });
+
+    await runTask("sync_oneshot_manga_genres_v1", async () => {
+      let oneshotGenreRow = await dbGet(
+        "SELECT id FROM genres WHERE lower(name) = lower(?) LIMIT 1",
+        [ONESHOT_GENRE_NAME]
+      );
+      let oneshotGenreId = oneshotGenreRow && oneshotGenreRow.id ? Number(oneshotGenreRow.id) : 0;
+      if (!Number.isFinite(oneshotGenreId) || oneshotGenreId <= 0) {
+        const insertResult = await dbRun("INSERT INTO genres (name) VALUES (?) ON CONFLICT DO NOTHING", [
+          ONESHOT_GENRE_NAME
+        ]);
+        oneshotGenreId = insertResult && insertResult.lastID != null ? Number(insertResult.lastID) : 0;
+        if (!Number.isFinite(oneshotGenreId) || oneshotGenreId <= 0) {
+          oneshotGenreRow = await dbGet(
+            "SELECT id FROM genres WHERE lower(name) = lower(?) LIMIT 1",
+            [ONESHOT_GENRE_NAME]
+          );
+          oneshotGenreId = oneshotGenreRow && oneshotGenreRow.id ? Number(oneshotGenreRow.id) : 0;
+        }
+      }
+      if (!Number.isFinite(oneshotGenreId) || oneshotGenreId <= 0) return;
+      await dbRun(
+        `
+        INSERT INTO manga_genres (manga_id, genre_id)
+        SELECT id, ?
+        FROM manga
+        WHERE COALESCE(is_oneshot, false) = true
+        ON CONFLICT DO NOTHING
+      `,
+        [oneshotGenreId]
+      );
+    });
+
+    await runTask("migrate_legacy_genres_v1", async () => {
+      await migrateLegacyGenres();
+    });
+
+    await runTask("migrate_manga_statuses_v1", async () => {
+      await migrateMangaStatuses();
+    });
+
+    await runTask("sync_translation_team_role_badges_v1", async () => {
+      await syncTranslationTeamRoleBadgesByDiff();
+    });
+
+    return results;
+  };
+
   const ensureDefaultFollowBookmarkList = async ({ userId, now }) => {
     const safeUserId = (userId || "").toString().trim();
     if (!safeUserId) return 0;
@@ -2498,36 +2584,6 @@ const initDb = async () => {
     await dbRun("UPDATE badges SET can_comment = false WHERE lower(code) = 'banned' AND can_comment <> false");
   }
 
-  // Migrate legacy single-badge users.badge -> user_badges (best-effort).
-  const badgeMigrationNow = Date.now();
-  await dbRun(
-    `
-    INSERT INTO user_badges (user_id, badge_id, created_at)
-    SELECT u.id, b.id, ?
-    FROM users u
-    JOIN badges b ON lower(b.label) = lower(u.badge)
-    WHERE u.badge IS NOT NULL AND TRIM(u.badge) <> ''
-      AND b.code !~* '^team_[0-9]+_(leader|member)$'
-    ON CONFLICT DO NOTHING
-  `,
-    [badgeMigrationNow]
-  );
-
-  // Ensure every user has at least Member.
-  const memberBadgeRow = await dbGet("SELECT id FROM badges WHERE lower(code) = 'member' LIMIT 1");
-  if (memberBadgeRow && memberBadgeRow.id) {
-    await dbRun(
-      `
-      INSERT INTO user_badges (user_id, badge_id, created_at)
-      SELECT u.id, ?, ?
-      FROM users u
-      WHERE u.id IS NOT NULL AND TRIM(u.id) <> ''
-      ON CONFLICT DO NOTHING
-    `,
-      [memberBadgeRow.id, Date.now()]
-    );
-  }
-
   await dbRun(
     `
     CREATE TABLE IF NOT EXISTS homepage (
@@ -2570,32 +2626,11 @@ const initDb = async () => {
     "CREATE INDEX IF NOT EXISTS idx_manga_genres_manga_id ON manga_genres(manga_id)"
   );
 
-  const oneshotGenreRow = await dbGet(
-    "SELECT id FROM genres WHERE lower(name) = lower(?) LIMIT 1",
-    [ONESHOT_GENRE_NAME]
-  );
-  const oneshotGenreId = oneshotGenreRow && oneshotGenreRow.id ? Number(oneshotGenreRow.id) : 0;
-  if (Number.isFinite(oneshotGenreId) && oneshotGenreId > 0) {
-    await dbRun(
-      `
-      INSERT INTO manga_genres (manga_id, genre_id)
-      SELECT id, ?
-      FROM manga
-      WHERE COALESCE(is_oneshot, false) = true
-      ON CONFLICT DO NOTHING
-    `,
-      [oneshotGenreId]
-    );
-  }
-  await migrateLegacyGenres();
   await ensureHomepageDefaults();
-  await migrateMangaStatuses();
   await runInitMigrationOnce("rebuild_comment_reference_tables_v1", rebuildCommentReferenceTables);
   await runInitMigrationOnce("migrate_forum_rows_to_forum_posts_v1", migrateForumRowsToForumPosts);
   await runInitMigrationOnce("remove_forum_tags_from_stored_comments_v1", removeForumTagsFromStoredComments);
   await runInitMigrationOnce("migrate_manga_bookmarks_to_bookmark_lists_v1", migrateBookmarkListDataV1);
-
-  await syncTranslationTeamRoleBadgesByDiff();
 
   if (forumSampleSeedEnabled) {
     await cleanupForumSampleSeedData();
@@ -2605,6 +2640,7 @@ const initDb = async () => {
 
   return {
     initDb,
+    runDeferredInitMaintenance,
   };
 };
 
