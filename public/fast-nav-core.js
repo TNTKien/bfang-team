@@ -606,8 +606,8 @@
         const nextRenderedPageKey = toCacheKey(effectiveUrl) || previousRenderedPageKey;
         effectiveUrl.hash = targetUrl.hash || "";
 
-        await ensurePageStyles(effectiveUrl.pathname);
-        await ensurePageScripts(effectiveUrl.pathname);
+        void ensurePageStyles(effectiveUrl.pathname);
+        void ensurePageScripts(effectiveUrl.pathname);
 
         if (localToken !== navigationToken) return false;
 
