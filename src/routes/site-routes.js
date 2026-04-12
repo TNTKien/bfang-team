@@ -12128,6 +12128,7 @@ const registerSiteRoutes = (app, deps) => {
             c.pages,
             c.date,
             c.group_name,
+            COALESCE(c.interaction_boost_enabled, false) as interaction_boost_enabled,
             CASE
               WHEN COALESCE(c.password_hash, '') <> '' AND COALESCE(c.password_salt, '') <> '' THEN true
               ELSE false
@@ -12144,6 +12145,7 @@ const registerSiteRoutes = (app, deps) => {
         );
         chapters = chapterRows.map((chapter) => ({
           ...chapter,
+          interaction_boost_enabled: toBooleanFlag(chapter && chapter.interaction_boost_enabled),
           has_password: toBooleanFlag(chapter && chapter.has_password),
           is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot),
           view_count: toSafeChapterViewCount(chapter && chapter.view_count)
@@ -12343,6 +12345,7 @@ const registerSiteRoutes = (app, deps) => {
           pages,
           date,
           group_name,
+          COALESCE(interaction_boost_enabled, false) as interaction_boost_enabled,
           CASE
             WHEN COALESCE(password_hash, '') <> '' AND COALESCE(password_salt, '') <> '' THEN true
             ELSE false
@@ -12356,6 +12359,7 @@ const registerSiteRoutes = (app, deps) => {
       );
       const chapters = chapterRows.map((chapter) => ({
         ...chapter,
+        interaction_boost_enabled: toBooleanFlag(chapter && chapter.interaction_boost_enabled),
         has_password: toBooleanFlag(chapter && chapter.has_password),
         is_oneshot: toBooleanFlag(chapter && chapter.is_oneshot)
       }));
@@ -12596,6 +12600,7 @@ const registerSiteRoutes = (app, deps) => {
             c.password_hash,
             c.password_salt,
             c.password_updated_at,
+            COALESCE(c.interaction_boost_enabled, false) as interaction_boost_enabled,
             COALESCE(c.is_oneshot, false) as is_oneshot,
             COALESCE(v.view_count, 0) as view_count
           FROM chapters c
@@ -12656,6 +12661,10 @@ const registerSiteRoutes = (app, deps) => {
             : requiresChapterPassword && unlockQuery === "throttled"
               ? "Bạn đã thử sai quá nhiều lần. Vui lòng chờ một lúc rồi thử lại."
               : "";
+      const authUserId =
+        req && req.session && req.session.authUserId
+          ? String(req.session.authUserId).trim()
+          : "";
 
       const chapterList = chapterListRows.map((item) => ({
         ...item,
@@ -12670,12 +12679,33 @@ const registerSiteRoutes = (app, deps) => {
           ? chapterList[currentIndex + 1]
           : null;
       const nextChapter = currentIndex > 0 ? chapterList[currentIndex - 1] : null;
+      let chapterBlockedByInteractionBoost = false;
+      if (!requiresChapterPassword && toBooleanFlag(chapterRow && chapterRow.interaction_boost_enabled) && prevChapter) {
+        const previousChapterNumber = Number(prevChapter.number);
+        const previousChapterIsOneshot = toBooleanFlag(prevChapter && prevChapter.is_oneshot);
+        const previousChapterCommentCountRow = !authUserId
+          ? { count: 0 }
+          : previousChapterIsOneshot
+            ? await dbGet(
+                "SELECT COUNT(*) as count FROM comments WHERE manga_id = ? AND status = 'visible' AND chapter_number IS NULL AND author_user_id = ?",
+                [mangaRow.id, authUserId]
+              )
+            : await dbGet(
+                "SELECT COUNT(*) as count FROM comments WHERE manga_id = ? AND status = 'visible' AND chapter_number = ? AND author_user_id = ?",
+                [mangaRow.id, previousChapterNumber, authUserId]
+              );
+        const previousChapterCommentCount = previousChapterCommentCountRow
+          ? Number(previousChapterCommentCountRow.count) || 0
+          : 0;
+        chapterBlockedByInteractionBoost = previousChapterCommentCount <= 0;
+      }
+      const canAccessChapterContent = !requiresChapterPassword && !chapterBlockedByInteractionBoost;
       const pageCount = Math.max(Number(chapterRow.pages) || 0, 0);
       const pages = Array.from({ length: pageCount }, (_, index) => index + 1);
       const isOneshotChapter = toBooleanFlag(mangaRow.is_oneshot) && toBooleanFlag(chapterRow.is_oneshot);
       const nowMs = Date.now();
       let chapterViewTrackToken = "";
-      if (!requiresChapterPassword) {
+      if (canAccessChapterContent) {
         const chapterSessionMap = readChapterViewSessionMap(
           req && req.session ? req.session[CHAPTER_VIEW_SESSION_KEY] : null,
           nowMs
@@ -12727,7 +12757,7 @@ const registerSiteRoutes = (app, deps) => {
         : 0;
       const isProcessing = processingState === "processing";
       const canRenderPages = Boolean(
-        !requiresChapterPassword && !isProcessing && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
+        canAccessChapterContent && !isProcessing && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
       );
       const padLength = Math.max(3, String(pageCount).length);
       const pageUrls = canRenderPages
@@ -12745,7 +12775,7 @@ const registerSiteRoutes = (app, deps) => {
         : [];
 
       let nextChapterPrefetchUrls = [];
-      if (!requiresChapterPassword && nextChapter && cdnBaseUrl) {
+      if (canAccessChapterContent && nextChapter && cdnBaseUrl) {
         const nextChapterNumber = Number(nextChapter.number);
         if (Number.isFinite(nextChapterNumber)) {
           const nextChapterRow = await dbGet(
@@ -12757,6 +12787,7 @@ const registerSiteRoutes = (app, deps) => {
               pages_ext,
               pages_updated_at,
               processing_state,
+              interaction_boost_enabled,
               password_hash,
               password_salt
             FROM chapters
@@ -12772,6 +12803,7 @@ const registerSiteRoutes = (app, deps) => {
           const canPrefetchNextChapter = Boolean(
             nextChapterRow &&
             nextProcessingState !== "processing" &&
+            !toBooleanFlag(nextChapterRow.interaction_boost_enabled) &&
             !chapterHasPasswordProtection(nextChapterRow) &&
             nextChapterRow.pages_prefix &&
             nextChapterRow.pages_ext
@@ -12817,7 +12849,7 @@ const registerSiteRoutes = (app, deps) => {
           nextPage: 1
         }
       };
-      if (!requiresChapterPassword) {
+      if (canAccessChapterContent) {
         commentData = await getPaginatedCommentTree({
           mangaId: mangaRow.id,
           chapterNumber: isOneshotChapter ? null : chapterNumber,
@@ -12826,13 +12858,9 @@ const registerSiteRoutes = (app, deps) => {
           session: req.session
         });
       }
-      const authUserId =
-        req && req.session && req.session.authUserId
-          ? String(req.session.authUserId).trim()
-          : "";
-      const commentComposerEnabled = !requiresChapterPassword && Boolean(authUserId);
+      const commentComposerEnabled = canAccessChapterContent && Boolean(authUserId);
       let commentDeleteByTeamMember = false;
-      if (!requiresChapterPassword && authUserId) {
+      if (canAccessChapterContent && authUserId) {
         try {
           commentDeleteByTeamMember = await canDeleteMangaCommentsByTeamMember({
             userId: authUserId,
@@ -12927,6 +12955,8 @@ const registerSiteRoutes = (app, deps) => {
         commentDeleteByTeamMember,
         chapterViewTrackToken,
         chapterLocked: requiresChapterPassword,
+        chapterInteractionLocked: chapterBlockedByInteractionBoost,
+        chapterInteractionPrevChapter: chapterBlockedByInteractionBoost ? prevChapter : null,
         chapterUnlockError,
         chapterUnlockRetryAfterMs,
         chapterUnlockPath: `${chapterPath}/unlock`,

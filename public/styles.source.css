@@ -9161,6 +9161,44 @@ body.reader-page .page-media--lazy {
   justify-items: center;
 }
 
+.reader-note + .page-card.reader-chapter-bridge {
+  margin-top: 0.95rem;
+}
+
+.admin-lock-panel {
+  gap: 0.95rem;
+}
+
+.admin-lock-panel__title {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 700;
+  text-transform: none;
+}
+
+.admin-lock-panel__option {
+  gap: 0.6rem;
+}
+
+.admin-lock-panel__option .admin-checkbox-inline {
+  text-transform: none;
+}
+
+.admin-lock-panel__label,
+.admin-lock-panel__note {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  text-transform: none;
+}
+
+.admin-lock-panel__label {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
 body.reader-page.reader-page--reader-mode.reader-webtoon .reader-pages {
   gap: 0 !important;
 }

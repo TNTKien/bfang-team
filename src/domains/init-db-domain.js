@@ -1452,7 +1452,8 @@ const initDb = async () => {
       processing_pages_json TEXT,
       processing_done_pages INTEGER,
       processing_total_pages INTEGER,
-      processing_updated_at BIGINT
+      processing_updated_at BIGINT,
+      interaction_boost_enabled BOOLEAN NOT NULL DEFAULT false
     )
   `
   );
@@ -1473,6 +1474,8 @@ const initDb = async () => {
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_done_pages INTEGER");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_total_pages INTEGER");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_updated_at BIGINT");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS interaction_boost_enabled BOOLEAN NOT NULL DEFAULT false");
+  await dbRun("UPDATE chapters SET interaction_boost_enabled = false WHERE interaction_boost_enabled IS NULL");
   await dbRun(
     `
       UPDATE chapters

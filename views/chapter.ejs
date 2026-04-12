@@ -1,7 +1,8 @@
 <%
   const isChapterLocked = Boolean(chapterLocked);
+  const isChapterInteractionLocked = Boolean(chapterInteractionLocked);
   let firstChapterPageUrl = "";
-  if (!isChapterLocked && Array.isArray(pageUrls) && pageUrls.length > 0) {
+  if (!isChapterLocked && !isChapterInteractionLocked && Array.isArray(pageUrls) && pageUrls.length > 0) {
     firstChapterPageUrl = (pageUrls[0] || "").toString().trim();
   }
 
@@ -23,7 +24,7 @@
     readingHistory: true
   };
   const chapterProcessingState = (chapter && chapter.processing_state ? chapter.processing_state : "").toString().trim();
-  const hasReaderPages = !isChapterLocked && chapterProcessingState !== "processing" && Array.isArray(pageUrls) && pageUrls.length > 0;
+  const hasReaderPages = !isChapterLocked && !isChapterInteractionLocked && chapterProcessingState !== "processing" && Array.isArray(pageUrls) && pageUrls.length > 0;
   const isWebtoonReader = Array.isArray(manga && manga.genres)
     ? manga.genres.some((genre) => {
         const normalizedGenre = (genre || "").toString().trim().toLowerCase();
@@ -578,7 +579,7 @@
         <% const processingDonePages = Number.isFinite(processingDonePagesRaw) && processingDonePagesRaw >= 0 ? Math.floor(processingDonePagesRaw) : 0; %>
         <% const processingTotalPages = Number.isFinite(processingTotalPagesRaw) && processingTotalPagesRaw > 0 ? Math.floor(processingTotalPagesRaw) : 0; %>
         <% const processingPercent = processingTotalPages > 0 ? Math.min(100, Math.max(0, Math.floor((Math.min(processingDonePages, processingTotalPages) / processingTotalPages) * 100))) : 0; %>
-        <% const shouldShowReaderIntro = isChapterLocked || processingState === "processing" || !pageUrls || pageUrls.length === 0; %>
+        <% const shouldShowReaderIntro = !isChapterInteractionLocked && (isChapterLocked || processingState === "processing" || !pageUrls || pageUrls.length === 0); %>
 
         <% if (shouldShowReaderIntro) { %>
           <section class="section container">
@@ -660,6 +661,47 @@
                   <%= chapterUnlockError ? "" : "hidden" %>
                 ><%= chapterUnlockError || "" %></p>
               </form>
+            </div>
+          </section>
+        <% } else if (isChapterInteractionLocked) { %>
+          <section class="section container">
+            <% const interactionPrevChapter = chapterInteractionPrevChapter && Number.isFinite(Number(chapterInteractionPrevChapter.number)) ? chapterInteractionPrevChapter : null; %>
+            <div class="reader-header">
+              <div class="reader-title">
+                <a class="reader-back" href="/manga/<%= manga.slug %>">Quay lại truyện</a>
+                <h1><%= chapterHeadingLabel %><% if (chapterTitle) { %>: <%= chapterTitle %><% } %></h1>
+                <div class="reader-meta">
+                  <span><%= manga.title %></span>
+                  <span class="reader-dot">•</span>
+                  <span><%= chapter.pages %> trang</span>
+                  <span class="reader-dot">•</span>
+                  <span>Cập nhật <%= formatDate(chapter.date) %></span>
+                </div>
+              </div>
+            </div>
+            <p class="reader-note">Chương này đang bật chế độ tăng tương tác. Bạn cần có bình luận ở chương trước để mở đọc.</p>
+            <div class="page-card reader-chapter-bridge">
+              <div class="page-frame reader-chapter-bridge__frame">
+                <div class="reader-chapter-bridge__inner">
+                  <p class="reader-chapter-bridge__kicker">
+                    <i class="fa-solid fa-lock" aria-hidden="true"></i>
+                    Tăng tương tác
+                  </p>
+                  <h2 class="reader-chapter-bridge__title">Bạn phải bình luận ở chương trước để mở chương này</h2>
+                  <div class="reader-chapter-bridge__actions">
+                    <% if (interactionPrevChapter) { %>
+                      <a class="reader-chapter-bridge__action" href="/manga/<%= manga.slug %>/chapters/<%= interactionPrevChapter.number %>">
+                        <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+                        <span>Quay lại chương trước</span>
+                      </a>
+                    <% } %>
+                    <a class="reader-chapter-bridge__action" href="/manga/<%= manga.slug %>">
+                      <i class="fa-solid fa-book-open" aria-hidden="true"></i>
+                      <span>Trang chính truyện</span>
+                    </a>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
         <% } else { %>

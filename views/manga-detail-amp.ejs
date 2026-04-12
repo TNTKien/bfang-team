@@ -876,6 +876,9 @@
                       <% if (chapter && chapter.has_password) { %>
                         <span title="Chương có mật khẩu" aria-label="Chương có mật khẩu">&#128274;</span>
                       <% } %>
+                      <% if (chapter && chapter.interaction_boost_enabled) { %>
+                        <span title="Chương yêu cầu bình luận ở chương trước" aria-label="Chương yêu cầu bình luận ở chương trước">&#128172;</span>
+                      <% } %>
                     </div>
                     <div class="chapter-date"><%= chapter && chapter.date ? formatDate(chapter.date) : "" %></div>
                   </div>

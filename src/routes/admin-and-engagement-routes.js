@@ -2803,6 +2803,7 @@ app.get(
     const chapterNumbers = chapterNumberRows
       .map((row) => (row ? Number(row.number) : NaN))
       .filter((value) => Number.isFinite(value) && value >= 0);
+    const canToggleInteractionBoostOnCreate = chapterNumbers.length > 0;
     const isOneshotManga = toBooleanFlag(mangaRow.is_oneshot);
     const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: mangaRow.id });
 
@@ -2867,6 +2868,7 @@ app.get(
       draftTtlLabel,
       chapterUploadApiBaseUrl,
       chapterUploadApiProof,
+      canToggleInteractionBoostOnCreate,
       chapterPasswordMinLength: CHAPTER_PASSWORD_MIN_LENGTH,
       chapterPasswordMaxLength: CHAPTER_PASSWORD_MAX_LENGTH
     });
@@ -3148,6 +3150,7 @@ app.post(
     }
 
     const title = (req.body.title || "").toString().trim();
+    const interactionBoostRequested = String(req.body.interaction_boost_enabled || "").trim() === "1";
     const groupSelection = await resolveGroupNameFromRequestPayload({
       reqBody: req.body,
       teamManageScope
@@ -3164,7 +3167,16 @@ app.post(
     if (!chapterPasswordPayload.ok) {
       return res.status(400).send(chapterPasswordPayload.error || buildChapterPasswordLengthError());
     }
+    const passwordLockRequested = chapterPasswordPayload.mode === "set" || chapterPasswordPayload.mode === "keep";
+    if (interactionBoostRequested && passwordLockRequested) {
+      return res.status(400).send("Chỉ được chọn một trong hai kiểu khóa chương.");
+    }
     const date = buildChapterTimestampIso();
+    const previousChapterForInteraction = await dbGet(
+      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? ORDER BY number DESC LIMIT 1",
+      [mangaRow.id, number]
+    );
+    const interactionBoostEnabled = interactionBoostRequested && Boolean(previousChapterForInteraction);
 
     const prefix = (draft.pages_prefix || "").toString().trim();
     if (!prefix) {
@@ -3195,9 +3207,10 @@ app.post(
         processing_pages_json,
         processing_done_pages,
         processing_total_pages,
-        processing_updated_at
+        processing_updated_at,
+        interaction_boost_enabled
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         mangaRow.id,
@@ -3217,7 +3230,8 @@ app.post(
         processingPagesJson,
         0,
         pageIds.length,
-        processingStamp
+        processingStamp,
+        interactionBoostEnabled
       ]
     );
 
@@ -3273,6 +3287,7 @@ app.post(
     const number = isOneshotManga ? 0 : parsedNumber;
     const isChapterOneshot = isOneshotManga;
     const title = (req.body.title || "").trim();
+    const interactionBoostRequested = String(req.body.interaction_boost_enabled || "").trim() === "1";
     const groupSelection = await resolveGroupNameFromRequestPayload({
       reqBody: req.body,
       teamManageScope
@@ -3289,9 +3304,18 @@ app.post(
     if (!chapterPasswordPayload.ok) {
       return res.status(400).send(chapterPasswordPayload.error || buildChapterPasswordLengthError());
     }
+    const passwordLockRequested = chapterPasswordPayload.mode === "set" || chapterPasswordPayload.mode === "keep";
+    if (interactionBoostRequested && passwordLockRequested) {
+      return res.status(400).send("Chỉ được chọn một trong hai kiểu khóa chương.");
+    }
     const pages = Math.max(Number(req.body.pages) || 0, 1);
     const date = buildChapterTimestampIso(req.body.date);
     const pageFilePrefix = buildChapterPageFilePrefix();
+    const previousChapterForInteraction = await dbGet(
+      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? ORDER BY number DESC LIMIT 1",
+      [mangaRow.id, number]
+    );
+    const interactionBoostEnabled = interactionBoostRequested && Boolean(previousChapterForInteraction);
 
     if (number == null || number < 0 || !groupName || !date) {
       return res.status(400).send("Thiếu thông tin chương");
@@ -3316,11 +3340,12 @@ app.post(
         date,
         group_name,
         is_oneshot,
+        interaction_boost_enabled,
         password_hash,
         password_salt,
         password_updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         mangaRow.id,
@@ -3331,6 +3356,7 @@ app.post(
         date,
         groupName,
         isChapterOneshot,
+        interactionBoostEnabled,
         chapterPasswordPayload.passwordHash,
         chapterPasswordPayload.passwordSalt,
         chapterPasswordPayload.passwordUpdatedAt
@@ -3383,6 +3409,7 @@ app.get(
         c.pages_ext,
         c.pages_updated_at,
         c.is_oneshot,
+        COALESCE(c.interaction_boost_enabled, false) as interaction_boost_enabled,
         c.date,
         c.group_name,
         c.password_hash,
@@ -3439,6 +3466,11 @@ app.get(
       .map((row) => (row ? Number(row.number) : NaN))
       .filter((value) => Number.isFinite(value) && value >= 0)
       .filter((value) => (Number.isFinite(currentNumber) ? Math.abs(value - currentNumber) > 1e-9 : true));
+    const previousChapterForInteraction = await dbGet(
+      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? ORDER BY number DESC LIMIT 1",
+      [chapterRow.manga_id, chapterRow.number]
+    );
+    const canToggleInteractionBoost = Boolean(previousChapterForInteraction);
 
     const groupTeamSelections = await buildGroupTeamSelectionsForForm({
       teamManageScope,
@@ -3508,7 +3540,9 @@ app.get(
         pages: chapterRow.pages,
         date: chapterRow.date,
         groupName: chapterGroupName,
-        hasPassword: hasExistingChapterPassword
+        hasPassword: hasExistingChapterPassword,
+        interactionBoostEnabled: toBooleanFlag(chapterRow.interaction_boost_enabled),
+        canToggleInteractionBoost
       },
       chapterPasswordPrefillToken,
       chapterPasswordMinLength: CHAPTER_PASSWORD_MIN_LENGTH,
@@ -3544,6 +3578,7 @@ app.post(
           number,
           pages,
           pages_prefix,
+          interaction_boost_enabled,
           password_hash,
           password_salt,
           password_updated_at
@@ -3584,6 +3619,7 @@ app.post(
       Number.isFinite(currentNumber) ? Math.abs(nextNumber - currentNumber) > 1e-9 : true;
 
     const title = (req.body.title || "").trim();
+    const interactionBoostRequested = String(req.body.interaction_boost_enabled || "").trim() === "1";
     const groupSelection = await resolveGroupNameFromRequestPayload({
       reqBody: req.body,
       teamManageScope
@@ -3596,7 +3632,7 @@ app.post(
       (chapterRow.password_hash || "").toString().trim() &&
         (chapterRow.password_salt || "").toString().trim()
     );
-    const chapterPasswordPayload = parseChapterPasswordUpdatePayload({
+    let chapterPasswordPayload = parseChapterPasswordUpdatePayload({
       reqBody: req.body,
       allowKeep: true,
       hasExistingPassword: hasExistingChapterPassword
@@ -3604,6 +3640,25 @@ app.post(
     if (!chapterPasswordPayload.ok) {
       return res.status(400).send(chapterPasswordPayload.error || buildChapterPasswordLengthError());
     }
+    if (interactionBoostRequested && chapterPasswordPayload.mode === "keep") {
+      chapterPasswordPayload = {
+        ok: true,
+        mode: "clear",
+        shouldUpdate: true,
+        passwordHash: null,
+        passwordSalt: null,
+        passwordUpdatedAt: null
+      };
+    }
+    const passwordLockRequested = chapterPasswordPayload.mode === "set" || chapterPasswordPayload.mode === "keep";
+    if (interactionBoostRequested && passwordLockRequested) {
+      return res.status(400).send("Chỉ được chọn một trong hai kiểu khóa chương.");
+    }
+    const previousChapterForInteraction = await dbGet(
+      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? AND id <> ? ORDER BY number DESC LIMIT 1",
+      [chapterRow.manga_id, nextNumber, chapterRow.id]
+    );
+    const interactionBoostEnabled = interactionBoostRequested && Boolean(previousChapterForInteraction);
 
     const token = (req.body.draft_token || "").toString().trim();
     if (!isChapterDraftTokenValid(token)) {
@@ -3654,9 +3709,9 @@ app.post(
 
       const chapterUpdateSql = [
         "UPDATE chapters",
-        "SET number = ?, title = ?, group_name = ?"
+        "SET number = ?, title = ?, group_name = ?, interaction_boost_enabled = ?"
       ];
-      const chapterUpdateParams = [nextNumber, title, groupName];
+      const chapterUpdateParams = [nextNumber, title, groupName, interactionBoostEnabled];
       if (chapterPasswordPayload.shouldUpdate) {
         chapterUpdateSql.push(", password_hash = ?, password_salt = ?, password_updated_at = ?");
         chapterUpdateParams.push(
@@ -3696,6 +3751,7 @@ app.post(
       "  number = ?,",
       "  title = ?,",
       "  group_name = ?,",
+      "  interaction_boost_enabled = ?,",
       "  pages = ?,",
       "  processing_state = ?,",
       "  processing_error = ?,",
@@ -3709,6 +3765,7 @@ app.post(
       nextNumber,
       title,
       groupName,
+      interactionBoostEnabled,
       pageIds.length,
       "processing",
       "",

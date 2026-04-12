@@ -94,27 +94,6 @@
                 <input type="text" name="title" autocomplete="off" />
               </label>
 
-              <label class="admin-field admin-field--wide">
-                <span class="admin-checkbox-inline">
-                  <input type="checkbox" name="chapter_password_enabled" value="1" data-chapter-password-toggle />
-                  <span>Cài mật khẩu chương</span>
-                </span>
-                <span>Mật khẩu chương</span>
-                <input
-                  type="password"
-                  name="chapter_password"
-                  minlength="<%= chapterPasswordMinLength %>"
-                  maxlength="<%= chapterPasswordMaxLength %>"
-                  autocomplete="new-password"
-                  spellcheck="false"
-                  data-chapter-password-input
-                  disabled
-                />
-                <span class="admin-sub">
-                  Mặc định tắt. Khi tích "Cài mật khẩu chương", ô nhập mật khẩu sẽ được bật để bạn đặt mật khẩu cho chương.
-                </span>
-              </label>
-
               <label
                 class="admin-field admin-field--wide admin-team-selector"
                 data-team-group-picker
@@ -146,6 +125,43 @@
                   <span class="admin-sub">Chọn một hoặc nhiều nhóm dịch từ danh sách tìm kiếm.</span>
                 <% } %>
               </label>
+
+              <div class="panel admin-field admin-field--wide admin-lock-panel">
+                <h3 class="admin-lock-panel__title">Khóa chương</h3>
+
+                <% if (canToggleInteractionBoostOnCreate) { %>
+                  <label class="admin-field admin-lock-panel__option" data-interaction-boost-wrap>
+                    <div class="admin-checkbox-inline">
+                      <input type="checkbox" name="interaction_boost_enabled" value="1" data-interaction-boost-toggle />
+                      <span>Tăng tương tác</span>
+                    </div>
+                    <p class="admin-lock-panel__note">
+                      Khi bật, chỉ cho phép user đọc chương này nếu chính user đó đã có bình luận ở chương ngay trước. Không thể bật cùng lúc với khóa mật khẩu.
+                    </p>
+                  </label>
+                <% } %>
+
+                <label class="admin-field admin-lock-panel__option">
+                  <div class="admin-checkbox-inline">
+                    <input type="checkbox" name="chapter_password_enabled" value="1" data-chapter-password-toggle />
+                    <span>Cài mật khẩu chương</span>
+                  </div>
+                  <p class="admin-lock-panel__label">Mật khẩu chương</p>
+                  <input
+                    type="password"
+                    name="chapter_password"
+                    minlength="<%= chapterPasswordMinLength %>"
+                    maxlength="<%= chapterPasswordMaxLength %>"
+                    autocomplete="new-password"
+                    spellcheck="false"
+                    data-chapter-password-input
+                    disabled
+                  />
+                  <p class="admin-lock-panel__note">
+                    Khi bật, ô nhập mật khẩu sẽ được bật để bạn đặt mật khẩu cho chương. Không thể bật cùng lúc với tăng tương tác.
+                  </p>
+                </label>
+              </div>
 
               <div class="admin-field admin-field--wide">
                 <span>Upload trang (tạm)</span>
@@ -192,25 +208,108 @@
         const form = document.querySelector("[data-chapter-new-form]");
         if (!(form instanceof HTMLFormElement)) return;
 
-        const toggle = form.querySelector("[data-chapter-password-toggle]");
-        const input = form.querySelector("[data-chapter-password-input]");
-        if (!(toggle instanceof HTMLInputElement) || !(input instanceof HTMLInputElement)) return;
-        const initialValue = input.value || "";
+        const passwordToggle = form.querySelector("[data-chapter-password-toggle]");
+        const passwordInput = form.querySelector("[data-chapter-password-input]");
+        const interactionWrap = form.querySelector("[data-interaction-boost-wrap]");
+        const interactionToggle = form.querySelector("[data-interaction-boost-toggle]");
+        const chapterNumberInput = form.querySelector("[data-chapter-number-input]");
+        if (passwordToggle instanceof HTMLInputElement && passwordInput instanceof HTMLInputElement) {
+          const initialPasswordValue = passwordInput.value || "";
 
-        const syncPasswordInputState = () => {
-          const enabled = Boolean(toggle.checked);
-          input.disabled = !enabled;
-          input.required = enabled;
-          if (enabled && !input.value && initialValue) {
-            input.value = initialValue;
-          }
-          if (!enabled) {
-            input.value = "";
-          }
-        };
+          const syncPasswordInputState = () => {
+            const enabled = Boolean(passwordToggle.checked);
+            passwordInput.disabled = !enabled;
+            passwordInput.required = enabled;
+            if (enabled && !passwordInput.value && initialPasswordValue) {
+              passwordInput.value = initialPasswordValue;
+            }
+            if (!enabled) {
+              passwordInput.value = "";
+            }
+          };
 
-        toggle.addEventListener("change", syncPasswordInputState);
-        syncPasswordInputState();
+          let chapterNumbers = [];
+          if (
+            interactionWrap instanceof HTMLElement &&
+            interactionToggle instanceof HTMLInputElement &&
+            chapterNumberInput instanceof HTMLInputElement
+          ) {
+            const chapterNumbersRaw = (form.dataset.chapterNumbers || "").toString().trim();
+            if (chapterNumbersRaw) {
+              try {
+                const parsed = JSON.parse(chapterNumbersRaw);
+                if (Array.isArray(parsed)) {
+                  chapterNumbers = parsed
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isFinite(value));
+                }
+              } catch (_error) {
+                chapterNumbers = [];
+              }
+            }
+          }
+
+          const syncInteractionToggleState = () => {
+            if (
+              !(interactionWrap instanceof HTMLElement) ||
+              !(interactionToggle instanceof HTMLInputElement) ||
+              !(chapterNumberInput instanceof HTMLInputElement)
+            ) {
+              return;
+            }
+
+            const enteredChapterNumber = Number((chapterNumberInput.value || "").toString().replace(",", "."));
+            const hasPreviousChapter =
+              Number.isFinite(enteredChapterNumber) &&
+              chapterNumbers.some((value) => value < enteredChapterNumber);
+            interactionWrap.hidden = !hasPreviousChapter;
+            interactionToggle.disabled = !hasPreviousChapter;
+            if (!hasPreviousChapter) {
+              interactionToggle.checked = false;
+            }
+          };
+
+          const syncChapterLockModes = (source) => {
+            if (
+              passwordToggle.checked &&
+              interactionToggle instanceof HTMLInputElement &&
+              interactionToggle.checked
+            ) {
+              if (source === "interaction") {
+                passwordToggle.checked = false;
+              } else {
+                interactionToggle.checked = false;
+              }
+            }
+            if (source === "password" && passwordToggle.checked && interactionToggle instanceof HTMLInputElement) {
+              interactionToggle.checked = false;
+            }
+            if (source === "interaction" && interactionToggle instanceof HTMLInputElement && interactionToggle.checked) {
+              passwordToggle.checked = false;
+            }
+            syncInteractionToggleState();
+            syncPasswordInputState();
+          };
+
+          form.addEventListener("submit", () => {
+            if (interactionToggle instanceof HTMLInputElement && interactionToggle.checked) {
+              passwordToggle.checked = false;
+            } else if (passwordToggle.checked && interactionToggle instanceof HTMLInputElement) {
+              interactionToggle.checked = false;
+            }
+            syncChapterLockModes("submit");
+          });
+
+          passwordToggle.addEventListener("change", () => syncChapterLockModes("password"));
+          if (interactionToggle instanceof HTMLInputElement) {
+            interactionToggle.addEventListener("change", () => syncChapterLockModes("interaction"));
+          }
+          if (chapterNumberInput instanceof HTMLInputElement) {
+            chapterNumberInput.addEventListener("input", () => syncChapterLockModes("chapter"));
+            chapterNumberInput.addEventListener("change", () => syncChapterLockModes("chapter"));
+          }
+          syncChapterLockModes();
+        }
       })();
     </script>
   </body>

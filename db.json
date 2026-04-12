@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "public",
-  "generated_at": "2026-04-05T06:18:51.257Z",
+  "generated_at": "2026-04-12T08:24:03.471Z",
   "generated_by": "scripts/sync-db-json.js",
   "source_files": [
     "src/domains/init-db-domain.js",
@@ -327,6 +327,11 @@
           "name": "processing_total_pages",
           "data_type": "integer",
           "is_nullable": true
+        },
+        {
+          "name": "interaction_boost_enabled",
+          "data_type": "boolean",
+          "is_nullable": false
         }
       ]
     },

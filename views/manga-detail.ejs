@@ -342,15 +342,21 @@
                                                     <%= chapterTitle %>
                                                   </span>
                                                   <% } %>
-                                                    <% if (chapter && chapter.has_password) { %>
-                                                      <span class="chapter-lock-icon" title="Chương có mật khẩu">
-                                                        <i class="fa-solid fa-lock" aria-hidden="true"></i>
-                                                        <span class="sr-only">Chương có mật khẩu</span>
-                                                      </span>
-                                                      <% } %>
-                                                        <% if (isEndChapter) { %>
-                                                          <span class="chapter-badge" title="Chương kết">END</span>
-                                                          <% } %>
+                                                     <% if (chapter && chapter.has_password) { %>
+                                                       <span class="chapter-lock-icon" title="Chương có mật khẩu">
+                                                         <i class="fa-solid fa-lock" aria-hidden="true"></i>
+                                                         <span class="sr-only">Chương có mật khẩu</span>
+                                                       </span>
+                                                       <% } %>
+                                                         <% if (chapter && chapter.interaction_boost_enabled) { %>
+                                                           <span class="chapter-lock-icon" title="Chương yêu cầu bình luận ở chương trước">
+                                                             <i class="fa-solid fa-comments" aria-hidden="true"></i>
+                                                             <span class="sr-only">Chương yêu cầu bình luận ở chương trước</span>
+                                                           </span>
+                                                         <% } %>
+                                                         <% if (isEndChapter) { %>
+                                                           <span class="chapter-badge" title="Chương kết">END</span>
+                                                           <% } %>
                                             </div>
                                             <% const chapterGroups=(chapter.group_name || "" ) .split(",")
                                               .map((value)=> value.trim())
