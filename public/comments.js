@@ -113,7 +113,7 @@ const syncCommentActionCount = (button, attributeName, value) => {
   countEl.textContent = String(count);
 };
 
-const COMMENT_TEXTAREA_LIMIT = 500;
+const COMMENT_TEXTAREA_LIMIT = 1000;
 const COMMENT_MENTION_MAX_QUERY = 32;
 const COMMENT_MENTION_DEBOUNCE_MS = 140;
 const COMMENT_MENTION_CACHE_MS = 30 * 1000;

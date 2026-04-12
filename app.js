@@ -1468,7 +1468,7 @@ const toBooleanFlag = (value) => {
   return text === "1" || text === "true" || text === "t" || text === "yes" || text === "y" || text === "on";
 };
 
-const COMMENT_MAX_LENGTH = 500;
+const COMMENT_MAX_LENGTH = 1000;
 const FORUM_COMMENT_MIN_LENGTH = 3;
 const FORUM_POST_MIN_LENGTH = 100;
 const FORUM_POST_TITLE_MIN_LENGTH = 5;

@@ -9478,6 +9478,12 @@ body.reader-page.reader-page--reader-mode.reader-webtoon .reader-shell__content 
   border-radius: 0;
 }
 
+body.reader-page.reader-page--reader-mode:not(.reader-webtoon) .reader-shell__content .page-media,
+body.reader-page.reader-page--reader-mode:not(.reader-webtoon) .reader-shell__content .page-media--lazy,
+body.reader-page.reader-page--reader-mode:not(.reader-webtoon) .reader-shell__content .page-media--lazy.is-loaded {
+  border: 1px solid color-mix(in srgb, var(--muted-foreground) 32%, transparent);
+}
+
 body.reader-page.reader-page--reader-mode.reader-webtoon .page-media,
 body.reader-page.reader-page--reader-mode.reader-webtoon .page-media--lazy,
 body.reader-page.reader-page--reader-mode.reader-webtoon .page-media--lazy.is-loaded {
@@ -20100,6 +20106,10 @@ body.reader-page.reader-page--reader-mode.reader-dock-resizing * {
   grid-column: 1 / -1 !important;
 }
 
+body.reader-page.reader-page--reader-mode:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-form--inline-submit .comment-compose-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .reader-dock__comments #comments .comment-compose-meta > .comment-submit {
   margin-left: auto;
 }
@@ -20211,6 +20221,20 @@ body.reader-page.reader-page--reader-mode.reader-dock-compact .reader-dock__comm
 
 body.reader-page.reader-page--reader-mode.reader-dock-compact .reader-dock__comments #comments .comment-items {
   gap: 0.22rem;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact .reader-dock__comments #comments .comment-box {
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: 0.34rem;
+  row-gap: 0.16rem;
+  align-items: start;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-box {
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: 0.34rem;
+  row-gap: 0.16rem;
+  align-items: start;
 }
 
 body.reader-page.reader-page--reader-mode.reader-dock-compact .reader-dock__comments #comments .comment-item {
@@ -20395,7 +20419,7 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-
 
 body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell,
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell {
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr);
   column-gap: 0.28rem;
   row-gap: 0.14rem;
   padding: 0.38rem 0.42rem 0.34rem;
@@ -20498,7 +20522,7 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-
 }
 
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-compose-shell {
-  grid-template-columns: minmax(0, 1fr) 26px;
+  grid-template-columns: minmax(0, 1fr);
   column-gap: 0.24rem;
   padding: 0.34rem 0.38rem 0.3rem;
 }
@@ -20543,6 +20567,20 @@ body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact .reader-dock
   height: 20px;
   min-width: 20px;
   min-height: 20px;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact .reader-dock__comments #comments .comment-box {
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 0.26rem;
+  row-gap: 0.12rem;
+  align-items: start;
+}
+
+body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__comments #comments .comment-box {
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 0.26rem;
+  row-gap: 0.12rem;
+  align-items: start;
 }
 
 body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact .reader-dock__comments #comments .comment-item {

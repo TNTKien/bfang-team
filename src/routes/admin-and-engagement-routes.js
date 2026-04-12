@@ -842,7 +842,9 @@ const ensureTeamScopeIncludedInSelection = async ({ teams, teamManageScope, dbAl
 
   const scopeTeamIndex = list.findIndex((item) => {
     const itemId = Number(item && item.id);
-    if (scopeTeamId > 0 && Number.isFinite(itemId) && Math.floor(itemId) === scopeTeamId) return true;
+    if (scopeTeamId > 0) {
+      return Number.isFinite(itemId) && Math.floor(itemId) === scopeTeamId;
+    }
     const normalizedName = normalizeTeamGroupLookupKey(item && item.name ? item.name : "");
     return Boolean(normalizedScopeTeamName && normalizedName && normalizedName === normalizedScopeTeamName);
   });
