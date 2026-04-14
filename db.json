@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "public",
-  "generated_at": "2026-04-12T08:24:03.471Z",
+  "generated_at": "2026-04-13T15:02:51.623Z",
   "generated_by": "scripts/sync-db-json.js",
   "source_files": [
     "src/domains/init-db-domain.js",
@@ -332,6 +332,16 @@
           "name": "interaction_boost_enabled",
           "data_type": "boolean",
           "is_nullable": false
+        },
+        {
+          "name": "is_deleted",
+          "data_type": "boolean",
+          "is_nullable": false
+        },
+        {
+          "name": "deleted_at",
+          "data_type": "bigint",
+          "is_nullable": true
         }
       ]
     },
@@ -957,6 +967,16 @@
           "name": "oneshot_locked",
           "data_type": "boolean",
           "is_nullable": false
+        },
+        {
+          "name": "is_deleted",
+          "data_type": "boolean",
+          "is_nullable": false
+        },
+        {
+          "name": "deleted_at",
+          "data_type": "bigint",
+          "is_nullable": true
         }
       ]
     },

@@ -926,6 +926,7 @@ async function listAuthorizedManga(memberships) {
         WHERE eligible_mtt.manga_id = m.id
           AND eligible_mtt.team_id = ANY($1::int[])
       )
+        AND COALESCE(m.is_deleted, false) = false
       GROUP BY
         m.id,
         m.title,
@@ -977,6 +978,7 @@ async function listAuthorizedManga(memberships) {
           MAX(c.number) as latest_chapter_number
         FROM chapters c
         WHERE c.manga_id = ANY($1::int[])
+          AND COALESCE(c.is_deleted, false) = false
         GROUP BY c.manga_id
       `,
       [mangaIds]
@@ -1050,6 +1052,7 @@ async function resolveAuthorizedManga({ userId, mangaId }) {
         COALESCE(is_oneshot, false) as is_oneshot
       FROM manga
       WHERE id = $1
+        AND COALESCE(is_deleted, false) = false
       LIMIT 1
     `,
     [Math.floor(safeMangaId)]
@@ -1594,6 +1597,7 @@ app.get("/v1/manga/:mangaId/chapters", requireApiKey, async (req, res) => {
           pages_updated_at
         FROM chapters
         WHERE manga_id = $1
+          AND COALESCE(is_deleted, false) = false
         ORDER BY number ASC, id ASC
       `,
       [Number(access.manga.id)]
@@ -1825,6 +1829,7 @@ app.post("/v1/uploads/start", requireApiKey, async (req, res) => {
         SELECT id, pages_prefix, pages_file_prefix
         FROM chapters
         WHERE manga_id = $1 AND number = $2
+          AND COALESCE(is_deleted, false) = false
         LIMIT 1
       `,
       [mangaId, chapterNumber]
@@ -1846,7 +1851,10 @@ app.post("/v1/uploads/start", requireApiKey, async (req, res) => {
       }
 
       if (isOneshotManga) {
-        const row = await dbGet("SELECT COUNT(*)::int as count FROM chapters WHERE manga_id = $1", [mangaId]);
+        const row = await dbGet(
+          "SELECT COUNT(*)::int as count FROM chapters WHERE manga_id = $1 AND COALESCE(is_deleted, false) = false",
+          [mangaId]
+        );
         const chapterCount = row ? Number(row.count) || 0 : 0;
         if (chapterCount > 0) {
           return jsonError(res, 409, "Oneshot manga can only have one chapter", { exists: true });

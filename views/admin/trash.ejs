@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <%- include("../partials/head", { title }) %>
+  <body>
+    <div class="site admin">
+      <%- include("partials/nav") %>
+      <main data-admin-trash-root>
+        <%
+          const toPositivePage = (value, fallback = 1) => {
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed) || parsed <= 0) return Math.max(1, Math.floor(Number(fallback) || 1));
+            return Math.floor(parsed);
+          };
+
+          const mangaPageState = mangaPagination && typeof mangaPagination === "object" ? mangaPagination : {};
+          const chapterPageState = chapterPagination && typeof chapterPagination === "object" ? chapterPagination : {};
+
+          const mangaPage = toPositivePage(mangaPageState.page, 1);
+          const chapterPage = toPositivePage(chapterPageState.page, 1);
+          const mangaTotalPages = toPositivePage(mangaPageState.totalPages || mangaPageState.pageCount, 1);
+          const chapterTotalPages = toPositivePage(chapterPageState.totalPages || chapterPageState.pageCount, 1);
+
+          const mangaTotalCount = Math.max(0, Number(mangaPageState.total || mangaPageState.totalCount || 0) || 0);
+          const chapterTotalCount = Math.max(0, Number(chapterPageState.total || chapterPageState.totalCount || 0) || 0);
+
+          const mangaHasPrev = Boolean(mangaPageState.hasPrev || mangaPage > 1);
+          const mangaHasNext = Boolean(mangaPageState.hasNext || mangaPage < mangaTotalPages);
+          const chapterHasPrev = Boolean(chapterPageState.hasPrev || chapterPage > 1);
+          const chapterHasNext = Boolean(chapterPageState.hasNext || chapterPage < chapterTotalPages);
+
+          const mangaPrevPage = mangaHasPrev
+            ? toPositivePage(mangaPageState.prevPage || (mangaPage - 1), Math.max(1, mangaPage - 1))
+            : mangaPage;
+          const mangaNextPage = mangaHasNext
+            ? toPositivePage(mangaPageState.nextPage || (mangaPage + 1), Math.min(mangaTotalPages, mangaPage + 1))
+            : mangaPage;
+
+          const chapterPrevPage = chapterHasPrev
+            ? toPositivePage(chapterPageState.prevPage || (chapterPage - 1), Math.max(1, chapterPage - 1))
+            : chapterPage;
+          const chapterNextPage = chapterHasNext
+            ? toPositivePage(chapterPageState.nextPage || (chapterPage + 1), Math.min(chapterTotalPages, chapterPage + 1))
+            : chapterPage;
+
+          const buildVisiblePages = (currentPage, totalPages) => {
+            const safeCurrent = toPositivePage(currentPage, 1);
+            const safeTotal = toPositivePage(totalPages, 1);
+            const pages = [];
+            if (safeTotal <= 6) {
+              for (let i = 1; i <= safeTotal; i += 1) pages.push(i);
+              return pages;
+            }
+            if (safeCurrent <= 3) {
+              pages.push(1, 2, 3, 4, "...", safeTotal);
+              return pages;
+            }
+            if (safeCurrent >= safeTotal - 2) {
+              pages.push(1, "...", safeTotal - 3, safeTotal - 2, safeTotal - 1, safeTotal);
+              return pages;
+            }
+            pages.push(1, "...", safeCurrent - 1, safeCurrent, safeCurrent + 1, "...", safeTotal);
+            return pages;
+          };
+
+          const mangaVisiblePages = buildVisiblePages(mangaPage, mangaTotalPages);
+          const chapterVisiblePages = buildVisiblePages(chapterPage, chapterTotalPages);
+
+          const buildTrashHref = (nextMangaPage, nextChapterPage) => {
+            const safeManga = toPositivePage(nextMangaPage, 1);
+            const safeChapter = toPositivePage(nextChapterPage, 1);
+            const params = [];
+            if (safeManga > 1) params.push(`mangaPage=${encodeURIComponent(String(safeManga))}`);
+            if (safeChapter > 1) params.push(`chapterPage=${encodeURIComponent(String(safeChapter))}`);
+            return params.length ? `/admin/trash?${params.join("&")}` : "/admin/trash";
+          };
+        %>
+
+        <section class="section container">
+          <div class="admin-section-header">
+            <div>
+              <h1>Thùng rác</h1>
+              <p class="note">Quản lý dữ liệu đã soft delete: khôi phục hoặc xóa hoàn toàn.</p>
+            </div>
+          </div>
+          <p class="note" data-trash-inline-status hidden></p>
+        </section>
+
+        <section class="section container">
+          <div class="panel">
+            <div class="admin-section-header admin-section-header--table">
+              <div>
+                <h2>Truyện đã xóa</h2>
+                <p class="note">Khôi phục sẽ đưa truyện và toàn bộ chương đã soft delete trở lại hoạt động.</p>
+                <p class="note">
+                  Tổng <strong><%= mangaTotalCount %></strong> truyện • Trang <strong><%= mangaPage %></strong>/<%= mangaTotalPages %> •
+                  tối đa 30 mục/trang
+                </p>
+              </div>
+            </div>
+
+            <div class="admin-inline admin-chapters-toolbar">
+              <label class="admin-checkbox-inline">
+                <input type="checkbox" data-trash-select-all data-trash-type="manga" />
+                <span data-trash-select-all-label data-trash-type="manga">Chọn tất cả trang này (0)</span>
+              </label>
+
+              <form
+                id="trash-manga-bulk-restore-form"
+                method="post"
+                action="/admin/trash/manga/bulk-restore"
+                data-confirm-action="restore-trash-manga-bulk"
+                data-trash-type="manga"
+                class="admin-chapters-bulk-form"
+              >
+                <button
+                  class="button button--ghost"
+                  type="submit"
+                  data-trash-bulk-restore
+                  data-trash-type="manga"
+                  disabled
+                >
+                  Khôi phục đã chọn
+                </button>
+              </form>
+
+              <form
+                id="trash-manga-bulk-delete-form"
+                method="post"
+                action="/admin/trash/manga/bulk-delete-permanent"
+                data-confirm-action="purge-trash-manga-bulk"
+                data-trash-type="manga"
+                class="admin-chapters-bulk-form"
+              >
+                <button
+                  class="button button--ghost button--danger"
+                  type="submit"
+                  data-trash-bulk-delete
+                  data-trash-type="manga"
+                  disabled
+                >
+                  Xóa đã chọn
+                </button>
+              </form>
+
+              <form
+                method="post"
+                action="/admin/trash/manga/delete-all-permanent"
+                data-confirm-action="purge-trash-manga-all"
+                data-trash-type="manga"
+                data-trash-total="<%= mangaTotalCount %>"
+              >
+                <button
+                  class="button button--ghost button--danger"
+                  type="submit"
+                  data-trash-delete-all
+                  data-trash-type="manga"
+                  <%= mangaTotalCount > 0 ? "" : "disabled" %>
+                >
+                  Xóa toàn bộ
+                </button>
+              </form>
+            </div>
+
+            <div class="admin-table-wrap">
+              <table class="admin-table admin-table--stack" data-trash-manga-table>
+                <thead>
+                  <tr>
+                    <th><span class="sr-only">Chọn</span></th>
+                    <th>Truyện</th>
+                    <th>Tác giả / Nhóm</th>
+                    <th>Chương đã xóa</th>
+                    <th>Thời điểm xóa</th>
+                    <th>Hành động</th>
+                  </tr>
+                </thead>
+                <tbody data-trash-manga-body>
+                  <% if (!deletedManga || deletedManga.length === 0) { %>
+                    <tr>
+                      <td colspan="6">Không có truyện nào trong thùng rác.</td>
+                    </tr>
+                  <% } else { %>
+                    <% deletedManga.forEach((manga) => { %>
+                      <% const deletedChapters = Number(manga.deleted_chapter_count) || 0; %>
+                      <tr data-trash-row data-trash-type="manga" data-trash-id="<%= manga.id %>">
+                        <td data-label="Chọn">
+                          <input
+                            type="checkbox"
+                            name="manga_ids"
+                            value="<%= manga.id %>"
+                            form="trash-manga-bulk-delete-form"
+                            data-trash-restore-form="trash-manga-bulk-restore-form"
+                            data-trash-select
+                            data-trash-type="manga"
+                          />
+                        </td>
+                        <td data-label="Truyện">
+                          <strong><%= manga.title %></strong>
+                          <% if (manga.slug) { %>
+                            <span class="admin-sub">/<%= manga.slug %></span>
+                          <% } %>
+                        </td>
+                        <td data-label="Tác giả / Nhóm">
+                          <span><%= manga.group_name || manga.author || "-" %></span>
+                        </td>
+                        <td data-label="Chương đã xóa">
+                          <span class="chip"><%= deletedChapters %></span>
+                        </td>
+                        <td data-label="Thời điểm xóa"><%= formatDateTime(manga.deleted_at) %></td>
+                        <td class="admin-cell-actions" data-label="Hành động">
+                          <div class="admin-actions">
+                            <form
+                              method="post"
+                              action="/admin/trash/manga/<%= manga.id %>/restore"
+                              data-confirm-action="restore-trash-manga"
+                              data-trash-type="manga"
+                              data-trash-id="<%= manga.id %>"
+                              data-manga-title="<%= manga.title %>"
+                              data-trash-chapter-count="<%= deletedChapters %>"
+                            >
+                              <button class="button button--ghost" type="submit">Khôi phục</button>
+                            </form>
+
+                            <form
+                              method="post"
+                              action="/admin/trash/manga/<%= manga.id %>/delete-permanent"
+                              data-confirm-action="purge-trash-manga"
+                              data-trash-type="manga"
+                              data-trash-id="<%= manga.id %>"
+                              data-manga-title="<%= manga.title %>"
+                              data-trash-chapter-count="<%= deletedChapters %>"
+                            >
+                              <button class="button button--ghost button--danger" type="submit">Xóa</button>
+                            </form>
+                          </div>
+                        </td>
+                      </tr>
+                    <% }) %>
+                  <% } %>
+                </tbody>
+              </table>
+            </div>
+
+            <% if (mangaTotalPages > 1) { %>
+              <nav class="admin-pagination" aria-label="Phân trang truyện trong thùng rác" data-trash-pagination data-trash-type="manga">
+                <a
+                  class="button button--ghost <%= mangaHasPrev ? "" : "is-disabled" %>"
+                  href="<%= mangaHasPrev ? buildTrashHref(mangaPrevPage, chapterPage) : "#" %>"
+                  aria-label="Trang trước"
+                  <%= mangaHasPrev ? "" : 'tabindex="-1" aria-disabled="true"' %>
+                >
+                  Trước
+                </a>
+
+                <div class="admin-pagination__numbers">
+                  <% mangaVisiblePages.forEach((num) => { %>
+                    <% if (num === "...") { %>
+                      <span class="admin-pagination__dots">...</span>
+                    <% } else if (num === mangaPage) { %>
+                      <span class="chip"><%= num %></span>
+                    <% } else { %>
+                      <a class="button button--ghost" href="<%= buildTrashHref(num, chapterPage) %>"><%= num %></a>
+                    <% } %>
+                  <% }) %>
+                </div>
+
+                <a
+                  class="button button--ghost <%= mangaHasNext ? "" : "is-disabled" %>"
+                  href="<%= mangaHasNext ? buildTrashHref(mangaNextPage, chapterPage) : "#" %>"
+                  aria-label="Trang sau"
+                  <%= mangaHasNext ? "" : 'tabindex="-1" aria-disabled="true"' %>
+                >
+                  Sau
+                </a>
+              </nav>
+            <% } %>
+          </div>
+        </section>
+
+        <section class="section container">
+          <div class="panel">
+            <div class="admin-section-header admin-section-header--table">
+              <div>
+                <h2>Chương đã xóa</h2>
+                <p class="note">Chỉ hiển thị chương thuộc truyện còn hoạt động. Nếu truyện đã xóa, hãy khôi phục truyện trước.</p>
+                <p class="note">
+                  Tổng <strong><%= chapterTotalCount %></strong> chương • Trang <strong><%= chapterPage %></strong>/<%= chapterTotalPages %> •
+                  tối đa 30 mục/trang
+                </p>
+              </div>
+            </div>
+
+            <div class="admin-inline admin-chapters-toolbar">
+              <label class="admin-checkbox-inline">
+                <input type="checkbox" data-trash-select-all data-trash-type="chapter" />
+                <span data-trash-select-all-label data-trash-type="chapter">Chọn tất cả trang này (0)</span>
+              </label>
+
+              <form
+                id="trash-chapter-bulk-restore-form"
+                method="post"
+                action="/admin/trash/chapters/bulk-restore"
+                data-confirm-action="restore-trash-chapter-bulk"
+                data-trash-type="chapter"
+                class="admin-chapters-bulk-form"
+              >
+                <button
+                  class="button button--ghost"
+                  type="submit"
+                  data-trash-bulk-restore
+                  data-trash-type="chapter"
+                  disabled
+                >
+                  Khôi phục đã chọn
+                </button>
+              </form>
+
+              <form
+                id="trash-chapter-bulk-delete-form"
+                method="post"
+                action="/admin/trash/chapters/bulk-delete-permanent"
+                data-confirm-action="purge-trash-chapter-bulk"
+                data-trash-type="chapter"
+                class="admin-chapters-bulk-form"
+              >
+                <button
+                  class="button button--ghost button--danger"
+                  type="submit"
+                  data-trash-bulk-delete
+                  data-trash-type="chapter"
+                  disabled
+                >
+                  Xóa đã chọn
+                </button>
+              </form>
+
+              <form
+                method="post"
+                action="/admin/trash/chapters/delete-all-permanent"
+                data-confirm-action="purge-trash-chapter-all"
+                data-trash-type="chapter"
+                data-trash-total="<%= chapterTotalCount %>"
+              >
+                <button
+                  class="button button--ghost button--danger"
+                  type="submit"
+                  data-trash-delete-all
+                  data-trash-type="chapter"
+                  <%= chapterTotalCount > 0 ? "" : "disabled" %>
+                >
+                  Xóa toàn bộ
+                </button>
+              </form>
+            </div>
+
+            <div class="admin-table-wrap">
+              <table class="admin-table admin-table--stack" data-trash-chapter-table>
+                <thead>
+                  <tr>
+                    <th><span class="sr-only">Chọn</span></th>
+                    <th>Truyện</th>
+                    <th>Chương</th>
+                    <th>Số trang</th>
+                    <th>Thời điểm xóa</th>
+                    <th>Hành động</th>
+                  </tr>
+                </thead>
+                <tbody data-trash-chapter-body>
+                  <% if (!deletedChapters || deletedChapters.length === 0) { %>
+                    <tr>
+                      <td colspan="6">Không có chương nào trong thùng rác.</td>
+                    </tr>
+                  <% } else { %>
+                    <% deletedChapters.forEach((chapter) => { %>
+                      <% const chapterNumberText = (chapter.number == null ? "" : String(chapter.number)).trim(); %>
+                      <% const chapterLabel = chapterNumberText ? `Chương ${chapterNumberText}` : "Chương"; %>
+                      <tr data-trash-row data-trash-type="chapter" data-trash-id="<%= chapter.id %>">
+                        <td data-label="Chọn">
+                          <input
+                            type="checkbox"
+                            name="chapter_ids"
+                            value="<%= chapter.id %>"
+                            form="trash-chapter-bulk-delete-form"
+                            data-trash-restore-form="trash-chapter-bulk-restore-form"
+                            data-trash-select
+                            data-trash-type="chapter"
+                          />
+                        </td>
+                        <td data-label="Truyện">
+                          <strong><%= chapter.manga_title %></strong>
+                          <% if (chapter.manga_slug) { %>
+                            <span class="admin-sub">/<%= chapter.manga_slug %></span>
+                          <% } %>
+                        </td>
+                        <td data-label="Chương">
+                          <strong><%= chapterLabel %></strong>
+                          <% if (chapter.title) { %>
+                            <span class="admin-sub"><%= chapter.title %></span>
+                          <% } %>
+                        </td>
+                        <td data-label="Số trang"><%= Number(chapter.pages) || 0 %> trang</td>
+                        <td data-label="Thời điểm xóa"><%= formatDateTime(chapter.deleted_at) %></td>
+                        <td class="admin-cell-actions" data-label="Hành động">
+                          <div class="admin-actions">
+                            <form
+                              method="post"
+                              action="/admin/trash/chapters/<%= chapter.id %>/restore"
+                              data-confirm-action="restore-trash-chapter"
+                              data-trash-type="chapter"
+                              data-trash-id="<%= chapter.id %>"
+                              data-manga-title="<%= chapter.manga_title %>"
+                              data-chapter-number="<%= chapter.number %>"
+                              data-chapter-pages="<%= chapter.pages %>"
+                            >
+                              <button class="button button--ghost" type="submit">Khôi phục</button>
+                            </form>
+
+                            <form
+                              method="post"
+                              action="/admin/trash/chapters/<%= chapter.id %>/delete-permanent"
+                              data-confirm-action="purge-trash-chapter"
+                              data-trash-type="chapter"
+                              data-trash-id="<%= chapter.id %>"
+                              data-manga-title="<%= chapter.manga_title %>"
+                              data-chapter-number="<%= chapter.number %>"
+                              data-chapter-pages="<%= chapter.pages %>"
+                            >
+                              <button class="button button--ghost button--danger" type="submit">Xóa</button>
+                            </form>
+                          </div>
+                        </td>
+                      </tr>
+                    <% }) %>
+                  <% } %>
+                </tbody>
+              </table>
+            </div>
+
+            <% if (chapterTotalPages > 1) { %>
+              <nav class="admin-pagination" aria-label="Phân trang chương trong thùng rác" data-trash-pagination data-trash-type="chapter">
+                <a
+                  class="button button--ghost <%= chapterHasPrev ? "" : "is-disabled" %>"
+                  href="<%= chapterHasPrev ? buildTrashHref(mangaPage, chapterPrevPage) : "#" %>"
+                  aria-label="Trang trước"
+                  <%= chapterHasPrev ? "" : 'tabindex="-1" aria-disabled="true"' %>
+                >
+                  Trước
+                </a>
+
+                <div class="admin-pagination__numbers">
+                  <% chapterVisiblePages.forEach((num) => { %>
+                    <% if (num === "...") { %>
+                      <span class="admin-pagination__dots">...</span>
+                    <% } else if (num === chapterPage) { %>
+                      <span class="chip"><%= num %></span>
+                    <% } else { %>
+                      <a class="button button--ghost" href="<%= buildTrashHref(mangaPage, num) %>"><%= num %></a>
+                    <% } %>
+                  <% }) %>
+                </div>
+
+                <a
+                  class="button button--ghost <%= chapterHasNext ? "" : "is-disabled" %>"
+                  href="<%= chapterHasNext ? buildTrashHref(mangaPage, chapterNextPage) : "#" %>"
+                  aria-label="Trang sau"
+                  <%= chapterHasNext ? "" : 'tabindex="-1" aria-disabled="true"' %>
+                >
+                  Sau
+                </a>
+              </nav>
+            <% } %>
+          </div>
+        </section>
+
+        <dialog class="modal" data-confirm-dialog aria-label="Xác nhận thao tác">
+          <div class="modal-card" role="document">
+            <div class="modal-head">
+              <h3 class="modal-title" data-dialog-title></h3>
+              <button class="modal-close" type="button" data-dialog-close aria-label="Đóng">
+                <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+              </button>
+            </div>
+            <p class="modal-body" data-dialog-body></p>
+            <div class="modal-meta" data-dialog-meta></div>
+            <div class="modal-actions">
+              <button class="button button--ghost" type="button" data-dialog-cancel>Hủy</button>
+              <button class="button" type="button" data-dialog-confirm>Xác nhận</button>
+            </div>
+          </div>
+        </dialog>
+      </main>
+    </div>
+  </body>
+</html>

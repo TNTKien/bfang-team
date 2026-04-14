@@ -19,8 +19,16 @@ const createStorageDomain = (deps) => {
     normalizeBaseUrl,
     normalizePathPrefix,
     parseEnvBoolean,
+    withTransaction,
     sharp,
   } = deps;
+
+const runStorageTransaction = async (handler) => {
+  if (typeof withTransaction === "function") {
+    return withTransaction(handler);
+  }
+  return handler({ dbAll, dbGet, dbRun });
+};
 
 const chapterPageMaxHeight = CHAPTER_PAGE_MAX_HEIGHT;
 const chapterPageWebpQuality = CHAPTER_PAGE_WEBP_QUALITY;
@@ -896,6 +904,141 @@ const createAdminJob = ({ type, run }) => {
     console.warn("Admin job queue crashed", err);
   });
   return id;
+};
+
+const removeMangaIdFromHomepageFeatured = async ({ mangaId, dbGetFn = dbGet, dbRunFn = dbRun }) => {
+  const safeMangaId = Number(mangaId);
+  if (!Number.isFinite(safeMangaId) || safeMangaId <= 0) return;
+
+  const homepageRow = await dbGetFn("SELECT featured_ids FROM homepage WHERE id = 1 LIMIT 1").catch(() => null);
+  const rawFeaturedIds = homepageRow && homepageRow.featured_ids ? String(homepageRow.featured_ids) : "";
+  if (!rawFeaturedIds.trim()) return;
+
+  const nextFeaturedIds = rawFeaturedIds
+    .split(",")
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .map((value) => Math.floor(value))
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .filter((value) => value !== Math.floor(safeMangaId));
+
+  const nextValue = nextFeaturedIds.join(",");
+  if (nextValue === rawFeaturedIds.trim()) return;
+
+  await dbRunFn("UPDATE homepage SET featured_ids = ?, updated_at = ? WHERE id = 1", [
+    nextValue,
+    new Date().toISOString(),
+  ]).catch(() => null);
+};
+
+const softDeleteChapter = async (chapterId) => {
+  const id = Number(chapterId);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error("Không tìm thấy chương");
+  }
+
+  const safeChapterId = Math.floor(id);
+  const chapterRow = await dbGet(
+    `
+      SELECT id, manga_id
+      FROM chapters
+      WHERE id = ?
+        AND COALESCE(is_deleted, false) = false
+      LIMIT 1
+    `,
+    [safeChapterId]
+  );
+  if (!chapterRow) {
+    throw new Error("Không tìm thấy chương");
+  }
+
+  const deletedAt = Date.now();
+  await runStorageTransaction(async ({ dbRun: txRun }) => {
+    await txRun(
+      `
+        UPDATE chapters
+        SET
+          is_deleted = true,
+          deleted_at = ?,
+          processing_state = CASE
+            WHEN COALESCE(processing_state, '') = 'processing' THEN 'deleted'
+            ELSE processing_state
+          END
+        WHERE id = ?
+          AND COALESCE(is_deleted, false) = false
+      `,
+      [deletedAt, safeChapterId]
+    );
+    await txRun(
+      `
+        UPDATE manga
+        SET updated_at = ?
+        WHERE id = ?
+          AND COALESCE(is_deleted, false) = false
+      `,
+      [new Date().toISOString(), chapterRow.manga_id]
+    );
+  });
+
+  return { mangaId: Number(chapterRow.manga_id) || 0 };
+};
+
+const softDeleteManga = async (mangaId) => {
+  const id = Number(mangaId);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error("Không tìm thấy truyện");
+  }
+
+  const safeMangaId = Math.floor(id);
+  const mangaRow = await dbGet(
+    `
+      SELECT id
+      FROM manga
+      WHERE id = ?
+        AND COALESCE(is_deleted, false) = false
+      LIMIT 1
+    `,
+    [safeMangaId]
+  );
+  if (!mangaRow) {
+    throw new Error("Không tìm thấy truyện");
+  }
+
+  const deletedAt = Date.now();
+  await runStorageTransaction(async ({ dbGet: txGet, dbRun: txRun }) => {
+    await txRun(
+      `
+        UPDATE chapters
+        SET
+          is_deleted = true,
+          deleted_at = ?,
+          processing_state = CASE
+            WHEN COALESCE(processing_state, '') = 'processing' THEN 'deleted'
+            ELSE processing_state
+          END
+        WHERE manga_id = ?
+          AND COALESCE(is_deleted, false) = false
+      `,
+      [deletedAt, safeMangaId]
+    );
+    await txRun(
+      `
+        UPDATE manga
+        SET
+          is_deleted = true,
+          deleted_at = ?,
+          is_hidden = 1
+        WHERE id = ?
+          AND COALESCE(is_deleted, false) = false
+      `,
+      [deletedAt, safeMangaId]
+    );
+    await removeMangaIdFromHomepageFeatured({
+      mangaId: safeMangaId,
+      dbGetFn: txGet,
+      dbRunFn: txRun,
+    });
+  });
 };
 
 const deleteChapterAndCleanupStorage = async (chapterId) => {
@@ -1791,6 +1934,8 @@ const reconcileStaleChapterProcessingById = async (chapterId) => {
     runChapterProcessingJob,
     runChapterProcessingQueue,
     scheduleChapterDraftCleanup,
+    softDeleteChapter,
+    softDeleteManga,
     storageClientCache,
     touchChapterDraft,
     updateChapterProcessing,

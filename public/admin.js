@@ -282,6 +282,30 @@
     return data;
   };
 
+  const postParamsJson = async (url, params, fallbackMessage) => {
+    const body = params instanceof URLSearchParams ? params : new URLSearchParams();
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        Accept: "application/json"
+      },
+      credentials: "same-origin",
+      body: body.toString()
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data || data.ok !== true) {
+      const message =
+        data && data.error
+          ? String(data.error)
+          : (fallbackMessage || "Thao tác thất bại. Vui lòng thử lại.").toString();
+      throw new Error(message);
+    }
+
+    return data;
+  };
+
   const syncBadgeOrderUi = (table) => {
     if (!table) return;
     const rows = Array.from(table.querySelectorAll("tbody tr[data-badge-row-id]"));
@@ -686,6 +710,541 @@
     tbody.appendChild(tr);
   };
 
+  let trashInlineStatusTimer = null;
+  const showTrashInlineStatus = (message, tone = "success") => {
+    const statusEl = document.querySelector("[data-trash-inline-status]");
+    const text = (message || "").toString().trim();
+    if (!statusEl || !text) return false;
+
+    if (trashInlineStatusTimer) {
+      window.clearTimeout(trashInlineStatusTimer);
+      trashInlineStatusTimer = null;
+    }
+
+    statusEl.hidden = false;
+    statusEl.textContent = text;
+    statusEl.classList.remove("admin-success", "admin-error");
+    statusEl.classList.add(tone === "error" ? "admin-error" : "admin-success");
+
+    trashInlineStatusTimer = window.setTimeout(() => {
+      statusEl.hidden = true;
+      trashInlineStatusTimer = null;
+    }, 2800);
+
+    return true;
+  };
+
+  const ensureTrashTableEmptyState = (type) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    const tbody =
+      safeType === "manga"
+        ? document.querySelector("[data-trash-manga-body]")
+        : safeType === "chapter"
+        ? document.querySelector("[data-trash-chapter-body]")
+        : null;
+    if (!tbody) return;
+
+    const hasDataRow = Array.from(tbody.querySelectorAll("tr")).some((row) =>
+      Boolean(
+        row.querySelector(
+          safeType === "manga"
+            ? "[data-confirm-action='restore-trash-manga'], [data-confirm-action='purge-trash-manga']"
+            : "[data-confirm-action='restore-trash-chapter'], [data-confirm-action='purge-trash-chapter']"
+        )
+      )
+    );
+    if (hasDataRow) return;
+
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 6;
+    td.textContent =
+      safeType === "manga"
+        ? "Không có truyện nào trong thùng rác."
+        : "Không có chương nào trong thùng rác.";
+    tr.appendChild(td);
+    tbody.innerHTML = "";
+    tbody.appendChild(tr);
+  };
+
+  const getTrashTypeFromElement = (el) => {
+    if (!el || !(el instanceof HTMLElement)) return "";
+    const raw = (el.dataset.trashType || "").toString().trim().toLowerCase();
+    return raw === "manga" || raw === "chapter" ? raw : "";
+  };
+
+  const getTrashTypeLabel = (type, plural = false) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    if (safeType === "manga") {
+      return plural ? "truyện" : "truyện";
+    }
+    if (safeType === "chapter") {
+      return plural ? "chương" : "chương";
+    }
+    return plural ? "mục" : "mục";
+  };
+
+  const getTrashSelectionCheckboxes = (type) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    if (!safeType) return [];
+    return Array.from(document.querySelectorAll(`[data-trash-select][data-trash-type='${safeType}']`)).filter(
+      (input) => input instanceof HTMLInputElement
+    );
+  };
+
+  const getTrashDeleteAllForms = (type) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    if (!safeType) return [];
+    const action = `purge-trash-${safeType}-all`;
+    return Array.from(
+      document.querySelectorAll(`form[data-trash-type='${safeType}'][data-confirm-action='${action}']`)
+    ).filter((form) => form instanceof HTMLFormElement);
+  };
+
+  const getTrashDeleteAllButtons = (type) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    if (!safeType) return [];
+    return Array.from(
+      document.querySelectorAll(`[data-trash-delete-all][data-trash-type='${safeType}']`)
+    ).filter((button) => button instanceof HTMLButtonElement);
+  };
+
+  const getTrashBulkRestoreButtons = (type) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    if (!safeType) return [];
+    return Array.from(
+      document.querySelectorAll(`[data-trash-bulk-restore][data-trash-type='${safeType}']`)
+    ).filter((button) => button instanceof HTMLButtonElement);
+  };
+
+  const readTrashTotalCount = (type) => {
+    const form = getTrashDeleteAllForms(type)[0];
+    if (!form) return 0;
+    const totalRaw = Number(form.dataset.trashTotal);
+    if (!Number.isFinite(totalRaw) || totalRaw <= 0) return 0;
+    return Math.floor(totalRaw);
+  };
+
+  const setTrashTotalCount = (type, total) => {
+    const safeTotalRaw = Number(total);
+    const safeTotal = Number.isFinite(safeTotalRaw) && safeTotalRaw > 0 ? Math.floor(safeTotalRaw) : 0;
+
+    getTrashDeleteAllForms(type).forEach((form) => {
+      form.dataset.trashTotal = String(safeTotal);
+    });
+
+    getTrashDeleteAllButtons(type).forEach((button) => {
+      button.disabled = safeTotal <= 0;
+    });
+  };
+
+  const decrementTrashTotalCount = (type, delta) => {
+    const safeDeltaRaw = Number(delta);
+    const safeDelta = Number.isFinite(safeDeltaRaw) && safeDeltaRaw > 0 ? Math.floor(safeDeltaRaw) : 0;
+    if (safeDelta <= 0) return;
+
+    const currentTotal = readTrashTotalCount(type);
+    const nextTotal = Math.max(0, currentTotal - safeDelta);
+    setTrashTotalCount(type, nextTotal);
+  };
+
+  const getTrashSelectedCheckboxes = (type) =>
+    getTrashSelectionCheckboxes(type).filter((input) => input.checked && !input.disabled);
+
+  const syncTrashSelectionUi = (type) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    if (!safeType) return;
+
+    const checkboxes = getTrashSelectionCheckboxes(safeType);
+    const enabled = checkboxes.filter((input) => !input.disabled);
+    const selected = enabled.filter((input) => input.checked);
+
+    const selectedCount = selected.length;
+    const totalSelectable = enabled.length;
+
+    document
+      .querySelectorAll(`[data-trash-bulk-delete][data-trash-type='${safeType}']`)
+      .forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        button.disabled = selectedCount <= 0;
+      });
+
+    getTrashBulkRestoreButtons(safeType).forEach((button) => {
+      button.disabled = selectedCount <= 0;
+    });
+
+    document
+      .querySelectorAll(`[data-trash-select-all-label][data-trash-type='${safeType}']`)
+      .forEach((label) => {
+        label.textContent = `Chọn tất cả trang này (${selectedCount})`;
+      });
+
+    document
+      .querySelectorAll(`[data-trash-select-all][data-trash-type='${safeType}']`)
+      .forEach((input) => {
+        if (!(input instanceof HTMLInputElement)) return;
+        if (!totalSelectable) {
+          input.checked = false;
+          input.indeterminate = false;
+          input.disabled = true;
+          return;
+        }
+
+        input.disabled = false;
+        input.checked = selectedCount > 0 && selectedCount === totalSelectable;
+        input.indeterminate = selectedCount > 0 && selectedCount < totalSelectable;
+      });
+  };
+
+  const syncAllTrashSelectionUi = () => {
+    syncTrashSelectionUi("manga");
+    syncTrashSelectionUi("chapter");
+    setTrashTotalCount("manga", readTrashTotalCount("manga"));
+    setTrashTotalCount("chapter", readTrashTotalCount("chapter"));
+  };
+
+  const removeTrashRowsByIds = (type, ids) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    const idSet = new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => String(Math.floor(value)))
+    );
+    if (!safeType || !idSet.size) return 0;
+
+    let removed = 0;
+    document
+      .querySelectorAll(`[data-trash-row][data-trash-type='${safeType}']`)
+      .forEach((row) => {
+        const rowId = (row instanceof HTMLElement ? row.dataset.trashId : "") || "";
+        if (rowId && idSet.has(rowId)) {
+          row.remove();
+          removed += 1;
+        }
+      });
+
+    return removed;
+  };
+
+  const removeAllTrashRows = (type) => {
+    const safeType = (type || "").toString().trim().toLowerCase();
+    if (!safeType) return 0;
+
+    let removed = 0;
+    document
+      .querySelectorAll(`[data-trash-row][data-trash-type='${safeType}']`)
+      .forEach((row) => {
+        row.remove();
+        removed += 1;
+      });
+
+    return removed;
+  };
+
+  const runTrashBulkRestore = async (form, submitter) => {
+    if (!form || !(form instanceof HTMLFormElement)) return;
+    if (form.dataset.trashBulkBusy === "1") return;
+
+    const action = (form.dataset.confirmAction || "").toString().trim();
+    const type = getTrashTypeFromElement(form);
+    const isMangaBulk = action === "restore-trash-manga-bulk" && type === "manga";
+    const isChapterBulk = action === "restore-trash-chapter-bulk" && type === "chapter";
+    if (!isMangaBulk && !isChapterBulk) {
+      return;
+    }
+
+    const selectedIds = getTrashSelectedCheckboxes(type)
+      .map((input) => Number(input.value))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value));
+
+    if (!selectedIds.length) {
+      showTrashInlineStatus("Vui lòng chọn ít nhất một mục để khôi phục.", "error");
+      syncTrashSelectionUi(type);
+      return;
+    }
+
+    const button =
+      submitter instanceof HTMLButtonElement ? submitter : form.querySelector("button[type='submit']");
+    form.dataset.trashBulkBusy = "1";
+    setButtonBusy(button, "Đang khôi phục...");
+    showLoadingOverlay({
+      title: `Đang khôi phục ${selectedIds.length} ${getTrashTypeLabel(type, true)}...`,
+      text: "Đang cập nhật dữ liệu trong thùng rác."
+    });
+
+    try {
+      const params = new URLSearchParams();
+      const paramKey = type === "manga" ? "manga_ids" : "chapter_ids";
+      selectedIds.forEach((id) => {
+        params.append(paramKey, String(id));
+      });
+
+      const data = await postParamsJson(form.action, params, "Không thể bắt đầu khôi phục hàng loạt. Vui lòng thử lại.");
+      const result = data && data.result && typeof data.result === "object" ? data.result : {};
+
+      const restoredCountRaw = Number(result.restoredCount);
+      const failedCountRaw = Number(result.failedCount);
+      const restoredCount = Number.isFinite(restoredCountRaw) && restoredCountRaw > 0 ? Math.floor(restoredCountRaw) : 0;
+      const failedCount = Number.isFinite(failedCountRaw) && failedCountRaw > 0 ? Math.floor(failedCountRaw) : 0;
+
+      const restoredIds = Array.isArray(result.restoredIds)
+        ? result.restoredIds
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value) && value > 0)
+            .map((value) => Math.floor(value))
+        : [];
+
+      let removedCount = 0;
+      if (restoredIds.length) {
+        removedCount = removeTrashRowsByIds(type, restoredIds);
+      }
+
+      if (!removedCount && restoredCount > 0) {
+        window.location.reload();
+        return;
+      }
+
+      decrementTrashTotalCount(type, restoredCount);
+      ensureTrashTableEmptyState(type);
+      syncTrashSelectionUi(type);
+
+      if (failedCount > 0) {
+        showTrashInlineStatus(
+          `Đã khôi phục ${restoredCount} ${getTrashTypeLabel(type, true)}, còn ${failedCount} ${getTrashTypeLabel(type, true)} lỗi.`,
+          "error"
+        );
+      } else {
+        showTrashInlineStatus(`Đã khôi phục ${restoredCount} ${getTrashTypeLabel(type, true)}.`, "success");
+      }
+    } catch (err) {
+      const message = (err && err.message) || "Thao tác thất bại. Vui lòng thử lại.";
+      if (!showTrashInlineStatus(message, "error")) {
+        window.alert(message);
+      }
+    } finally {
+      delete form.dataset.trashBulkBusy;
+      hideLoadingOverlay();
+      if (button && button.isConnected) {
+        restoreButton(button);
+      }
+      syncTrashSelectionUi(type);
+    }
+  };
+
+  const runTrashBulkDelete = async (form, submitter) => {
+    if (!form || !(form instanceof HTMLFormElement)) return;
+    if (form.dataset.trashBulkBusy === "1") return;
+
+    const action = (form.dataset.confirmAction || "").toString().trim();
+    const type = getTrashTypeFromElement(form);
+    const isMangaBulk = action === "purge-trash-manga-bulk" && type === "manga";
+    const isChapterBulk = action === "purge-trash-chapter-bulk" && type === "chapter";
+    const isMangaAll = action === "purge-trash-manga-all" && type === "manga";
+    const isChapterAll = action === "purge-trash-chapter-all" && type === "chapter";
+    if (!isMangaBulk && !isChapterBulk && !isMangaAll && !isChapterAll) {
+      return;
+    }
+
+    const isDeleteAll = isMangaAll || isChapterAll;
+    const button =
+      submitter instanceof HTMLButtonElement ? submitter : form.querySelector("button[type='submit']");
+
+    const selectedIds = getTrashSelectedCheckboxes(type)
+      .map((input) => Number(input.value))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value));
+
+    if (!isDeleteAll && !selectedIds.length) {
+      showTrashInlineStatus("Vui lòng chọn ít nhất một mục để xóa.", "error");
+      syncTrashSelectionUi(type);
+      return;
+    }
+
+    form.dataset.trashBulkBusy = "1";
+    setButtonBusy(button, "Đang xóa...");
+    showLoadingOverlay({
+      title: isDeleteAll
+        ? `Đang xóa toàn bộ ${getTrashTypeLabel(type, true)}...`
+        : `Đang xóa ${selectedIds.length} ${getTrashTypeLabel(type, true)}...`,
+      text: "Đang dọn dữ liệu và ảnh liên quan. Việc này có thể mất một lúc."
+    });
+
+    try {
+      const started = await postFormJson(form, "Không thể bắt đầu xóa hàng loạt. Vui lòng thử lại.");
+      const jobId = started && typeof started.jobId === "string" ? started.jobId : "";
+      if (!jobId) {
+        throw new Error("Không theo dõi được tiến trình. Vui lòng thử lại.");
+      }
+
+      const finished = await waitForAdminJob(jobId);
+      const result = finished && finished.result && typeof finished.result === "object" ? finished.result : {};
+
+      const deletedCountRaw = Number(result.deletedCount);
+      const failedCountRaw = Number(result.failedCount);
+      const deletedCount = Number.isFinite(deletedCountRaw) && deletedCountRaw > 0 ? Math.floor(deletedCountRaw) : 0;
+      const failedCount = Number.isFinite(failedCountRaw) && failedCountRaw > 0 ? Math.floor(failedCountRaw) : 0;
+
+      const deletedIds = Array.isArray(result.deletedIds)
+        ? result.deletedIds
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value) && value > 0)
+            .map((value) => Math.floor(value))
+        : [];
+
+      let removedCount = 0;
+      if (deletedIds.length) {
+        removedCount = removeTrashRowsByIds(type, deletedIds);
+      }
+
+      if (isDeleteAll && deletedCount > 0) {
+        removedCount = Math.max(removedCount, removeAllTrashRows(type));
+      }
+
+      if (!removedCount && deletedCount > 0) {
+        window.location.reload();
+        return;
+      }
+
+      if (isDeleteAll && failedCount > 0) {
+        window.location.reload();
+        return;
+      }
+
+      decrementTrashTotalCount(type, deletedCount);
+      ensureTrashTableEmptyState(type);
+      syncTrashSelectionUi(type);
+
+      if (failedCount > 0) {
+        showTrashInlineStatus(
+          `Đã xóa ${deletedCount} ${getTrashTypeLabel(type, true)}, còn ${failedCount} ${getTrashTypeLabel(type, true)} lỗi.`,
+          "error"
+        );
+      } else {
+        showTrashInlineStatus(`Đã xóa ${deletedCount} ${getTrashTypeLabel(type, true)}.`, "success");
+      }
+    } catch (err) {
+      const message = (err && err.message) || "Thao tác thất bại. Vui lòng thử lại.";
+      if (!showTrashInlineStatus(message, "error")) {
+        window.alert(message);
+      }
+    } finally {
+      delete form.dataset.trashBulkBusy;
+      hideLoadingOverlay();
+      if (button && button.isConnected) {
+        restoreButton(button);
+      }
+      syncTrashSelectionUi(type);
+    }
+  };
+
+  const handleTrashActionInline = async (form, submitter) => {
+    if (!form || !(form instanceof HTMLFormElement)) return;
+    if (form.dataset.trashBusy === "1") return;
+
+    const action = (form.dataset.confirmAction || "").toString().trim();
+    const isRestoreManga = action === "restore-trash-manga";
+    const isRestoreChapter = action === "restore-trash-chapter";
+    const isPurgeManga = action === "purge-trash-manga";
+    const isPurgeChapter = action === "purge-trash-chapter";
+    if (!isRestoreManga && !isRestoreChapter && !isPurgeManga && !isPurgeChapter) {
+      return;
+    }
+
+    const isRestoreAction = isRestoreManga || isRestoreChapter;
+    const type = isRestoreManga || isPurgeManga ? "manga" : "chapter";
+    const row = form.closest("tr");
+    const button =
+      submitter instanceof HTMLButtonElement ? submitter : form.querySelector("button[type='submit']");
+    const mangaTitle = (form.dataset.mangaTitle || "").toString().trim();
+    const chapterNumber = (form.dataset.chapterNumber || "").toString().trim();
+    const chapterLabel = chapterNumber ? `Chương ${chapterNumber}` : "chương";
+
+    form.dataset.trashBusy = "1";
+    if (row) {
+      row.classList.add("is-deleting");
+    }
+
+    if (isPurgeManga || isPurgeChapter) {
+      showLoadingOverlay({
+        title: isPurgeManga
+          ? `Đang xóa ${mangaTitle ? `"${mangaTitle}"` : "truyện"}...`
+          : `Đang xóa ${chapterLabel}${mangaTitle ? ` của "${mangaTitle}"` : ""}...`,
+        text: "Đang dọn dữ liệu và ảnh liên quan. Việc này có thể mất một lúc."
+      });
+    }
+
+    setButtonBusy(button, isRestoreAction ? "Đang khôi phục..." : "Đang xóa...");
+    try {
+      if (isRestoreAction) {
+        const data = await postJson(form.action);
+        if (!removeFormRow(form)) {
+          window.location.reload();
+          return;
+        }
+
+        decrementTrashTotalCount(type, 1);
+        ensureTrashTableEmptyState(type);
+        syncTrashSelectionUi(type);
+        const restoredChapterCount =
+          data && data.result && Number.isFinite(Number(data.result.restoredChapters))
+            ? Math.max(0, Math.floor(Number(data.result.restoredChapters)))
+            : 0;
+
+        const successMessage = isRestoreManga
+          ? `Đã khôi phục ${mangaTitle ? `"${mangaTitle}"` : "truyện"}${restoredChapterCount > 0 ? ` (${restoredChapterCount} chương)` : ""}.`
+          : `Đã khôi phục ${chapterLabel}${mangaTitle ? ` của "${mangaTitle}"` : ""}.`;
+
+        if (!showTrashInlineStatus(successMessage, "success")) {
+          window.alert(successMessage);
+        }
+        return;
+      }
+
+      const started = await postJson(form.action);
+      const jobId = started && typeof started.jobId === "string" ? started.jobId : "";
+      if (!jobId) {
+        throw new Error("Không theo dõi được tiến trình. Vui lòng thử lại.");
+      }
+
+      await waitForAdminJob(jobId);
+      if (!removeFormRow(form)) {
+        window.location.reload();
+        return;
+      }
+
+      decrementTrashTotalCount(type, 1);
+      ensureTrashTableEmptyState(type);
+      syncTrashSelectionUi(type);
+      const successMessage = isPurgeManga
+        ? `Đã xóa ${mangaTitle ? `"${mangaTitle}"` : "truyện"}.`
+        : `Đã xóa ${chapterLabel}${mangaTitle ? ` của "${mangaTitle}"` : ""}.`;
+
+      if (!showTrashInlineStatus(successMessage, "success")) {
+        window.alert(successMessage);
+      }
+    } catch (err) {
+      const message = (err && err.message) || "Thao tác thất bại. Vui lòng thử lại.";
+      if (!showTrashInlineStatus(message, "error")) {
+        window.alert(message);
+      }
+      if (row) {
+        row.classList.remove("is-deleting");
+      }
+    } finally {
+      delete form.dataset.trashBusy;
+      hideLoadingOverlay();
+      if (row && row.isConnected) {
+        row.classList.remove("is-deleting");
+      }
+      if (button && button.isConnected) {
+        restoreButton(button);
+      }
+      syncTrashSelectionUi(type);
+    }
+  };
+
   const deleteGenreInline = async (form, submitter) => {
     if (!form || !(form instanceof HTMLFormElement)) return;
     if (form.dataset.genreDeleting === "1") return;
@@ -959,6 +1518,43 @@
     }
 
     if (
+      (
+        action === "restore-trash-manga" ||
+        action === "restore-trash-chapter" ||
+        action === "purge-trash-manga" ||
+        action === "purge-trash-chapter"
+      ) &&
+      typeof fetch === "function"
+    ) {
+      void handleTrashActionInline(form, submitter);
+      return;
+    }
+
+    if (
+      (
+        action === "restore-trash-manga-bulk" ||
+        action === "restore-trash-chapter-bulk"
+      ) &&
+      typeof fetch === "function"
+    ) {
+      void runTrashBulkRestore(form, submitter);
+      return;
+    }
+
+    if (
+      (
+        action === "purge-trash-manga-bulk" ||
+        action === "purge-trash-chapter-bulk" ||
+        action === "purge-trash-manga-all" ||
+        action === "purge-trash-chapter-all"
+      ) &&
+      typeof fetch === "function"
+    ) {
+      void runTrashBulkDelete(form, submitter);
+      return;
+    }
+
+    if (
       (action === "delete-chapter" || action === "delete-manga" || action === "bulk-delete-chapters") &&
       typeof fetch === "function"
     ) {
@@ -1078,6 +1674,110 @@
         metaItems: [
           chapterId != null ? `ID #${chapterId}` : "",
           mangaId != null ? `Manga #${mangaId}` : "",
+          pages != null ? `${pages} trang` : ""
+        ],
+        confirmText: "Xóa",
+        confirmVariant: "danger",
+        fallbackText: "Bạn có chắc muốn xóa chương này?"
+      };
+    }
+
+    if (action === "restore-trash-manga") {
+      const mangaTitle = (form.dataset.mangaTitle || "").trim();
+      const mangaId = safeNumber(form.dataset.trashId || form.dataset.mangaId);
+      const chapterCount = safeNumber(form.dataset.trashChapterCount);
+      const titlePart = mangaTitle ? `"${mangaTitle}"` : "truyện này";
+
+      return {
+        title: "Khôi phục truyện?",
+        body:
+          `Bạn muốn khôi phục ${titlePart} từ thùng rác? ` +
+          "Hệ thống sẽ mở lại truyện và các chương đang ở trạng thái soft delete.",
+        metaItems: [
+          mangaId != null ? `ID #${mangaId}` : "",
+          chapterCount != null ? `${chapterCount} chương đã xóa` : ""
+        ],
+        confirmText: "Khôi phục",
+        confirmVariant: "default",
+        fallbackText: "Bạn có chắc muốn khôi phục truyện này?"
+      };
+    }
+
+    if (action === "restore-trash-chapter") {
+      const chapterId = safeNumber(form.dataset.trashId || form.dataset.chapterId);
+      const mangaTitle = (form.dataset.mangaTitle || "").trim();
+      const chapterNumber = normalizeChapterNumberText(form.dataset.chapterNumber || "");
+      const pages = safeNumber(form.dataset.chapterPages);
+      const chapterPart = chapterNumber ? `Chương ${chapterNumber}` : "chương này";
+
+      return {
+        title: "Khôi phục chương?",
+        body:
+          `Bạn muốn khôi phục ${chapterPart}${mangaTitle ? ` của "${mangaTitle}"` : ""} từ thùng rác? ` +
+          "Nếu có xung đột số chương đang hoạt động, hệ thống sẽ từ chối khôi phục.",
+        metaItems: [
+          chapterId != null ? `ID #${chapterId}` : "",
+          pages != null ? `${pages} trang` : ""
+        ],
+        confirmText: "Khôi phục",
+        confirmVariant: "default",
+        fallbackText: "Bạn có chắc muốn khôi phục chương này?"
+      };
+    }
+
+    if (action === "restore-trash-manga-bulk" || action === "restore-trash-chapter-bulk") {
+      const type = action === "restore-trash-manga-bulk" ? "manga" : "chapter";
+      const checkedCount = getTrashSelectedCheckboxes(type).length;
+      const itemLabel = getTrashTypeLabel(type, true);
+
+      return {
+        title: `Khôi phục hàng loạt ${itemLabel}?`,
+        body:
+          checkedCount > 0
+            ? `Bạn sắp khôi phục ${checkedCount} ${itemLabel} đã chọn trong thùng rác.`
+            : `Bạn chưa chọn ${itemLabel} nào để khôi phục.`,
+        metaItems: checkedCount > 0 ? [`${checkedCount} ${itemLabel}`] : [],
+        confirmText: "Khôi phục đã chọn",
+        confirmVariant: "default",
+        fallbackText: `Bạn có chắc muốn khôi phục các ${itemLabel} đã chọn?`
+      };
+    }
+
+    if (action === "purge-trash-manga") {
+      const mangaTitle = (form.dataset.mangaTitle || "").trim();
+      const mangaId = safeNumber(form.dataset.trashId || form.dataset.mangaId);
+      const chapterCount = safeNumber(form.dataset.trashChapterCount);
+      const titlePart = mangaTitle ? `"${mangaTitle}"` : "truyện này";
+
+      return {
+        title: "Xóa truyện?",
+        body:
+          `Bạn sắp xóa vĩnh viễn ${titlePart}. ` +
+          "Toàn bộ chương, bình luận, bookmark và dữ liệu liên quan sẽ bị dọn sạch. Không thể hoàn tác.",
+        metaItems: [
+          mangaId != null ? `ID #${mangaId}` : "",
+          chapterCount != null ? `${chapterCount} chương đã xóa` : ""
+        ],
+        confirmText: "Xóa",
+        confirmVariant: "danger",
+        fallbackText: "Bạn có chắc muốn xóa truyện này?"
+      };
+    }
+
+    if (action === "purge-trash-chapter") {
+      const chapterId = safeNumber(form.dataset.trashId || form.dataset.chapterId);
+      const mangaTitle = (form.dataset.mangaTitle || "").trim();
+      const chapterNumber = normalizeChapterNumberText(form.dataset.chapterNumber || "");
+      const pages = safeNumber(form.dataset.chapterPages);
+      const chapterPart = chapterNumber ? `Chương ${chapterNumber}` : "chương này";
+
+      return {
+        title: "Xóa chương?",
+        body:
+          `Bạn sắp xóa vĩnh viễn ${chapterPart}${mangaTitle ? ` của "${mangaTitle}"` : ""}. ` +
+          "Ảnh và dữ liệu liên quan sẽ bị dọn sạch. Không thể hoàn tác.",
+        metaItems: [
+          chapterId != null ? `ID #${chapterId}` : "",
           pages != null ? `${pages} trang` : ""
         ],
         confirmText: "Xóa",
@@ -1299,6 +1999,43 @@
       };
     }
 
+    if (action === "purge-trash-manga-bulk" || action === "purge-trash-chapter-bulk") {
+      const type = action === "purge-trash-manga-bulk" ? "manga" : "chapter";
+      const checkedCount = getTrashSelectedCheckboxes(type).length;
+      const itemLabel = getTrashTypeLabel(type, true);
+
+      return {
+        title: `Xóa hàng loạt ${itemLabel}?`,
+        body:
+          checkedCount > 0
+            ? `Bạn sắp xóa ${checkedCount} ${itemLabel} đã chọn trong thùng rác. Dữ liệu liên quan sẽ bị dọn sạch và không thể hoàn tác.`
+            : `Bạn chưa chọn ${itemLabel} nào để xóa.`,
+        metaItems: checkedCount > 0 ? [`${checkedCount} ${itemLabel}`] : [],
+        confirmText: "Xóa đã chọn",
+        confirmVariant: "danger",
+        fallbackText: `Bạn có chắc muốn xóa các ${itemLabel} đã chọn?`
+      };
+    }
+
+    if (action === "purge-trash-manga-all" || action === "purge-trash-chapter-all") {
+      const type = action === "purge-trash-manga-all" ? "manga" : "chapter";
+      const totalRaw = Number(form.dataset.trashTotal);
+      const totalCount = Number.isFinite(totalRaw) && totalRaw > 0 ? Math.floor(totalRaw) : 0;
+      const itemLabel = getTrashTypeLabel(type, true);
+
+      return {
+        title: `Xóa toàn bộ ${itemLabel}?`,
+        body:
+          totalCount > 0
+            ? `Bạn sắp xóa toàn bộ ${totalCount} ${itemLabel} trong thùng rác. Dữ liệu liên quan sẽ bị dọn sạch và không thể hoàn tác.`
+            : `Thùng rác ${itemLabel} hiện đang trống.`,
+        metaItems: totalCount > 0 ? [`${totalCount} ${itemLabel}`] : [],
+        confirmText: "Xóa toàn bộ",
+        confirmVariant: "danger",
+        fallbackText: `Bạn có chắc muốn xóa toàn bộ ${itemLabel} trong thùng rác?`
+      };
+    }
+
     if (action === "save-badge") {
       const badgeId = safeNumber(form.dataset.badgeId);
       const formId = (form.getAttribute("id") || "").toString().trim();
@@ -1490,6 +2227,30 @@
     return openConfirm({ form, submitter: event.submitter }, config);
   });
 
+  document.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+
+    if (target.matches("[data-trash-select-all]")) {
+      const type = getTrashTypeFromElement(target);
+      if (!type) return;
+
+      const shouldCheck = Boolean(target.checked);
+      getTrashSelectionCheckboxes(type).forEach((input) => {
+        if (input.disabled) return;
+        input.checked = shouldCheck;
+      });
+      syncTrashSelectionUi(type);
+      return;
+    }
+
+    if (target.matches("[data-trash-select]")) {
+      const type = getTrashTypeFromElement(target);
+      if (!type) return;
+      syncTrashSelectionUi(type);
+    }
+  });
+
   const closeDialog = () => {
     if (!supportsDialog) return;
     if (!dialog) return;
@@ -1539,6 +2300,8 @@
       }
     });
   }
+
+  syncAllTrashSelectionUi();
 })();
 
 (() => {

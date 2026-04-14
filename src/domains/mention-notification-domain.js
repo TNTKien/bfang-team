@@ -773,6 +773,26 @@ const getUnreadNotificationCount = async (userId, options = {}) => {
       FROM notifications
       WHERE user_id = ?
         AND is_read = false
+        AND (
+          manga_id IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM manga m
+            WHERE m.id = notifications.manga_id
+              AND COALESCE(m.is_deleted, false) = false
+          )
+        )
+        AND (
+          chapter_number IS NULL
+          OR manga_id IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM chapters c
+            WHERE c.manga_id = notifications.manga_id
+              AND c.number = notifications.chapter_number
+              AND COALESCE(c.is_deleted, false) = false
+          )
+        )
         AND ${channelFilter.sql}
     `,
     [id, ...channelFilter.params]

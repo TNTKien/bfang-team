@@ -30,6 +30,7 @@
     "db:manga:slugs:migrate": "node scripts/migrate-manga-slugs.js",
     "db:forum:repair": "node scripts/repair-forum-storage.js",
     "db:forum:repair:apply": "node scripts/repair-forum-storage.js --apply",
+    "db:purge:deleted": "node scripts/purge-soft-deleted.js",
     "media:sync:s3": "node scripts/sync-media-to-s3.js",
     "media:sync:s3:apply": "node scripts/sync-media-to-s3.js --apply",
     "db:bootstrap": "node scripts/db-bootstrap.js",

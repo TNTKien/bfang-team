@@ -111,6 +111,8 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     uploadChapterPage,
     uploadChapterPages,
     uploadCover,
+    softDeleteChapter,
+    softDeleteManga,
     wantsJson,
     withTransaction,
     writeNotificationStreamEvent,
@@ -1064,6 +1066,12 @@ const sendTeamManageForbidden = (req, res, message = "Bạn không có quyền t
   return res.status(403).send(message);
 };
 
+const ensureFullAdminTrashAccess = (req, res) => {
+  if (!getTeamLeaderScope(req)) return true;
+  sendTeamManageForbidden(req, res, "Chỉ admin tổng mới có quyền dùng Thùng rác.");
+  return false;
+};
+
 const teamLeaderMangaGuard = asyncHandler(async (req, res, next) => {
   const scope = getTeamLeaderScope(req);
   if (!scope) return next();
@@ -1073,7 +1081,7 @@ const teamLeaderMangaGuard = asyncHandler(async (req, res, next) => {
     return sendTeamManageForbidden(req, res, "Mã truyện không hợp lệ.");
   }
 
-  const mangaRow = await dbGet("SELECT id, group_name FROM manga WHERE id = ?", [
+  const mangaRow = await dbGet("SELECT id, group_name FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false", [
     Math.floor(mangaId)
   ]);
   const scopeOwnsManga = await isMangaLinkedToTeam({
@@ -1108,6 +1116,8 @@ const teamLeaderChapterGuard = asyncHandler(async (req, res, next) => {
       FROM chapters c
       JOIN manga m ON m.id = c.manga_id
       WHERE c.id = ?
+        AND COALESCE(c.is_deleted, false) = false
+        AND COALESCE(m.is_deleted, false) = false
       LIMIT 1
     `,
     [Math.floor(chapterId)]
@@ -1141,9 +1151,9 @@ const teamLeaderDraftGuard = asyncHandler(async (req, res, next) => {
   }
 
   const mangaRow = await dbGet(
-    "SELECT id, group_name FROM manga WHERE id = ? LIMIT 1",
-    [Number(draftRow.manga_id)]
-  );
+      "SELECT id, group_name FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false LIMIT 1",
+      [Number(draftRow.manga_id)]
+    );
   const scopeOwnsManga = mangaRow
     ? await isMangaLinkedToTeam({ mangaId: mangaRow.id, teamId: scope.teamId })
     : false;
@@ -1383,9 +1393,24 @@ app.get(
     const statsRow = await dbGet(
       `
         SELECT
-          (SELECT COUNT(*) FROM manga) AS manga_count,
-          (SELECT COUNT(*) FROM chapters) AS chapter_count,
-          (SELECT COUNT(*) FROM comments) AS comment_count,
+          (SELECT COUNT(*) FROM manga WHERE COALESCE(is_deleted, false) = false) AS manga_count,
+          (SELECT COUNT(*) FROM chapters WHERE COALESCE(is_deleted, false) = false) AS chapter_count,
+          (
+            SELECT COUNT(*)
+            FROM comments c
+            JOIN manga m ON m.id = c.manga_id
+            WHERE COALESCE(m.is_deleted, false) = false
+              AND (
+                c.chapter_number IS NULL
+                OR EXISTS (
+                  SELECT 1
+                  FROM chapters c_scope
+                  WHERE c_scope.manga_id = c.manga_id
+                    AND c_scope.number = c.chapter_number
+                    AND COALESCE(c_scope.is_deleted, false) = false
+                )
+              )
+          ) AS comment_count,
           (SELECT COUNT(*) FROM users) AS member_count
       `
     );
@@ -1397,6 +1422,17 @@ app.get(
       JOIN manga m ON m.id = c.manga_id
       WHERE COALESCE(c.client_request_id, '') NOT ILIKE ?
         AND COALESCE(c.content, '') NOT ILIKE ?
+        AND COALESCE(m.is_deleted, false) = false
+        AND (
+          c.chapter_number IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM chapters c_scope
+            WHERE c_scope.manga_id = c.manga_id
+              AND c_scope.number = c.chapter_number
+              AND COALESCE(c_scope.is_deleted, false) = false
+          )
+        )
       ORDER BY c.created_at DESC
       LIMIT 5
     `,
@@ -1419,6 +1455,1077 @@ app.get(
 );
 
 app.get(
+  "/admin/trash",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+
+    const deletedMangaCountRow = await dbGet(
+      `
+        SELECT COUNT(*) AS count
+        FROM manga
+        WHERE COALESCE(is_deleted, false) = true
+      `
+    );
+    const mangaPagination = resolvePaginationParams({
+      pageInput: req.query.mangaPage,
+      perPageInput: req.query.mangaPerPage,
+      defaultPerPage: 30,
+      maxPerPage: 30,
+      totalCount: deletedMangaCountRow && deletedMangaCountRow.count ? Number(deletedMangaCountRow.count) : 0
+    });
+
+    const deletedManga = await dbAll(
+      `
+        SELECT
+          m.id,
+          m.title,
+          m.slug,
+          m.author,
+          m.group_name,
+          COALESCE(m.deleted_at, 0) AS deleted_at,
+          COUNT(c.id) FILTER (WHERE COALESCE(c.is_deleted, false) = true) AS deleted_chapter_count
+        FROM manga m
+        LEFT JOIN chapters c ON c.manga_id = m.id
+        WHERE COALESCE(m.is_deleted, false) = true
+        GROUP BY m.id
+        ORDER BY COALESCE(m.deleted_at, 0) DESC, m.id DESC
+        LIMIT ? OFFSET ?
+      `
+      ,
+      [mangaPagination.perPage, mangaPagination.offset]
+    );
+
+    const deletedChapterCountRow = await dbGet(
+      `
+        SELECT COUNT(*) AS count
+        FROM chapters c
+        JOIN manga m ON m.id = c.manga_id
+        WHERE COALESCE(c.is_deleted, false) = true
+          AND COALESCE(m.is_deleted, false) = false
+      `
+    );
+    const chapterPagination = resolvePaginationParams({
+      pageInput: req.query.chapterPage,
+      perPageInput: req.query.chapterPerPage,
+      defaultPerPage: 30,
+      maxPerPage: 30,
+      totalCount: deletedChapterCountRow && deletedChapterCountRow.count
+        ? Number(deletedChapterCountRow.count)
+        : 0
+    });
+
+    const parsePositiveIntQuery = (value) => {
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed)) return null;
+      if (parsed <= 0) return 1;
+      return Math.floor(parsed);
+    };
+
+    const hasMangaPageParam = typeof req.query.mangaPage === "string" && req.query.mangaPage.trim();
+    const hasMangaPerPageParam = typeof req.query.mangaPerPage === "string" && req.query.mangaPerPage.trim();
+    const hasChapterPageParam = typeof req.query.chapterPage === "string" && req.query.chapterPage.trim();
+    const hasChapterPerPageParam = typeof req.query.chapterPerPage === "string" && req.query.chapterPerPage.trim();
+
+    const requestedMangaPage = parsePositiveIntQuery(req.query.mangaPage);
+    const requestedChapterPage = parsePositiveIntQuery(req.query.chapterPage);
+
+    const shouldNormalizeMangaPage =
+      hasMangaPageParam
+      && (
+        requestedMangaPage == null
+        || requestedMangaPage !== mangaPagination.page
+        || mangaPagination.page <= 1
+      );
+    const shouldNormalizeChapterPage =
+      hasChapterPageParam
+      && (
+        requestedChapterPage == null
+        || requestedChapterPage !== chapterPagination.page
+        || chapterPagination.page <= 1
+      );
+
+    const shouldNormalizeTrashQuery = Boolean(
+      hasMangaPerPageParam
+      || hasChapterPerPageParam
+      || shouldNormalizeMangaPage
+      || shouldNormalizeChapterPage
+    );
+
+    if (shouldNormalizeTrashQuery) {
+      const normalizedParams = new URLSearchParams();
+      if (mangaPagination.page > 1) {
+        normalizedParams.set("mangaPage", String(mangaPagination.page));
+      }
+      if (chapterPagination.page > 1) {
+        normalizedParams.set("chapterPage", String(chapterPagination.page));
+      }
+      const normalizedHref = normalizedParams.toString()
+        ? `/admin/trash?${normalizedParams.toString()}`
+        : "/admin/trash";
+      return res.redirect(normalizedHref);
+    }
+
+    const deletedChapters = await dbAll(
+      `
+        SELECT
+          c.id,
+          c.manga_id,
+          c.number,
+          c.title,
+          c.pages,
+          COALESCE(c.deleted_at, 0) AS deleted_at,
+          m.title AS manga_title,
+          m.slug AS manga_slug
+        FROM chapters c
+        JOIN manga m ON m.id = c.manga_id
+        WHERE COALESCE(c.is_deleted, false) = true
+          AND COALESCE(m.is_deleted, false) = false
+        ORDER BY COALESCE(c.deleted_at, 0) DESC, c.id DESC
+        LIMIT ? OFFSET ?
+      `,
+      [chapterPagination.perPage, chapterPagination.offset]
+    );
+
+    res.render("admin/trash", {
+      title: "Thùng rác",
+      adminUser: adminConfig.user,
+      deletedManga,
+      deletedChapters,
+      mangaPagination,
+      chapterPagination,
+    });
+  })
+);
+
+app.post(
+  "/admin/trash/manga/:id/restore",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const mangaId = Number(req.params.id);
+    if (!Number.isFinite(mangaId) || mangaId <= 0) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy truyện trong thùng rác." });
+    }
+
+    const safeMangaId = Math.floor(mangaId);
+    const mangaRow = await dbGet(
+      "SELECT id FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = true LIMIT 1",
+      [safeMangaId]
+    );
+    if (!mangaRow) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy truyện trong thùng rác." });
+    }
+
+    try {
+      const restoreResult = await runAdminTransaction(async ({ dbRun: txRun }) => {
+        const restoredManga = await txRun(
+          `
+            UPDATE manga
+            SET
+              is_deleted = false,
+              deleted_at = NULL
+            WHERE id = ?
+              AND COALESCE(is_deleted, false) = true
+          `,
+          [safeMangaId]
+        );
+
+        const restoredChapters = await txRun(
+          `
+            UPDATE chapters
+            SET
+              is_deleted = false,
+              deleted_at = NULL,
+              processing_state = CASE
+                WHEN COALESCE(processing_state, '') = 'deleted' THEN NULL
+                ELSE processing_state
+              END
+            WHERE manga_id = ?
+              AND COALESCE(is_deleted, false) = true
+          `,
+          [safeMangaId]
+        );
+
+        return {
+          restoredManga: Number(restoredManga && restoredManga.changes) || 0,
+          restoredChapters: Number(restoredChapters && restoredChapters.changes) || 0,
+        };
+      });
+
+      return res.json({ ok: true, result: restoreResult });
+    } catch (err) {
+      if (err && err.code === "23505") {
+        return res.status(409).json({
+          ok: false,
+          error: "Khôi phục thất bại do dữ liệu chương bị trùng với dữ liệu hiện tại."
+        });
+      }
+      return res.status(500).json({ ok: false, error: normalizeAdminJobError(err) });
+    }
+  })
+);
+
+app.post(
+  "/admin/trash/chapters/:id/restore",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const chapterId = Number(req.params.id);
+    if (!Number.isFinite(chapterId) || chapterId <= 0) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy chương trong thùng rác." });
+    }
+
+    const safeChapterId = Math.floor(chapterId);
+    const chapterRow = await dbGet(
+      `
+        SELECT
+          c.id,
+          c.manga_id,
+          c.number,
+          COALESCE(m.is_deleted, false) AS manga_is_deleted
+        FROM chapters c
+        JOIN manga m ON m.id = c.manga_id
+        WHERE c.id = ?
+          AND COALESCE(c.is_deleted, false) = true
+        LIMIT 1
+      `,
+      [safeChapterId]
+    );
+    if (!chapterRow) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy chương trong thùng rác." });
+    }
+
+    if (toBooleanFlag(chapterRow.manga_is_deleted)) {
+      return res.status(409).json({
+        ok: false,
+        error: "Truyện gốc đang ở thùng rác. Hãy khôi phục truyện trước khi khôi phục chương riêng lẻ."
+      });
+    }
+
+    const duplicateRow = await dbGet(
+      `
+        SELECT id
+        FROM chapters
+        WHERE manga_id = ?
+          AND number = ?
+          AND id <> ?
+          AND COALESCE(is_deleted, false) = false
+        LIMIT 1
+      `,
+      [chapterRow.manga_id, chapterRow.number, safeChapterId]
+    );
+    if (duplicateRow) {
+      return res.status(409).json({
+        ok: false,
+        error: "Không thể khôi phục vì đã có chương cùng số trong truyện này."
+      });
+    }
+
+      try {
+        await runAdminTransaction(async ({ dbRun: txRun }) => {
+          await txRun(
+            `
+              UPDATE chapters
+            SET
+              is_deleted = false,
+              deleted_at = NULL,
+              processing_state = CASE
+                WHEN COALESCE(processing_state, '') = 'deleted' THEN NULL
+                ELSE processing_state
+              END
+            WHERE id = ?
+              AND COALESCE(is_deleted, false) = true
+            `,
+            [safeChapterId]
+          );
+        });
+
+      return res.json({ ok: true, result: { mangaId: Number(chapterRow.manga_id) || 0 } });
+    } catch (err) {
+      if (err && err.code === "23505") {
+        return res.status(409).json({ ok: false, error: "Không thể khôi phục vì dữ liệu bị trùng." });
+      }
+      return res.status(500).json({ ok: false, error: normalizeAdminJobError(err) });
+    }
+  })
+);
+
+app.post(
+  "/admin/trash/manga/bulk-restore",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const rawIds = Array.isArray(req.body.manga_ids)
+      ? req.body.manga_ids
+      : req.body.manga_ids != null
+        ? [req.body.manga_ids]
+        : [];
+
+    const mangaIds = Array.from(
+      new Set(
+        rawIds
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.floor(value))
+      )
+    );
+
+    if (!mangaIds.length) {
+      return res.status(400).json({ ok: false, error: "Vui lòng chọn ít nhất một truyện để khôi phục." });
+    }
+
+    const placeholders = mangaIds.map(() => "?").join(",");
+    const existingRows = await dbAll(
+      `
+        SELECT id
+        FROM manga
+        WHERE COALESCE(is_deleted, false) = true
+          AND id IN (${placeholders})
+      `,
+      mangaIds
+    );
+
+    const validIds = (Array.isArray(existingRows) ? existingRows : [])
+      .map((row) => Number(row && row.id))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value));
+
+    if (!validIds.length) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy truyện hợp lệ trong thùng rác." });
+    }
+
+    let restoredCount = 0;
+    let failedCount = 0;
+    const restoredIds = [];
+    const failedIds = [];
+    let restoredChaptersTotal = 0;
+    let firstErrorMessage = "";
+
+    for (const mangaId of validIds) {
+      try {
+        const restoreResult = await runAdminTransaction(async ({ dbRun: txRun }) => {
+          const restoredManga = await txRun(
+            `
+              UPDATE manga
+              SET
+                is_deleted = false,
+                deleted_at = NULL
+              WHERE id = ?
+                AND COALESCE(is_deleted, false) = true
+            `,
+            [mangaId]
+          );
+
+          const restoredChapters = await txRun(
+            `
+              UPDATE chapters
+              SET
+                is_deleted = false,
+                deleted_at = NULL,
+                processing_state = CASE
+                  WHEN COALESCE(processing_state, '') = 'deleted' THEN NULL
+                  ELSE processing_state
+                END
+              WHERE manga_id = ?
+                AND COALESCE(is_deleted, false) = true
+            `,
+            [mangaId]
+          );
+
+          return {
+            restoredManga: Number(restoredManga && restoredManga.changes) || 0,
+            restoredChapters: Number(restoredChapters && restoredChapters.changes) || 0,
+          };
+        });
+
+        if (!restoreResult.restoredManga) {
+          failedCount += 1;
+          failedIds.push(mangaId);
+          continue;
+        }
+
+        restoredCount += 1;
+        restoredIds.push(mangaId);
+        restoredChaptersTotal += Math.max(0, Number(restoreResult.restoredChapters) || 0);
+      } catch (err) {
+        failedCount += 1;
+        failedIds.push(mangaId);
+        const message = (err && err.message ? String(err.message) : "").trim();
+        if (!firstErrorMessage && message) {
+          firstErrorMessage = message;
+        }
+      }
+    }
+
+    if (!restoredCount) {
+      return res.status(500).json({
+        ok: false,
+        error: firstErrorMessage || "Không thể khôi phục các truyện đã chọn."
+      });
+    }
+
+    return res.json({
+      ok: true,
+      result: {
+        restoredCount,
+        failedCount,
+        restoredIds,
+        failedIds,
+        restoredChapters: restoredChaptersTotal
+      }
+    });
+  })
+);
+
+app.post(
+  "/admin/trash/chapters/bulk-restore",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const rawIds = Array.isArray(req.body.chapter_ids)
+      ? req.body.chapter_ids
+      : req.body.chapter_ids != null
+        ? [req.body.chapter_ids]
+        : [];
+
+    const chapterIds = Array.from(
+      new Set(
+        rawIds
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.floor(value))
+      )
+    );
+
+    if (!chapterIds.length) {
+      return res.status(400).json({ ok: false, error: "Vui lòng chọn ít nhất một chương để khôi phục." });
+    }
+
+    const placeholders = chapterIds.map(() => "?").join(",");
+    const rows = await dbAll(
+      `
+        SELECT
+          c.id,
+          c.manga_id,
+          c.number,
+          COALESCE(m.is_deleted, false) AS manga_is_deleted
+        FROM chapters c
+        JOIN manga m ON m.id = c.manga_id
+        WHERE COALESCE(c.is_deleted, false) = true
+          AND c.id IN (${placeholders})
+      `,
+      chapterIds
+    );
+
+    const validRows = (Array.isArray(rows) ? rows : [])
+      .map((row) => ({
+        id: Number(row && row.id),
+        mangaId: Number(row && row.manga_id),
+        number: row && row.number,
+        mangaIsDeleted: toBooleanFlag(row && row.manga_is_deleted)
+      }))
+      .filter((row) => Number.isFinite(row.id) && row.id > 0 && Number.isFinite(row.mangaId) && row.mangaId > 0)
+      .map((row) => ({ ...row, id: Math.floor(row.id), mangaId: Math.floor(row.mangaId) }));
+
+    if (!validRows.length) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy chương hợp lệ trong thùng rác." });
+    }
+
+    let restoredCount = 0;
+    let failedCount = 0;
+    const restoredIds = [];
+    const failedIds = [];
+    let firstErrorMessage = "";
+
+    for (const chapterRow of validRows) {
+      if (chapterRow.mangaIsDeleted) {
+        failedCount += 1;
+        failedIds.push(chapterRow.id);
+        continue;
+      }
+
+      try {
+        const duplicateRow = await dbGet(
+          `
+            SELECT id
+            FROM chapters
+            WHERE manga_id = ?
+              AND number = ?
+              AND id <> ?
+              AND COALESCE(is_deleted, false) = false
+            LIMIT 1
+          `,
+          [chapterRow.mangaId, chapterRow.number, chapterRow.id]
+        );
+        if (duplicateRow) {
+          failedCount += 1;
+          failedIds.push(chapterRow.id);
+          continue;
+        }
+
+        await runAdminTransaction(async ({ dbRun: txRun }) => {
+          await txRun(
+            `
+              UPDATE chapters
+              SET
+                is_deleted = false,
+                deleted_at = NULL,
+                processing_state = CASE
+                  WHEN COALESCE(processing_state, '') = 'deleted' THEN NULL
+                  ELSE processing_state
+                END
+              WHERE id = ?
+              AND COALESCE(is_deleted, false) = true
+            `,
+            [chapterRow.id]
+          );
+        });
+
+        restoredCount += 1;
+        restoredIds.push(chapterRow.id);
+      } catch (err) {
+        failedCount += 1;
+        failedIds.push(chapterRow.id);
+        const message = (err && err.message ? String(err.message) : "").trim();
+        if (!firstErrorMessage && message) {
+          firstErrorMessage = message;
+        }
+      }
+    }
+
+    if (!restoredCount) {
+      return res.status(500).json({
+        ok: false,
+        error: firstErrorMessage || "Không thể khôi phục các chương đã chọn."
+      });
+    }
+
+    return res.json({
+      ok: true,
+      result: {
+        restoredCount,
+        failedCount,
+        restoredIds,
+        failedIds
+      }
+    });
+  })
+);
+
+app.post(
+  "/admin/trash/manga/:id/delete-permanent",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const mangaId = Number(req.params.id);
+    if (!Number.isFinite(mangaId) || mangaId <= 0) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy truyện trong thùng rác." });
+    }
+    const safeMangaId = Math.floor(mangaId);
+
+    const mangaRow = await dbGet(
+      "SELECT id FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = true LIMIT 1",
+      [safeMangaId]
+    );
+    if (!mangaRow) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy truyện trong thùng rác." });
+    }
+
+    const jobId = createAdminJob({
+      type: "purge-manga",
+      run: async () => {
+        const currentRow = await dbGet(
+          "SELECT id FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = true LIMIT 1",
+          [safeMangaId]
+        );
+        if (!currentRow) {
+          throw new Error("Truyện không còn trong thùng rác.");
+        }
+        await deleteMangaAndCleanupStorage(safeMangaId);
+        return { mangaId: safeMangaId };
+      }
+    });
+    return res.json({ ok: true, jobId });
+  })
+);
+
+app.post(
+  "/admin/trash/chapters/:id/delete-permanent",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const chapterId = Number(req.params.id);
+    if (!Number.isFinite(chapterId) || chapterId <= 0) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy chương trong thùng rác." });
+    }
+    const safeChapterId = Math.floor(chapterId);
+
+    const chapterRow = await dbGet(
+      "SELECT id FROM chapters WHERE id = ? AND COALESCE(is_deleted, false) = true LIMIT 1",
+      [safeChapterId]
+    );
+    if (!chapterRow) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy chương trong thùng rác." });
+    }
+
+    const jobId = createAdminJob({
+      type: "purge-chapter",
+      run: async () => {
+        const currentRow = await dbGet(
+          "SELECT id FROM chapters WHERE id = ? AND COALESCE(is_deleted, false) = true LIMIT 1",
+          [safeChapterId]
+        );
+        if (!currentRow) {
+          throw new Error("Chương không còn trong thùng rác.");
+        }
+        const result = await deleteChapterAndCleanupStorage(safeChapterId);
+        return {
+          chapterId: safeChapterId,
+          mangaId: Number(result && result.mangaId) || 0,
+        };
+      }
+    });
+    return res.json({ ok: true, jobId });
+  })
+);
+
+app.post(
+  "/admin/trash/manga/bulk-delete-permanent",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const rawIds = Array.isArray(req.body.manga_ids)
+      ? req.body.manga_ids
+      : req.body.manga_ids != null
+        ? [req.body.manga_ids]
+        : [];
+
+    const mangaIds = Array.from(
+      new Set(
+        rawIds
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.floor(value))
+      )
+    );
+
+    if (!mangaIds.length) {
+      return res.status(400).json({ ok: false, error: "Vui lòng chọn ít nhất một truyện để xóa hoàn toàn." });
+    }
+
+    const placeholders = mangaIds.map(() => "?").join(",");
+    const existingRows = await dbAll(
+      `
+        SELECT id
+        FROM manga
+        WHERE COALESCE(is_deleted, false) = true
+          AND id IN (${placeholders})
+      `,
+      mangaIds
+    );
+
+    const validIds = (Array.isArray(existingRows) ? existingRows : [])
+      .map((row) => Number(row && row.id))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value));
+
+    if (!validIds.length) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy truyện hợp lệ trong thùng rác." });
+    }
+
+    const jobIds = [...validIds];
+    const jobId = createAdminJob({
+      type: "purge-trash-manga-bulk",
+      run: async () => {
+        let deletedCount = 0;
+        let failedCount = 0;
+        const deletedIds = [];
+        const failedIds = [];
+        let firstErrorMessage = "";
+
+        for (const mangaId of jobIds) {
+          try {
+            const currentRow = await dbGet(
+              "SELECT id FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = true LIMIT 1",
+              [mangaId]
+            );
+            if (!currentRow) {
+              failedCount += 1;
+              failedIds.push(mangaId);
+              continue;
+            }
+
+            await deleteMangaAndCleanupStorage(mangaId);
+            deletedCount += 1;
+            deletedIds.push(mangaId);
+          } catch (err) {
+            failedCount += 1;
+            failedIds.push(mangaId);
+            const message = (err && err.message ? String(err.message) : "").trim();
+            if (!firstErrorMessage && message) {
+              firstErrorMessage = message;
+            }
+            console.warn("Bulk trash manga purge failed", {
+              mangaId,
+              message: message || "unknown"
+            });
+          }
+        }
+
+        if (!deletedCount) {
+          throw new Error(firstErrorMessage || "Không thể xóa hoàn toàn các truyện đã chọn.");
+        }
+
+        return {
+          deletedCount,
+          failedCount,
+          deletedIds,
+          failedIds
+        };
+      }
+    });
+
+    return res.json({ ok: true, jobId });
+  })
+);
+
+app.post(
+  "/admin/trash/chapters/bulk-delete-permanent",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const rawIds = Array.isArray(req.body.chapter_ids)
+      ? req.body.chapter_ids
+      : req.body.chapter_ids != null
+        ? [req.body.chapter_ids]
+        : [];
+
+    const chapterIds = Array.from(
+      new Set(
+        rawIds
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.floor(value))
+      )
+    );
+
+    if (!chapterIds.length) {
+      return res.status(400).json({ ok: false, error: "Vui lòng chọn ít nhất một chương để xóa hoàn toàn." });
+    }
+
+    const placeholders = chapterIds.map(() => "?").join(",");
+    const existingRows = await dbAll(
+      `
+        SELECT c.id
+        FROM chapters c
+        JOIN manga m ON m.id = c.manga_id
+        WHERE COALESCE(c.is_deleted, false) = true
+          AND COALESCE(m.is_deleted, false) = false
+          AND c.id IN (${placeholders})
+      `,
+      chapterIds
+    );
+
+    const validIds = (Array.isArray(existingRows) ? existingRows : [])
+      .map((row) => Number(row && row.id))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value));
+
+    if (!validIds.length) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy chương hợp lệ trong thùng rác." });
+    }
+
+    const jobIds = [...validIds];
+    const jobId = createAdminJob({
+      type: "purge-trash-chapter-bulk",
+      run: async () => {
+        let deletedCount = 0;
+        let failedCount = 0;
+        const deletedIds = [];
+        const failedIds = [];
+        let firstErrorMessage = "";
+
+        for (const chapterId of jobIds) {
+          try {
+            const currentRow = await dbGet(
+              `
+                SELECT c.id
+                FROM chapters c
+                JOIN manga m ON m.id = c.manga_id
+                WHERE c.id = ?
+                  AND COALESCE(c.is_deleted, false) = true
+                  AND COALESCE(m.is_deleted, false) = false
+                LIMIT 1
+              `,
+              [chapterId]
+            );
+            if (!currentRow) {
+              failedCount += 1;
+              failedIds.push(chapterId);
+              continue;
+            }
+
+            await deleteChapterAndCleanupStorage(chapterId);
+            deletedCount += 1;
+            deletedIds.push(chapterId);
+          } catch (err) {
+            failedCount += 1;
+            failedIds.push(chapterId);
+            const message = (err && err.message ? String(err.message) : "").trim();
+            if (!firstErrorMessage && message) {
+              firstErrorMessage = message;
+            }
+            console.warn("Bulk trash chapter purge failed", {
+              chapterId,
+              message: message || "unknown"
+            });
+          }
+        }
+
+        if (!deletedCount) {
+          throw new Error(firstErrorMessage || "Không thể xóa hoàn toàn các chương đã chọn.");
+        }
+
+        return {
+          deletedCount,
+          failedCount,
+          deletedIds,
+          failedIds
+        };
+      }
+    });
+
+    return res.json({ ok: true, jobId });
+  })
+);
+
+app.post(
+  "/admin/trash/manga/delete-all-permanent",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const rows = await dbAll(
+      `
+        SELECT id
+        FROM manga
+        WHERE COALESCE(is_deleted, false) = true
+        ORDER BY COALESCE(deleted_at, 0) DESC, id DESC
+      `
+    );
+
+    const ids = (Array.isArray(rows) ? rows : [])
+      .map((row) => Number(row && row.id))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value));
+
+    if (!ids.length) {
+      return res.status(400).json({ ok: false, error: "Không còn truyện nào trong thùng rác." });
+    }
+
+    const jobId = createAdminJob({
+      type: "purge-trash-manga-all",
+      run: async () => {
+        let deletedCount = 0;
+        let failedCount = 0;
+        const deletedIds = [];
+        const failedIds = [];
+        let firstErrorMessage = "";
+
+        for (const mangaId of ids) {
+          try {
+            const currentRow = await dbGet(
+              "SELECT id FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = true LIMIT 1",
+              [mangaId]
+            );
+            if (!currentRow) {
+              continue;
+            }
+            await deleteMangaAndCleanupStorage(mangaId);
+            deletedCount += 1;
+            deletedIds.push(mangaId);
+          } catch (err) {
+            failedCount += 1;
+            failedIds.push(mangaId);
+            const message = (err && err.message ? String(err.message) : "").trim();
+            if (!firstErrorMessage && message) {
+              firstErrorMessage = message;
+            }
+            console.warn("Trash manga delete-all item failed", {
+              mangaId,
+              message: message || "unknown"
+            });
+          }
+        }
+
+        if (!deletedCount) {
+          throw new Error(firstErrorMessage || "Không thể xóa hoàn toàn truyện trong thùng rác.");
+        }
+
+        return {
+          deletedCount,
+          failedCount,
+          deletedIds,
+          failedIds
+        };
+      }
+    });
+
+    return res.json({ ok: true, jobId });
+  })
+);
+
+app.post(
+  "/admin/trash/chapters/delete-all-permanent",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!ensureFullAdminTrashAccess(req, res)) {
+      return;
+    }
+    if (!wantsJson(req)) {
+      return res.status(406).send("Yêu cầu JSON.");
+    }
+
+    const rows = await dbAll(
+      `
+        SELECT c.id
+        FROM chapters c
+        JOIN manga m ON m.id = c.manga_id
+        WHERE COALESCE(c.is_deleted, false) = true
+          AND COALESCE(m.is_deleted, false) = false
+        ORDER BY COALESCE(c.deleted_at, 0) DESC, c.id DESC
+      `
+    );
+
+    const ids = (Array.isArray(rows) ? rows : [])
+      .map((row) => Number(row && row.id))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value));
+
+    if (!ids.length) {
+      return res.status(400).json({ ok: false, error: "Không còn chương nào trong thùng rác." });
+    }
+
+    const jobId = createAdminJob({
+      type: "purge-trash-chapter-all",
+      run: async () => {
+        let deletedCount = 0;
+        let failedCount = 0;
+        const deletedIds = [];
+        const failedIds = [];
+        let firstErrorMessage = "";
+
+        for (const chapterId of ids) {
+          try {
+            const currentRow = await dbGet(
+              `
+                SELECT c.id
+                FROM chapters c
+                JOIN manga m ON m.id = c.manga_id
+                WHERE c.id = ?
+                  AND COALESCE(c.is_deleted, false) = true
+                  AND COALESCE(m.is_deleted, false) = false
+                LIMIT 1
+              `,
+              [chapterId]
+            );
+            if (!currentRow) {
+              continue;
+            }
+            await deleteChapterAndCleanupStorage(chapterId);
+            deletedCount += 1;
+            deletedIds.push(chapterId);
+          } catch (err) {
+            failedCount += 1;
+            failedIds.push(chapterId);
+            const message = (err && err.message ? String(err.message) : "").trim();
+            if (!firstErrorMessage && message) {
+              firstErrorMessage = message;
+            }
+            console.warn("Trash chapter delete-all item failed", {
+              chapterId,
+              message: message || "unknown"
+            });
+          }
+        }
+
+        if (!deletedCount) {
+          throw new Error(firstErrorMessage || "Không thể xóa hoàn toàn chương trong thùng rác.");
+        }
+
+        return {
+          deletedCount,
+          failedCount,
+          deletedIds,
+          failedIds
+        };
+      }
+    });
+
+    return res.json({ ok: true, jobId });
+  })
+);
+
+app.get(
   "/admin/homepage",
   requireAdmin,
   asyncHandler(async (req, res) => {
@@ -1429,7 +2536,7 @@ app.get(
       ? homepageData.featuredIds.slice(0, 4)
       : await getDefaultFeaturedIds();
     const mangaRows = await dbAll(
-      `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 ${listQueryOrder}`
+      `${listQueryBase} WHERE COALESCE(m.is_hidden, 0) = 0 AND COALESCE(m.is_deleted, false) = false ${listQueryOrder}`
     );
 
     res.render("admin/homepage", {
@@ -1467,7 +2574,7 @@ app.post(
     if (featuredIds.length > 0) {
       const placeholders = featuredIds.map(() => "?").join(",");
       const visibleRows = await dbAll(
-        `SELECT id FROM manga WHERE id IN (${placeholders}) AND COALESCE(is_hidden, 0) = 0`,
+        `SELECT id FROM manga WHERE id IN (${placeholders}) AND COALESCE(is_hidden, 0) = 0 AND COALESCE(is_deleted, false) = false`,
         featuredIds
       );
       const visibleIdSet = new Set(
@@ -1575,6 +2682,8 @@ app.get(
       conditions.push(buildMangaLinkedTeamExistsSql("m"));
       params.push(teamManageScope.teamId);
     }
+
+    conditions.push("COALESCE(m.is_deleted, false) = false");
 
     const qNormalized = q.replace(/^#/, "").trim();
     const qId = /^\d+$/.test(qNormalized) ? Number(qNormalized) : null;
@@ -1984,7 +3093,7 @@ app.get(
       });
     }
 
-    const mangaRow = await dbGet("SELECT * FROM manga WHERE id = ?", [Math.floor(mangaId)]);
+    const mangaRow = await dbGet("SELECT * FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false", [Math.floor(mangaId)]);
     if (!mangaRow) {
       return res.status(404).render("not-found", {
         title: "Không tìm thấy",
@@ -2093,7 +3202,7 @@ app.post(
     }
 
     const mangaRow = await dbGet(
-      "SELECT id, cover, cover_updated_at, COALESCE(is_oneshot, false) as is_oneshot, COALESCE(oneshot_locked, false) as oneshot_locked FROM manga WHERE id = ?",
+      "SELECT id, cover, cover_updated_at, COALESCE(is_oneshot, false) as is_oneshot, COALESCE(oneshot_locked, false) as oneshot_locked FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false",
       [Math.floor(mangaId)]
     );
     if (!mangaRow) {
@@ -2122,7 +3231,7 @@ app.post(
     const requestOneshot = String(req.body.is_oneshot || "").trim() === "1";
     const currentIsOneshot = toBooleanFlag(mangaRow.is_oneshot);
     const currentOneshotLocked = toBooleanFlag(mangaRow.oneshot_locked);
-    const chapterCountRow = await dbGet("SELECT COUNT(*) as count FROM chapters WHERE manga_id = ?", [
+    const chapterCountRow = await dbGet("SELECT COUNT(*) as count FROM chapters WHERE manga_id = ? AND COALESCE(is_deleted, false) = false", [
       mangaRow.id
     ]);
     const chapterCount = chapterCountRow ? Number(chapterCountRow.count) || 0 : 0;
@@ -2215,9 +3324,9 @@ app.post(
 
     if (currentIsOneshot && !nextIsOneshot) {
       const chapterRows = await dbAll(
-        "SELECT id, number, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? ORDER BY number ASC, id ASC",
-        [mangaRow.id]
-      );
+          "SELECT id, number, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? AND COALESCE(is_deleted, false) = false ORDER BY number ASC, id ASC",
+          [mangaRow.id]
+        );
       const explicitOneshot = chapterRows.find((row) => toBooleanFlag(row && row.is_oneshot));
       const fallbackSingle = chapterRows.length === 1 ? chapterRows[0] : null;
       const targetChapter = explicitOneshot || fallbackSingle || null;
@@ -2328,14 +3437,14 @@ app.post(
       const jobId = createAdminJob({
         type: "delete-manga",
         run: async () => {
-          await deleteMangaAndCleanupStorage(safeMangaId);
+          await softDeleteManga(safeMangaId);
         }
       });
       return res.json({ ok: true, jobId });
     }
 
     try {
-      await deleteMangaAndCleanupStorage(safeMangaId);
+      await softDeleteManga(safeMangaId);
     } catch (err) {
       return res.status(500).send(normalizeAdminJobError(err));
     }
@@ -2392,7 +3501,7 @@ app.get(
     const status = typeof req.query.status === "string" ? req.query.status.trim() : "";
     const deleted = Number(req.query.deleted);
     const failed = Number(req.query.failed);
-    const mangaRow = await dbGet("SELECT * FROM manga WHERE id = ?", [req.params.id]);
+    const mangaRow = await dbGet("SELECT * FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false", [req.params.id]);
     if (!mangaRow) {
       return res.status(404).render("not-found", {
         title: "Không tìm thấy",
@@ -2420,6 +3529,7 @@ app.get(
           END AS has_password
         FROM chapters
         WHERE manga_id = ?
+          AND COALESCE(is_deleted, false) = false
         ORDER BY number DESC
       `,
       [mangaRow.id]
@@ -2477,7 +3587,7 @@ app.post(
     ) {
       return;
     }
-    const mangaRow = await dbGet("SELECT id FROM manga WHERE id = ?", [req.params.id]);
+    const mangaRow = await dbGet("SELECT id FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false", [req.params.id]);
     if (!mangaRow) {
       return res.status(404).render("not-found", {
         title: "Không tìm thấy",
@@ -2521,7 +3631,7 @@ app.post(
 
     const placeholders = chapterIds.map(() => "?").join(",");
     const chapterRows = await dbAll(
-      `SELECT id FROM chapters WHERE manga_id = ? AND id IN (${placeholders})`,
+      `SELECT id FROM chapters WHERE manga_id = ? AND COALESCE(is_deleted, false) = false AND id IN (${placeholders})`,
       [mangaRow.id, ...chapterIds]
     );
     const validIds = chapterRows
@@ -2544,7 +3654,7 @@ app.post(
 
       for (const chapterId of safeIds) {
         try {
-          const result = await deleteChapterAndCleanupStorage(chapterId);
+          const result = await softDeleteChapter(chapterId);
           if (result && result.mangaId) {
             deletedCount += 1;
           } else {
@@ -2788,7 +3898,7 @@ app.get(
     ) {
       return;
     }
-    const mangaRow = await dbGet("SELECT * FROM manga WHERE id = ?", [req.params.id]);
+    const mangaRow = await dbGet("SELECT * FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false", [req.params.id]);
     if (!mangaRow) {
       return res.status(404).render("not-found", {
         title: "Không tìm thấy",
@@ -2797,7 +3907,7 @@ app.get(
     }
 
     const chapterNumberRows = await dbAll(
-      "SELECT number FROM chapters WHERE manga_id = ? ORDER BY number ASC",
+      "SELECT number FROM chapters WHERE manga_id = ? AND COALESCE(is_deleted, false) = false ORDER BY number ASC",
       [mangaRow.id]
     );
     const chapterNumbers = chapterNumberRows
@@ -3091,7 +4201,7 @@ app.post(
     }
 
     const isOneshotManga = toBooleanFlag(mangaRow.is_oneshot);
-    const chapterCountRow = await dbGet("SELECT COUNT(*) as count FROM chapters WHERE manga_id = ?", [
+    const chapterCountRow = await dbGet("SELECT COUNT(*) as count FROM chapters WHERE manga_id = ? AND COALESCE(is_deleted, false) = false", [
       mangaRow.id
     ]);
     const chapterCount = chapterCountRow ? Number(chapterCountRow.count) || 0 : 0;
@@ -3142,7 +4252,7 @@ app.post(
     }
 
     const existing = await dbGet(
-      "SELECT 1 FROM chapters WHERE manga_id = ? AND number = ?",
+      "SELECT 1 FROM chapters WHERE manga_id = ? AND number = ? AND COALESCE(is_deleted, false) = false",
       [mangaRow.id, number]
     );
     if (existing) {
@@ -3173,7 +4283,7 @@ app.post(
     }
     const date = buildChapterTimestampIso();
     const previousChapterForInteraction = await dbGet(
-      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? ORDER BY number DESC LIMIT 1",
+      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? AND COALESCE(is_deleted, false) = false ORDER BY number DESC LIMIT 1",
       [mangaRow.id, number]
     );
     const interactionBoostEnabled = interactionBoostRequested && Boolean(previousChapterForInteraction);
@@ -3266,7 +4376,7 @@ app.post(
     ) {
       return;
     }
-    const mangaRow = await dbGet("SELECT * FROM manga WHERE id = ?", [req.params.id]);
+    const mangaRow = await dbGet("SELECT * FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false", [req.params.id]);
     if (!mangaRow) {
       return res.status(404).render("not-found", {
         title: "Không tìm thấy",
@@ -3275,7 +4385,7 @@ app.post(
     }
 
     const isOneshotManga = toBooleanFlag(mangaRow.is_oneshot);
-    const chapterCountRow = await dbGet("SELECT COUNT(*) as count FROM chapters WHERE manga_id = ?", [
+    const chapterCountRow = await dbGet("SELECT COUNT(*) as count FROM chapters WHERE manga_id = ? AND COALESCE(is_deleted, false) = false", [
       mangaRow.id
     ]);
     const chapterCount = chapterCountRow ? Number(chapterCountRow.count) || 0 : 0;
@@ -3312,7 +4422,7 @@ app.post(
     const date = buildChapterTimestampIso(req.body.date);
     const pageFilePrefix = buildChapterPageFilePrefix();
     const previousChapterForInteraction = await dbGet(
-      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? ORDER BY number DESC LIMIT 1",
+      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? AND COALESCE(is_deleted, false) = false ORDER BY number DESC LIMIT 1",
       [mangaRow.id, number]
     );
     const interactionBoostEnabled = interactionBoostRequested && Boolean(previousChapterForInteraction);
@@ -3322,7 +4432,7 @@ app.post(
     }
 
     const existing = await dbGet(
-      "SELECT 1 FROM chapters WHERE manga_id = ? AND number = ?",
+      "SELECT 1 FROM chapters WHERE manga_id = ? AND number = ? AND COALESCE(is_deleted, false) = false",
       [mangaRow.id, number]
     );
     if (existing) {
@@ -3420,6 +4530,8 @@ app.get(
       FROM chapters c
       JOIN manga m ON m.id = c.manga_id
       WHERE c.id = ?
+        AND COALESCE(c.is_deleted, false) = false
+        AND COALESCE(m.is_deleted, false) = false
     `,
       [Math.floor(chapterId)]
     );
@@ -3458,7 +4570,7 @@ app.get(
     const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: chapterRow.manga_id });
 
     const chapterNumberRows = await dbAll(
-      "SELECT number FROM chapters WHERE manga_id = ? ORDER BY number ASC",
+      "SELECT number FROM chapters WHERE manga_id = ? AND COALESCE(is_deleted, false) = false ORDER BY number ASC",
       [chapterRow.manga_id]
     );
     const currentNumber = Number(chapterRow.number);
@@ -3467,7 +4579,7 @@ app.get(
       .filter((value) => Number.isFinite(value) && value >= 0)
       .filter((value) => (Number.isFinite(currentNumber) ? Math.abs(value - currentNumber) > 1e-9 : true));
     const previousChapterForInteraction = await dbGet(
-      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? ORDER BY number DESC LIMIT 1",
+      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? AND COALESCE(is_deleted, false) = false ORDER BY number DESC LIMIT 1",
       [chapterRow.manga_id, chapterRow.number]
     );
     const canToggleInteractionBoost = Boolean(previousChapterForInteraction);
@@ -3584,6 +4696,7 @@ app.post(
           password_updated_at
         FROM chapters
         WHERE id = ?
+          AND COALESCE(is_deleted, false) = false
       `,
       [Math.floor(chapterId)]
     );
@@ -3595,7 +4708,7 @@ app.post(
     }
 
     const mangaMetaRow = await dbGet(
-      "SELECT COALESCE(is_oneshot, false) as is_oneshot FROM manga WHERE id = ?",
+      "SELECT COALESCE(is_oneshot, false) as is_oneshot FROM manga WHERE id = ? AND COALESCE(is_deleted, false) = false",
       [chapterRow.manga_id]
     );
     const isOneshotManga = toBooleanFlag(mangaMetaRow && mangaMetaRow.is_oneshot);
@@ -3607,7 +4720,7 @@ app.post(
     }
 
     const existingNumber = await dbGet(
-      "SELECT id FROM chapters WHERE manga_id = ? AND number = ? AND id <> ? LIMIT 1",
+      "SELECT id FROM chapters WHERE manga_id = ? AND number = ? AND id <> ? AND COALESCE(is_deleted, false) = false LIMIT 1",
       [chapterRow.manga_id, nextNumber, chapterRow.id]
     );
     if (existingNumber) {
@@ -3655,7 +4768,7 @@ app.post(
       return res.status(400).send("Chỉ được chọn một trong hai kiểu khóa chương.");
     }
     const previousChapterForInteraction = await dbGet(
-      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? AND id <> ? ORDER BY number DESC LIMIT 1",
+      "SELECT number FROM chapters WHERE manga_id = ? AND number < ? AND id <> ? AND COALESCE(is_deleted, false) = false ORDER BY number DESC LIMIT 1",
       [chapterRow.manga_id, nextNumber, chapterRow.id]
     );
     const interactionBoostEnabled = interactionBoostRequested && Boolean(previousChapterForInteraction);
@@ -4200,14 +5313,14 @@ app.post(
       const jobId = createAdminJob({
         type: "delete-chapter",
         run: async () => {
-          await deleteChapterAndCleanupStorage(safeChapterId);
+          await softDeleteChapter(safeChapterId);
         }
       });
       return res.json({ ok: true, jobId });
     }
 
     try {
-      const result = await deleteChapterAndCleanupStorage(Math.floor(chapterId));
+      const result = await softDeleteChapter(Math.floor(chapterId));
       return res.redirect(`/admin/manga/${result.mangaId}/chapters`);
     } catch (err) {
       const message = normalizeAdminJobError(err);

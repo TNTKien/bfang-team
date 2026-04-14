@@ -1,91 +1,64 @@
-# Mòe Truyện Monorepo
+# Mòe Truyện
 
-## 1) Repo này có gì?
+## 1) Tổng quan
 
-Monorepo gồm 4 phần chính:
+Project này là hệ thống đọc truyện dùng **Node.js + Express + EJS + PostgreSQL**.
 
-- **Web chính** (Express + EJS): đọc truyện, bình luận, admin.
-- **Forum frontend** (`sampleforum`, tùy chọn): build ra static và web chính serve ở `/forum`.
-- **API server upload** (`api_server`, tùy chọn): API cho app desktop upload chapter hàng loạt.
-- **App desktop** (`app_desktop`, tùy chọn): Electron app upload chapter.
+Các thành phần chính:
+
+- Web chính (bắt buộc): đọc truyện, bình luận, tài khoản, team, admin.
+- `sampleforum` (tuỳ chọn): frontend forum, được serve tại `/forum` sau khi build.
+- `api_server` (tuỳ chọn): API upload dành cho desktop bulk uploader.
+- `api_web` (tuỳ chọn): API bridge MangaDex/WeebDex.
+- `app_desktop` (tuỳ chọn): app Electron upload chapter.
 
 ## 2) Yêu cầu hệ thống
-
-Tối thiểu để chạy web chính:
 
 - Node.js **20+**
 - npm **10+**
 - PostgreSQL **16+**
 
-Nếu dùng upload ảnh/chapter/forum:
+Nếu dùng backup/restore DB: cần `pg_dump`, `pg_restore`, `psql` trong PATH.
 
-- S3-compatible storage (AWS S3 / Cloudflare R2 / MinIO / B2 S3 API)
+## 3) Cài đặt chi tiết (project mới)
 
-Nếu dùng backup/restore:
-
-- `pg_dump`, `pg_restore`, `psql`
-
-## 3) Cách cài đặt (TL;DR)
-
-### Cách 1: setup tự động (khuyên dùng)
-
-```powershell
-npm run setup:all
-npm run dev
-```
-
-### Cách 2: setup thủ công
-
-```powershell
-npm install
-Copy-Item .env.example .env
-# sửa DATABASE_URL, ADMIN_USER, ADMIN_PASS trong .env
-npm run db:bootstrap
-npm run dev
-```
-
-macOS/Linux:
+### Bước 1: Clone source
 
 ```bash
-npm install
-cp .env.example .env
-npm run db:bootstrap
-npm run dev
-```
-
-Web mặc định: `http://127.0.0.1:3000`
-
-## 4) Hướng dẫn cài đặt ban đầu (project trắng)
-
-### Bước 1 - Lấy source
-
-```powershell
 git clone <REPO_URL>
 cd web1
 ```
 
-### Bước 2 - Cài dependencies
+### Bước 2: Cài dependencies
 
-```powershell
+```bash
 npm install
 ```
 
-### Bước 3 - Tạo database PostgreSQL
+### Bước 3: Tạo database PostgreSQL
 
-Vào `psql` bằng user admin (thường là `postgres`), rồi tạo user + db:
+Ví dụ bằng `psql`:
 
 ```sql
 CREATE USER bfang WITH PASSWORD '12345';
 CREATE DATABASE bfang OWNER bfang;
 ```
 
-### Bước 4 - Tạo file `.env`
+### Bước 4: Tạo `.env`
+
+Linux/macOS:
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Set tối thiểu:
+### Bước 5: Cấu hình biến tối thiểu trong `.env`
 
 ```env
 PORT=3000
@@ -101,26 +74,28 @@ NEWS_PAGE_ENABLED=off
 FORUM_PAGE_ENABLED=false
 ```
 
-### Bước 5 - Bootstrap schema + dữ liệu cần thiết
+### Bước 6: Bootstrap DB
 
-```powershell
+```bash
 npm run db:bootstrap
 ```
 
-Lệnh này sẽ:
+Lệnh này chạy tuần tự:
 
-- sync schema DB,
-- repair dữ liệu forum legacy,
-- verify lại forum storage,
-- cập nhật snapshot schema vào `db.json`.
+1. sync schema DB,
+2. chạy init maintenance,
+3. repair + verify forum storage,
+4. sync snapshot schema về `db.json`.
 
-### Bước 6 - Chạy server
+### Bước 7: Chạy server
 
-```powershell
+```bash
 npm run dev
 ```
 
-### Bước 7 - Smoke test
+Mặc định: `http://127.0.0.1:3000`
+
+### Bước 8: Smoke test cơ bản
 
 - `/`
 - `/manga`
@@ -128,274 +103,140 @@ npm run dev
 - `/manga/:slug/chapters/:number`
 - `/admin/login`
 
-## 5) Hướng dẫn cập nhật project có sẵn (production hoặc staging)
+---
 
-Quy trình khuyên dùng:
+## 4) Cài nhanh (rút gọn)
 
-### Bước 1 - Backup trước khi update
+### Cách tự động
 
-```powershell
-npm run backup:db
+```bash
+npm run setup:all
+npm run dev
 ```
 
-### Bước 2 - Pull code mới + cài lại deps
+### Cách thủ công
 
-```powershell
-git pull
+```bash
 npm install
-```
-
-Nếu có module tùy chọn:
-
-```powershell
-npm --prefix api_server install
-npm --prefix sampleforum install
-npm --prefix app_desktop install
-```
-
-### Bước 3 - Soát biến môi trường mới
-
-- Mở `.env.example` mới nhất.
-- Bổ sung biến mới vào `.env` đang chạy.
-- Không xóa secret cũ nếu hệ thống vẫn dùng.
-
-### Bước 4 - Chạy migration/sync DB
-
-```powershell
+cp .env.example .env
 npm run db:bootstrap
+npm run dev
 ```
 
-Nếu cần chạy schema destructive (rất cẩn thận):
+PowerShell:
 
 ```powershell
-npm run db:bootstrap:strict
+npm install
+Copy-Item .env.example .env
+npm run db:bootstrap
+npm run dev
 ```
 
-### Bước 5 - Build lại assets tùy chọn
+## 5) Cập nhật bản đang chạy (staging/production)
 
-```powershell
-npm run styles:build
-npm --prefix sampleforum run build
-```
+Khuyến nghị theo thứ tự sau:
 
-### Bước 6 - Restart service + smoke test
+1. Backup DB trước:
 
-Kiểm tra lại các route chính và login admin.
+   ```bash
+   npm run backup:db
+   ```
 
-## 6) `db.json` và quy tắc đồng bộ schema
+2. Pull code + cài lại deps:
 
-Project dùng `db.json` làm snapshot cấu trúc DB (table/cột/type/nullability) để các script setup/sync đối chiếu.
+   ```bash
+   git pull
+   npm install
+   ```
 
-- Sync snapshot từ DB thực tế:
+3. Soát biến mới trong `.env.example`, bổ sung vào `.env` thực tế.
 
-```powershell
-npm run db:schema:json:sync
-```
+4. Chạy bootstrap:
 
-- Sync toàn bộ table hiện có trong schema hiện tại:
+   ```bash
+   npm run db:bootstrap
+   ```
 
-```powershell
-npm run db:schema:json:sync:all
-```
+   Nếu cần schema destructive (rất cẩn thận):
 
-- Sync schema theo code + kiểm tra với `db.json`:
+   ```bash
+   npm run db:bootstrap:strict
+   ```
 
-```powershell
-npm run db:schema:sync
-```
+5. Nếu dùng forum frontend: build lại `sampleforum`.
+6. Restart service, smoke test lại các route chính.
 
-**Quy tắc bắt buộc khi sửa cấu trúc DB** (thêm/sửa bảng hoặc cột):
+## 6) Biến môi trường quan trọng
+
+Xem đầy đủ tại `.env.example`.
+
+### Nhóm cốt lõi
+
+| Biến | Bắt buộc | Ghi chú |
+|---|---|---|
+| `DATABASE_URL` | Có | Thiếu biến này app không khởi động. |
+| `SESSION_SECRET` | Bắt buộc ở production | Dev có thể dùng fallback tạm. |
+| `ADMIN_USER`, `ADMIN_PASS` | Cần nếu bật login mật khẩu admin | Dùng cho `/admin/login`. |
+| `ADMIN_PASSWORD_LOGIN_ENABLED` | Nên set | `1/0` bật/tắt login mật khẩu admin. |
+| `APP_ENV` | Nên set | `development` / `production`. |
+| `PORT` | Tuỳ chọn | Mặc định `3000`. |
+
+### Nhóm tuỳ chọn phổ biến
+
+- Forum/News: `FORUM_PAGE_ENABLED`, `NEWS_PAGE_ENABLED`, `NEWS_DATABASE_URL`, `NEWS_DATABASE_NAME`.
+- Redis cache: `REDIS_*`, `ENDPOINT_CACHE_*`.
+- S3/MinIO: `S3_*`, `CHAPTER_CDN_BASE_URL`, `S3_CHAPTER_PREFIX`, `S3_MEDIA_PREFIX`, `MEDIA_CDN_BASE_URL`.
+- Upload qua `api_server`: `CHAPTER_UPLOAD_API_URL`, `MEDIA_UPLOAD_API_URL`, `CHAPTER_UPLOAD_SHARED_SECRET`, `MEDIA_UPLOAD_SHARED_SECRET`.
+- OAuth: `GOOGLE_CLIENT_ID/SECRET`, `DISCORD_CLIENT_ID/SECRET`, `OAUTH_CALLBACK_BASE_URL`.
+- Turnstile: `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`.
+- Google Drive upload ảnh bình luận/tin nhắn: `GOOGLE_DRIVE_*`, `COMMENT_IMAGE_UPLOAD_ENABLED`, `MESSAGE_IMAGE_UPLOAD_ENABLED`.
+- Mạng/session production: `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, `SITE_URL`, `PUBLIC_SITE_URL`, `APP_DOMAIN`.
+
+## 7) Scripts chính
+
+### Chạy app
+
+- `npm run dev` — chạy server dev (có `predev` build CSS).
+- `npm run start` — chạy server production-like (có `prestart` build CSS).
+- `npm run styles:build` / `npm run styles:watch` — build/watch CSS.
+
+### DB / vận hành
+
+- `npm run db:bootstrap`
+- `npm run db:bootstrap:strict`
+- `npm run db:schema:sync`
+- `npm run db:schema:sync:strict`
+- `npm run db:schema:json:sync`
+- `npm run db:schema:json:sync:all`
+- `npm run db:init:maintenance`
+- `npm run db:init:maintenance:apply`
+- `npm run db:forum:repair`
+- `npm run db:forum:repair:apply`
+- `npm run backup:db`
+- `npm run restore:db`
+
+### Forum test/tools
+
+- `npm run test:forum:unit`
+- `npm run test:forum:smoke`
+- `npm run test:forum`
+
+## 8) Quy tắc schema (`db.json`)
+
+`db.json` là snapshot schema dùng để đối chiếu.
+
+Khi đổi cấu trúc DB (thêm/sửa bảng/cột):
 
 1. Sửa code schema.
 2. Chạy `npm run db:schema:sync`.
 3. Chạy `npm run db:schema:json:sync`.
 4. Commit code + `db.json` cùng nhau.
 
-## 7) Hướng dẫn lấy biến môi trường từ gốc (env acquisition)
+## 9) Bật module tuỳ chọn
 
-Phần này trả lời câu hỏi "lấy từng biến ở đâu".
+### `sampleforum`
 
-### 7.1 Nhóm core bắt buộc
-
-- `DATABASE_URL`: lấy từ PostgreSQL bạn đang dùng.
-  - Format: `postgresql://<user>:<pass>@<host>:<port>/<db>`
-- `SESSION_SECRET`: tự sinh chuỗi ngẫu nhiên dài (>= 32 ký tự).
-- `ADMIN_USER`, `ADMIN_PASS`: do bạn tự đặt.
-
-### 7.1.1 Redis cache (key nghiệp vụ)
-
-Điền trực tiếp vào file **`.env` ở thư mục gốc web** (`web1/.env`):
-
-- `REDIS_URL`: URL kết nối Redis (ví dụ: `redis://127.0.0.1:6379/0`)
-- `REDIS_CACHE_ENABLED`: bật/tắt Redis helper tổng thể (`true/false`)
-- `REDIS_PREFIX`: prefix key (mặc định `bfang`)
-- `REDIS_DEFAULT_TTL_SECONDS`: TTL mặc định cho helper Redis
-- `REDIS_CONNECT_TIMEOUT_MS`: timeout kết nối Redis
-- `REDIS_RECONNECT_RETRY_MS`: chu kỳ retry reconnect
-
-Biến bật/tắt business-key cache + version invalidation:
-
-- `REDIS_BUSINESS_CACHE_ENABLED`
-- `REDIS_CACHE_VERSION_REFRESH_MS`
-
-> Tương thích ngược: có thể dùng biến cũ `SQL_REDIS_CACHE_ENABLED` và `SQL_REDIS_CACHE_VERSION_REFRESH_MS`.
-
-Business key hiện dùng dạng dễ debug/xóa cache, ví dụ:
-
-- `bfang:endpoint:manga:list:...`
-- `bfang:endpoint:chapters:{slug}:page:{page}`
-- `bfang:endpoint:chapter:{slug}:{number}:...`
-- `bfang:endpoint:homepage`
-
-Biến TTL endpoint-level cache (nghiệp vụ):
-
-- `ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS`
-- `ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS`
-- `ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS`
-- `ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS`
-- `ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS`
-
-Ví dụ nhanh:
-
-```env
-REDIS_CACHE_ENABLED=true
-REDIS_URL=redis://127.0.0.1:6379/0
-REDIS_PREFIX=bfang
-REDIS_DEFAULT_TTL_SECONDS=30
-REDIS_CONNECT_TIMEOUT_MS=5000
-REDIS_RECONNECT_RETRY_MS=15000
-
-REDIS_BUSINESS_CACHE_ENABLED=true
-REDIS_CACHE_VERSION_REFRESH_MS=1500
-
-ENDPOINT_CACHE_HOMEPAGE_TTL_SECONDS=45
-ENDPOINT_CACHE_MANGA_LIST_TTL_SECONDS=180
-ENDPOINT_CACHE_MANGA_DETAIL_TTL_SECONDS=300
-ENDPOINT_CACHE_CHAPTER_DETAIL_TTL_SECONDS=450
-ENDPOINT_CACHE_FORUM_HOME_TTL_SECONDS=45
-```
-
-### 7.2 MinIO / S3-compatible (ảnh chapter/forum)
-
-Biến liên quan:
-
-- `S3_ENDPOINT`
-- `S3_BUCKET`
-- `S3_REGION`
-- `S3_ACCESS_KEY_ID`
-- `S3_SECRET_ACCESS_KEY`
-- `S3_FORCE_PATH_STYLE`
-- `CHAPTER_CDN_BASE_URL`
-- `S3_CHAPTER_PREFIX`
-
-#### Setup MinIO local nhanh
-
-Ví dụ chạy MinIO bằng Docker:
-
-```powershell
-docker run -d --name minio -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin quay.io/minio/minio server /data --console-address ":9001"
-```
-
-Vào Console: `http://127.0.0.1:9001` (user/pass: `minioadmin` / `minioadmin`)
-
-Tạo bucket (ví dụ `bfang`), rồi set:
-
-```env
-S3_ENDPOINT=http://127.0.0.1:9000
-S3_BUCKET=bfang
-S3_REGION=us-east-1
-S3_ACCESS_KEY_ID=minioadmin
-S3_SECRET_ACCESS_KEY=minioadmin
-S3_FORCE_PATH_STYLE=true
-S3_CHAPTER_PREFIX=chapters
-CHAPTER_CDN_BASE_URL=http://127.0.0.1:9000/bfang
-```
-
-### 7.3 Google OAuth login (web)
-
-Biến:
-
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-
-Các bước lấy:
-
-1. Vào Google Cloud Console, tạo project.
-2. Enable API: **Google People API** (hoặc API profile cần dùng).
-3. Tạo OAuth consent screen.
-4. Tạo OAuth Client ID (Web application).
-5. Thêm Redirect URI theo domain chạy web, ví dụ:
-   - `http://127.0.0.1:3000/auth/google/callback`
-   - `https://your-domain/auth/google/callback`
-6. Copy Client ID/Secret vào `.env`.
-
-### 7.4 Discord OAuth login (web)
-
-Biến:
-
-- `DISCORD_CLIENT_ID`
-- `DISCORD_CLIENT_SECRET`
-
-Các bước lấy:
-
-1. Vào Discord Developer Portal.
-2. Tạo application.
-3. Vào OAuth2, thêm Redirect URI callback tương ứng domain.
-4. Copy client id/secret vào `.env`.
-
-### 7.5 Google Drive API (upload ảnh bình luận/tin nhắn)
-
-Biến:
-
-- `GOOGLE_DRIVE_UPLOAD_ENABLED`
-- `COMMENT_IMAGE_UPLOAD_ENABLED`
-- `MESSAGE_IMAGE_UPLOAD_ENABLED`
-- `GOOGLE_DRIVE_CLIENT_ID`
-- `GOOGLE_DRIVE_CLIENT_SECRET`
-- `GOOGLE_DRIVE_REFRESH_TOKEN`
-- `GOOGLE_DRIVE_FOLDER_ID`
-
-Các bước lấy:
-
-1. Tạo project trên Google Cloud Console.
-2. Enable **Google Drive API**.
-3. Tạo OAuth Client ID + Client Secret.
-4. Lấy refresh token (thường qua OAuth flow hoặc OAuth Playground).
-5. Tạo thư mục trong Drive, lấy `folderId` từ URL.
-6. Set biến:
-
-```env
-GOOGLE_DRIVE_UPLOAD_ENABLED=true
-COMMENT_IMAGE_UPLOAD_ENABLED=true
-MESSAGE_IMAGE_UPLOAD_ENABLED=true
-GOOGLE_DRIVE_CLIENT_ID=...
-GOOGLE_DRIVE_CLIENT_SECRET=...
-GOOGLE_DRIVE_REFRESH_TOKEN=...
-GOOGLE_DRIVE_FOLDER_ID=...
-```
-
-### 7.6 Auth và URL base liên quan callback
-
-Biến thường cần set đúng theo môi trường:
-
-- `APP_ENV`
-- `APP_DOMAIN`
-- `SITE_URL`
-- `PUBLIC_SITE_URL`
-- `OAUTH_CALLBACK_BASE_URL`
-- `TRUST_PROXY`
-- `SESSION_COOKIE_SECURE`
-
-Gợi ý:
-
-- Local: `APP_ENV=development`, `SESSION_COOKIE_SECURE=false`
-- Production HTTPS: `APP_ENV=production`, `SESSION_COOKIE_SECURE=true`, `TRUST_PROXY=1`
-
-## 8) Chạy module tùy chọn
-
-### 8.1 Forum frontend (`sampleforum`)
-
-```powershell
+```bash
 npm --prefix sampleforum install
 npm --prefix sampleforum run build
 ```
@@ -406,115 +247,33 @@ Set `.env`:
 FORUM_PAGE_ENABLED=true
 ```
 
-### 8.2 News module
+### `api_server` (upload API)
 
-Set `.env`:
-
-```env
-NEWS_PAGE_ENABLED=on
-```
-
-Nếu dùng DB news riêng thì set thêm `NEWS_DATABASE_URL`.
-
-### 8.3 `api_server` cho desktop uploader
-
-```powershell
+```bash
 npm --prefix api_server install
-Copy-Item api_server/.env.example api_server/.env
+cp api_server/.env.example api_server/.env
 npm --prefix api_server run start
 ```
 
-Lưu ý quan trọng: `API_KEY_SECRET` của `api_server` phải trùng `SESSION_SECRET` web chính.
+Lưu ý: `API_KEY_SECRET` của `api_server` phải khớp `SESSION_SECRET` của web chính.
 
-### 8.4 `app_desktop`
+### `api_web` (bridge MangaDex/WeebDex)
 
-```powershell
+```bash
+npm --prefix api_web install
+npm --prefix api_web run start
+```
+
+### `app_desktop`
+
+```bash
 npm --prefix app_desktop install
 npm --prefix app_desktop run start
 ```
 
-Tài liệu chi tiết: `app_desktop/HUONG_DAN_SU_DUNG.md`
-
-### 8.5 `config.json`
-
-`config.json` có tác dụng cấu hình nội dung hiển thị cho web.
-
-Các nhóm cấu hình chính:
-
-- `branding`: `siteName`, `brandMark`, `brandSubmark`, `aboutNavLabel`, `heroKicker`, `updateTag`, `footerYear`
-- `homepage`: `welcomeMessage`, `introduction`, `aboutTitle`, `foundedYear`, `contentStandardsTitle`, `contentStandards[]`, `contactTitle`
-- `contact`: `facebookUrl`, `facebookLabel`, `discordUrl`, `discordLabel`
-- `SEO`: `defaultDescription`, `homepageTitle`, `homepageDescription`
-- `admin`: `teamManageLabel`, `adminLabel`, `loginNote`
-
-Lưu ý:
-
-- Sửa `config.json` xong cần restart server để thấy thay đổi.
-
-## 9) Danh sách lệnh chính
-
-| Lệnh | Mục đích |
-| --- | --- |
-| `npm run dev` | Chạy web ở chế độ dev |
-| `npm run start` | Chạy web ở chế độ start |
-| `npm run setup:all` | Setup tự động toàn project |
-| `npm run styles:build` | Build CSS |
-| `npm run db:bootstrap` | Sync schema + repair forum + sync `db.json` |
-| `npm run db:bootstrap:strict` | Bootstrap strict/destructive |
-| `npm run db:schema:sync` | Sync schema theo code và đối chiếu `db.json` |
-| `npm run db:schema:sync:strict` | Sync schema destructive |
-| `npm run db:schema:json:sync` | Sync snapshot schema về `db.json` |
-| `npm run db:schema:json:sync:all` | Snapshot từ toàn bộ table trong schema |
-| `npm run db:forum:repair` | Audit forum storage |
-| `npm run db:forum:repair:apply` | Apply forum storage repair |
-| `npm run backup:db` | Backup DB |
-| `npm run restore:db` | Restore DB |
-
 ## 10) Troubleshooting nhanh
 
-### `DATABASE_URL is required`
-
-- Chưa tạo `.env` hoặc chưa set `DATABASE_URL` đúng format.
-
-### Login admin không được
-
-- Kiểm tra `ADMIN_USER`, `ADMIN_PASS`, `ADMIN_PASSWORD_LOGIN_ENABLED`.
-
-### Bật forum mà `/forum` không chạy
-
-Đảm bảo đủ 3 điều kiện:
-
-1. `FORUM_PAGE_ENABLED=true`
-2. Đã build `sampleforum`
-3. Có `sampleforum/dist/index.html`
-
-### API key ở desktop báo invalid/revoked
-
-- Tạo lại API key trên web.
-- Đảm bảo `api_server/.env` có `API_KEY_SECRET` trùng `SESSION_SECRET` web.
-
-### Upload xong nhưng ảnh không hiện
-
-- Kiểm tra `CHAPTER_CDN_BASE_URL`.
-- Kiểm tra object tồn tại đúng bucket/prefix.
-- Purge cache CDN/proxy nếu vừa đổi hạ tầng.
-
-## 11) Security và hygiene
-
-Không commit:
-
-- `.env`, `api_server/.env`, `app_desktop/.env`
-- `uploads/`
-- `backups/`
-- build artifacts (`sampleforum/dist`, `app_desktop/dist`)
-
-Khuyến nghị production:
-
-- `APP_ENV=production`
-- `SESSION_SECRET` mạnh
-- `SESSION_COOKIE_SECURE=true`
-- `TRUST_PROXY=1` (nếu chạy sau reverse proxy)
-
----
-
-Nếu bạn muốn chạy tối thiểu chỉ để đọc truyện local: chỉ cần **web chính + PostgreSQL**. Các module `api_server`, `app_desktop`, `sampleforum`, upload cloud có thể bật sau.
+- **Lỗi `DATABASE_URL...`**: chưa set đúng `DATABASE_URL` trong `.env`.
+- **Login admin lỗi**: kiểm tra `ADMIN_USER`, `ADMIN_PASS`, `ADMIN_PASSWORD_LOGIN_ENABLED`.
+- **Bật forum nhưng `/forum` không chạy**: cần `FORUM_PAGE_ENABLED=true` và tồn tại `sampleforum/dist/index.html`.
+- **Upload xong không thấy ảnh**: kiểm tra `CHAPTER_CDN_BASE_URL`, bucket/prefix, và cấu hình S3.

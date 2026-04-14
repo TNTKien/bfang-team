@@ -2545,6 +2545,7 @@ const storageDomain = createStorageDomain({
   normalizeBaseUrl,
   normalizePathPrefix,
   parseEnvBoolean,
+  withTransaction,
   sharp,
 });
 const {
@@ -3596,6 +3597,7 @@ const listQueryBase = `
     m.other_names,
     genre_agg.genres,
     COALESCE(m.is_hidden, 0) as is_hidden,
+    COALESCE(m.is_deleted, false) as is_deleted,
     COALESCE(m.is_oneshot, false) as is_oneshot,
     COALESCE(m.oneshot_locked, false) as oneshot_locked,
     m.status,
@@ -3621,18 +3623,30 @@ const listQueryBase = `
     SELECT COUNT(*) as chapter_count
     FROM chapters c
     WHERE c.manga_id = m.id
+      AND COALESCE(c.is_deleted, false) = false
   ) chapter_count_stats ON true
   LEFT JOIN LATERAL (
     SELECT COALESCE(SUM(COALESCE(v.view_count, 0)), 0) as total_views
     FROM chapters c
     LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
     WHERE c.manga_id = m.id
+      AND COALESCE(c.is_deleted, false) = false
   ) view_stats ON true
   LEFT JOIN LATERAL (
     SELECT COUNT(*) as comment_count
     FROM comments c
     WHERE c.manga_id = m.id
       AND c.status = 'visible'
+      AND (
+        c.chapter_number IS NULL
+        OR EXISTS (
+          SELECT 1
+          FROM chapters c_scope
+          WHERE c_scope.manga_id = c.manga_id
+            AND c_scope.number = c.chapter_number
+            AND COALESCE(c_scope.is_deleted, false) = false
+        )
+      )
   ) comment_count_stats ON true
   LEFT JOIN LATERAL (
     SELECT
@@ -3640,6 +3654,7 @@ const listQueryBase = `
       COALESCE(c.is_oneshot, false) as latest_chapter_is_oneshot
     FROM chapters c
     WHERE c.manga_id = m.id
+      AND COALESCE(c.is_deleted, false) = false
     ORDER BY c.number DESC
     LIMIT 1
   ) latest_chapter ON true
@@ -3647,7 +3662,7 @@ const listQueryBase = `
 
 const listQueryOrder = "ORDER BY m.updated_at DESC, m.id DESC";
 
-const listQuery = `${listQueryBase} ${listQueryOrder}`;
+const listQuery = `${listQueryBase} WHERE COALESCE(m.is_deleted, false) = false ${listQueryOrder}`;
 
 const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);

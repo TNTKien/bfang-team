@@ -159,6 +159,8 @@ const registerSiteRoutes = (app, deps) => {
   const HOMEPAGE_RANKING_WEEK_DAYS = 7;
   const HOMEPAGE_RANKING_MONTH_DAYS = 30;
   const HOMEPAGE_RECENT_COMMENT_LIMIT = 6;
+  const ACTIVE_MANGA_SQL = "COALESCE(m.is_deleted, false) = false";
+  const ACTIVE_CHAPTER_SQL = "COALESCE(c.is_deleted, false) = false";
   const teamCommunityNameCache = new Map();
   const HOMEPAGE_CACHE_AUDIENCE_INCLUDE_ADULT = "include-adult";
   const HOMEPAGE_CACHE_AUDIENCE_EXCLUDE_ADULT = "exclude-adult";
@@ -409,7 +411,7 @@ const registerSiteRoutes = (app, deps) => {
   let mangaDailyViewBaselineSyncPromise = null;
   let mangaDailyViewBaselineSyncedDate = "";
 
-  const MANGA_HAS_CHAPTER_SQL = "EXISTS (SELECT 1 FROM chapters c_has WHERE c_has.manga_id = m.id)";
+  const MANGA_HAS_CHAPTER_SQL = "EXISTS (SELECT 1 FROM chapters c_has WHERE c_has.manga_id = m.id AND COALESCE(c_has.is_deleted, false) = false)";
   const isAdultContentControlActive = toBooleanFlag(adultContentControlEnabled);
   const MANGA_HAS_ADULT_GENRE_SQL = `
     EXISTS (
@@ -946,9 +948,9 @@ const registerSiteRoutes = (app, deps) => {
     }
 
     const exactSlugRow = await dbGet(
-      `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND m.slug = ?`,
-      [requestedSlug]
-    );
+        `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND ${ACTIVE_MANGA_SQL} AND m.slug = ?`,
+        [requestedSlug]
+      );
     if (exactSlugRow) {
       await writeMangaRouteLookupToCache({
         cacheKey: slugLookupCache.cacheKey,
@@ -976,7 +978,7 @@ const registerSiteRoutes = (app, deps) => {
       }
 
       const idMatchedRow = await dbGet(
-        `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND m.id = ?`,
+        `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND ${ACTIVE_MANGA_SQL} AND m.id = ?`,
         [mangaId]
       );
       if (idMatchedRow) {
@@ -996,7 +998,7 @@ const registerSiteRoutes = (app, deps) => {
     }
 
     const suffixRows = await dbAll(
-      `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND m.slug LIKE ? LIMIT 2`,
+      `${mangaRouteLookupQueryBase} WHERE m.is_hidden = 0 AND ${ACTIVE_MANGA_SQL} AND m.slug LIKE ? LIMIT 2`,
       [`%-${requestedSlug}`]
     );
     if (suffixRows.length === 1) {
@@ -7647,9 +7649,11 @@ const registerSiteRoutes = (app, deps) => {
           LEFT JOIN (
             SELECT c.manga_id, COUNT(*) as chapter_count
             FROM chapters c
+            WHERE COALESCE(c.is_deleted, false) = false
             GROUP BY c.manga_id
           ) chapter_stats ON chapter_stats.manga_id = m.id
                 WHERE m.is_hidden = 0
+            AND ${ACTIVE_MANGA_SQL}
             AND ${buildTeamMangaScopeSql("m")}
         `,
           buildTeamMangaScopeParams()
@@ -7665,9 +7669,20 @@ const registerSiteRoutes = (app, deps) => {
             SELECT c.manga_id, COUNT(*) AS comment_count
             FROM comments c
             WHERE c.status = 'visible'
+              AND (
+                c.chapter_number IS NULL
+                OR EXISTS (
+                  SELECT 1
+                  FROM chapters c_scope
+                  WHERE c_scope.manga_id = c.manga_id
+                    AND c_scope.number = c.chapter_number
+                    AND COALESCE(c_scope.is_deleted, false) = false
+                )
+              )
             GROUP BY c.manga_id
           ) comment_stats ON comment_stats.manga_id = m.id
           WHERE COALESCE(m.is_hidden, 0) = 0
+            AND ${ACTIVE_MANGA_SQL}
             AND ${buildTeamMangaScopeSql("m")}
         `,
           buildTeamMangaScopeParams()
@@ -8730,15 +8745,20 @@ const registerSiteRoutes = (app, deps) => {
         m.status as manga_status,
         COALESCE(c.title, '') as chapter_title,
         COALESCE(c.is_oneshot, false) as chapter_is_oneshot,
-        (SELECT number FROM chapters c2 WHERE c2.manga_id = m.id ORDER BY number DESC LIMIT 1)
+        (SELECT number FROM chapters c2 WHERE c2.manga_id = m.id AND COALESCE(c2.is_deleted, false) = false ORDER BY number DESC LIMIT 1)
           as latest_chapter_number,
-        (SELECT COALESCE(c2.is_oneshot, false) FROM chapters c2 WHERE c2.manga_id = m.id ORDER BY number DESC LIMIT 1)
+        (SELECT COALESCE(c2.is_oneshot, false) FROM chapters c2 WHERE c2.manga_id = m.id AND COALESCE(c2.is_deleted, false) = false ORDER BY number DESC LIMIT 1)
           as latest_chapter_is_oneshot
       FROM reading_history rh
       JOIN manga m ON m.id = rh.manga_id
-      LEFT JOIN chapters c ON c.manga_id = rh.manga_id AND c.number = rh.chapter_number
+      LEFT JOIN chapters c ON c.manga_id = rh.manga_id AND c.number = rh.chapter_number AND COALESCE(c.is_deleted, false) = false
       WHERE rh.user_id = ?
         AND COALESCE(m.is_hidden, 0) = 0
+        AND ${ACTIVE_MANGA_SQL}
+        AND (
+          rh.chapter_number IS NULL
+          OR c.id IS NOT NULL
+        )
       ORDER BY rh.updated_at DESC, rh.manga_id DESC
       LIMIT ?
     `,
@@ -8779,7 +8799,7 @@ const registerSiteRoutes = (app, deps) => {
       }
 
       const mangaRow = await dbGet(
-        "SELECT id, slug FROM manga WHERE slug = ? AND COALESCE(is_hidden, 0) = 0",
+        "SELECT id, slug FROM manga WHERE slug = ? AND COALESCE(is_hidden, 0) = 0 AND COALESCE(is_deleted, false) = false",
         [mangaSlug]
       );
       if (!mangaRow) {
@@ -8787,7 +8807,7 @@ const registerSiteRoutes = (app, deps) => {
       }
 
       const chapterRow = await dbGet(
-        "SELECT number FROM chapters WHERE manga_id = ? AND number = ? LIMIT 1",
+        "SELECT number FROM chapters WHERE manga_id = ? AND number = ? AND COALESCE(is_deleted, false) = false LIMIT 1",
         [mangaRow.id, chapterNumber]
       );
       if (!chapterRow) {
@@ -10314,6 +10334,7 @@ const registerSiteRoutes = (app, deps) => {
               SELECT m.updated_at
               FROM manga m
               WHERE m.is_hidden = 0
+                AND ${ACTIVE_MANGA_SQL}
                 AND ${MANGA_HAS_CHAPTER_SQL}
               ORDER BY m.updated_at DESC, m.id DESC
               LIMIT 1
@@ -10326,6 +10347,8 @@ const registerSiteRoutes = (app, deps) => {
               FROM chapters c
               JOIN manga m ON m.id = c.manga_id
               WHERE m.is_hidden = 0
+                AND ${ACTIVE_MANGA_SQL}
+                AND ${ACTIVE_CHAPTER_SQL}
               ORDER BY c.id DESC
               LIMIT 1
             ),
@@ -10432,6 +10455,7 @@ const registerSiteRoutes = (app, deps) => {
               FROM chapters c
               LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
               WHERE c.manga_id IN (SELECT p.manga_id FROM period_totals p)
+                AND COALESCE(c.is_deleted, false) = false
               GROUP BY c.manga_id
             )
             SELECT
@@ -10464,6 +10488,7 @@ const registerSiteRoutes = (app, deps) => {
                 SUM(GREATEST(COALESCE(v.view_count, 0), 0))::bigint AS chapter_total_views
               FROM chapters c
               LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
+              WHERE COALESCE(c.is_deleted, false) = false
               GROUP BY c.manga_id
             )
             SELECT
@@ -10839,6 +10864,17 @@ const registerSiteRoutes = (app, deps) => {
                 AND c.parent_id IS NULL
                 AND COALESCE(c.client_request_id, '') NOT ILIKE 'forum-%'
                 AND m.is_hidden = 0
+                AND ${ACTIVE_MANGA_SQL}
+                AND (
+                  c.chapter_number IS NULL
+                  OR EXISTS (
+                    SELECT 1
+                    FROM chapters c_scope
+                    WHERE c_scope.manga_id = c.manga_id
+                      AND c_scope.number = c.chapter_number
+                      AND COALESCE(c_scope.is_deleted, false) = false
+                  )
+                )
                 ${adultVisibilityClause}
               ORDER BY c.id DESC
               LIMIT ${HOMEPAGE_RECENT_COMMENT_LIMIT}
@@ -10853,6 +10889,8 @@ const registerSiteRoutes = (app, deps) => {
               FROM chapters c
               JOIN manga m ON m.id = c.manga_id
               WHERE COALESCE(m.is_hidden, 0) = 0
+                AND ${ACTIVE_MANGA_SQL}
+                AND ${ACTIVE_CHAPTER_SQL}
                 ${adultVisibilityClause}
             `
           );
@@ -10868,6 +10906,8 @@ const registerSiteRoutes = (app, deps) => {
                 FROM chapters c
                 JOIN manga m ON m.id = c.manga_id
                 WHERE m.is_hidden = 0
+                  AND ${ACTIVE_MANGA_SQL}
+                  AND ${ACTIVE_CHAPTER_SQL}
                   AND NOT (${MANGA_HAS_ADULT_GENRE_SQL})
               `
             )
@@ -11671,6 +11711,7 @@ const registerSiteRoutes = (app, deps) => {
           SELECT status, COUNT(*) as count
           FROM manga m
           WHERE m.is_hidden = 0
+            AND ${ACTIVE_MANGA_SQL}
             AND ${MANGA_HAS_CHAPTER_SQL}
             AND status IS NOT NULL
             AND TRIM(status) <> ''
@@ -11857,7 +11898,8 @@ const registerSiteRoutes = (app, deps) => {
       const conditions = [];
       const params = [];
 
-    conditions.push("m.is_hidden = 0");
+      conditions.push("m.is_hidden = 0");
+      conditions.push(ACTIVE_MANGA_SQL);
       conditions.push(MANGA_HAS_CHAPTER_SQL);
       if (!includeAdultForRequest) {
         conditions.push(`NOT (${MANGA_HAS_ADULT_GENRE_SQL})`);
@@ -12164,6 +12206,7 @@ const registerSiteRoutes = (app, deps) => {
             ) as total_views
           FROM chapters
           WHERE manga_id = ?
+            AND COALESCE(is_deleted, false) = false
         `,
           [mangaRow.id, mangaRow.id]
         );
@@ -12195,6 +12238,7 @@ const registerSiteRoutes = (app, deps) => {
           FROM chapters c
           LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
           WHERE c.manga_id = ?
+            AND COALESCE(c.is_deleted, false) = false
           ORDER BY c.number DESC
           LIMIT ? OFFSET ?
         `,
@@ -12410,6 +12454,7 @@ const registerSiteRoutes = (app, deps) => {
           COALESCE(is_oneshot, false) as is_oneshot
         FROM chapters
         WHERE manga_id = ?
+          AND COALESCE(is_deleted, false) = false
         ORDER BY number DESC
       `,
         [mangaRow.id]
@@ -12528,6 +12573,7 @@ const registerSiteRoutes = (app, deps) => {
             c.processing_total_pages
           FROM chapters c
           WHERE c.manga_id = ? AND c.number = ?
+            AND COALESCE(c.is_deleted, false) = false
           LIMIT 1
         `,
           [mangaRow.id, chapterNumber]
@@ -12662,7 +12708,7 @@ const registerSiteRoutes = (app, deps) => {
             COALESCE(v.view_count, 0) as view_count
           FROM chapters c
           LEFT JOIN chapter_view_stats v ON v.chapter_id = c.id
-          WHERE c.manga_id = ? AND c.number = ?
+          WHERE c.manga_id = ? AND c.number = ? AND COALESCE(c.is_deleted, false) = false
         `,
           [mangaRow.id, chapterNumber]
         );
@@ -12672,7 +12718,7 @@ const registerSiteRoutes = (app, deps) => {
         }
 
         chapterListRows = await dbAll(
-          "SELECT number, title, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? ORDER BY number DESC",
+          "SELECT number, title, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? AND COALESCE(is_deleted, false) = false ORDER BY number DESC",
           [mangaRow.id]
         );
 
@@ -12854,7 +12900,7 @@ const registerSiteRoutes = (app, deps) => {
               password_hash,
               password_salt
             FROM chapters
-            WHERE manga_id = ? AND number = ?
+            WHERE manga_id = ? AND number = ? AND COALESCE(is_deleted, false) = false
           `,
             [mangaRow.id, nextChapterNumber]
           );
@@ -13402,6 +13448,7 @@ const registerSiteRoutes = (app, deps) => {
         FROM chapters c
         WHERE c.manga_id = ?
           AND c.number = ?
+          AND COALESCE(c.is_deleted, false) = false
         LIMIT 1
       `,
         [mangaRow.id, chapterNumber]
@@ -13842,7 +13889,7 @@ const registerSiteRoutes = (app, deps) => {
         `
       SELECT id, slug, COALESCE(is_oneshot, false) as is_oneshot
       FROM manga
-      WHERE slug = ? AND COALESCE(is_hidden, 0) = 0
+      WHERE slug = ? AND COALESCE(is_hidden, 0) = 0 AND COALESCE(is_deleted, false) = false
     `,
         [req.params.slug]
       );
@@ -14291,6 +14338,7 @@ const registerSiteRoutes = (app, deps) => {
           FROM chapters
           WHERE manga_id = ?
             AND number = ?
+            AND COALESCE(is_deleted, false) = false
         `,
         [mangaRow.id, chapterNumber]
       );
@@ -14373,7 +14421,7 @@ const registerSiteRoutes = (app, deps) => {
 
       if (!requiresChapterPassword && !canBypassChapterLocks && toBooleanFlag(chapterRow && chapterRow.interaction_boost_enabled)) {
         const prevChapter = await dbGet(
-          "SELECT number, title, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? AND number < ? ORDER BY number DESC LIMIT 1",
+          "SELECT number, title, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? AND number < ? AND COALESCE(is_deleted, false) = false ORDER BY number DESC LIMIT 1",
           [mangaRow.id, chapterNumber]
         );
         if (prevChapter && Number.isFinite(Number(prevChapter.number))) {

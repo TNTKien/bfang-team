@@ -1370,6 +1370,8 @@ const initDb = async () => {
       updated_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
       is_hidden INTEGER NOT NULL DEFAULT 0,
+      is_deleted BOOLEAN NOT NULL DEFAULT false,
+      deleted_at BIGINT,
       group_name TEXT,
       other_names TEXT,
       cover_updated_at BIGINT,
@@ -1385,12 +1387,16 @@ const initDb = async () => {
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS updated_at TEXT");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS created_at TEXT");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS is_hidden INTEGER NOT NULL DEFAULT 0");
+  await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false");
+  await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS deleted_at BIGINT");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS group_name TEXT");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS other_names TEXT");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS cover_updated_at BIGINT");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS is_oneshot BOOLEAN NOT NULL DEFAULT false");
   await dbRun("ALTER TABLE manga ADD COLUMN IF NOT EXISTS oneshot_locked BOOLEAN NOT NULL DEFAULT false");
+  await dbRun("UPDATE manga SET is_deleted = false WHERE is_deleted IS NULL");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_visible_updated ON manga (is_hidden, updated_at DESC, id DESC)");
+  await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_deleted_hidden_updated ON manga (is_deleted, is_hidden, updated_at DESC, id DESC)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_title_lower_prefix ON manga (lower(title) text_pattern_ops)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_slug_lower_prefix ON manga (lower(slug) text_pattern_ops)");
   await dbRun("CREATE INDEX IF NOT EXISTS idx_manga_status_visible ON manga (is_hidden, status)");
@@ -1438,6 +1444,8 @@ const initDb = async () => {
       pages INTEGER NOT NULL,
       date TEXT NOT NULL,
       group_name TEXT,
+      is_deleted BOOLEAN NOT NULL DEFAULT false,
+      deleted_at BIGINT,
       pages_prefix TEXT,
       pages_file_prefix TEXT,
       pages_ext TEXT,
@@ -1459,6 +1467,8 @@ const initDb = async () => {
   );
 
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS group_name TEXT");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false");
+  await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS deleted_at BIGINT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_prefix TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_file_prefix TEXT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pages_ext TEXT");
@@ -1475,6 +1485,7 @@ const initDb = async () => {
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_total_pages INTEGER");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS processing_updated_at BIGINT");
   await dbRun("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS interaction_boost_enabled BOOLEAN NOT NULL DEFAULT false");
+  await dbRun("UPDATE chapters SET is_deleted = false WHERE is_deleted IS NULL");
   await dbRun("UPDATE chapters SET interaction_boost_enabled = false WHERE interaction_boost_enabled IS NULL");
   await dbRun(
     `
@@ -1518,9 +1529,11 @@ const initDb = async () => {
   );
 
   // Enforce unique chapter number per manga.
+  await dbRun("DROP INDEX IF EXISTS idx_chapters_manga_number");
   await dbRun(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_chapters_manga_number ON chapters (manga_id, number)"
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_chapters_manga_number_active ON chapters (manga_id, number) WHERE COALESCE(is_deleted, false) = false"
   );
+  await dbRun("CREATE INDEX IF NOT EXISTS idx_chapters_manga_deleted_number ON chapters (manga_id, is_deleted, number DESC, id DESC)");
 
   await dbRun(
     `

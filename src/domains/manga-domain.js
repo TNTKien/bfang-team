@@ -62,9 +62,10 @@ const getGenreStats = async () =>
     SELECT
       g.id,
       g.name,
-      COUNT(mg.manga_id) as count
+      COUNT(m.id) as count
     FROM genres g
     LEFT JOIN manga_genres mg ON mg.genre_id = g.id
+    LEFT JOIN manga m ON m.id = mg.manga_id AND COALESCE(m.is_deleted, false) = false
     GROUP BY g.id
     ORDER BY lower(g.name) ASC, g.id ASC
   `
@@ -304,7 +305,7 @@ const markMangaUpdatedAtForNewChapter = async (mangaId, chapterDate) => {
   const id = Number(mangaId);
   if (!Number.isFinite(id) || id <= 0) return;
   const updatedAt = buildChapterTimestampIso(chapterDate);
-  await dbRun("UPDATE manga SET updated_at = ? WHERE id = ?", [updatedAt, Math.floor(id)]);
+  await dbRun("UPDATE manga SET updated_at = ? WHERE id = ? AND COALESCE(is_deleted, false) = false", [updatedAt, Math.floor(id)]);
 };
 
   return {
