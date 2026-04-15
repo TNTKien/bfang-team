@@ -25,6 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
+import { getSiteBranding } from "@/lib/site-branding";
 
 interface PostCardProps {
   post: Post;
@@ -55,6 +56,14 @@ export const PostCard = memo(function PostCard({
   const [hasPreviewOverflow, setHasPreviewOverflow] = useState(false);
   const suppressCardNavigationUntilRef = useRef(0);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const shareOrigin = useMemo(() => {
+    const origin = (getSiteBranding().shareOrigin || "").toString().trim();
+    if (origin) return origin;
+    if (typeof window !== "undefined") {
+      return window.location.origin || "";
+    }
+    return "";
+  }, []);
 
   const suppressCardNavigation = useCallback((durationMs = 800) => {
     suppressCardNavigationUntilRef.current = Date.now() + Math.max(0, Number(durationMs) || 0);
@@ -139,7 +148,7 @@ export const PostCard = memo(function PostCard({
   };
 
   const handleShare = async () => {
-    const shareUrl = new URL(`/forum/post/${encodeURIComponent(String(post.id))}`, window.location.origin).toString();
+    const shareUrl = new URL(`/forum/post/${encodeURIComponent(String(post.id))}`, shareOrigin || window.location.origin).toString();
     try {
       if (navigator.share) {
         await navigator.share({

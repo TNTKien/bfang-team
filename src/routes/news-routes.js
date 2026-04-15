@@ -30,7 +30,8 @@ const createNewsRoutes = (app, deps) => {
     newsDbGet,
     path,
     team,
-    toAbsolutePublicUrl
+    toAbsolutePublicUrl,
+    toAbsoluteShareUrl
   } = deps;
 
   const newsProjectDir = path.join(__dirname, "..", "news");
@@ -404,6 +405,7 @@ const createNewsRoutes = (app, deps) => {
       newsBasePath: NEWS_BASE_PATH,
       newsAssetPath: NEWS_ASSET_BASE_PATH,
       siteUrl: toNewsSectionUrl(req),
+      shareSiteUrl: toAbsoluteShareUrl(req, NEWS_BASE_PATH).replace(/\/+$/, ""),
       mainSiteUrl: toAbsolutePublicUrl(req, "/"),
       formatNewsDate,
       extractHashtags,

@@ -959,6 +959,15 @@
     return removed;
   };
 
+  const removeSingleTrashRow = (form, type) => {
+    if (removeFormRow(form)) return 1;
+
+    const rawId = Number(form && form.dataset ? form.dataset.trashId : 0);
+    if (!Number.isFinite(rawId) || rawId <= 0) return 0;
+
+    return removeTrashRowsByIds(type, [Math.floor(rawId)]);
+  };
+
   const runTrashBulkRestore = async (form, submitter) => {
     if (!form || !(form instanceof HTMLFormElement)) return;
     if (form.dataset.trashBulkBusy === "1") return;
@@ -1019,21 +1028,30 @@
       }
 
       if (!removedCount && restoredCount > 0) {
-        window.location.reload();
+        if (failedCount <= 0 && selectedIds.length) {
+          removedCount = removeTrashRowsByIds(type, selectedIds);
+        }
+      }
+
+      if (!removedCount && restoredCount > 0) {
+        showTrashInlineStatus("Đã khôi phục thành công nhưng danh sách chưa kịp cập nhật. Vui lòng tải lại trang để đồng bộ.", "error");
         return;
       }
 
-      decrementTrashTotalCount(type, restoredCount);
+      const effectiveRemovedCount = Math.max(removedCount, 0);
+      const safeRestoredCount = Math.max(restoredCount, effectiveRemovedCount);
+
+      decrementTrashTotalCount(type, safeRestoredCount);
       ensureTrashTableEmptyState(type);
       syncTrashSelectionUi(type);
 
       if (failedCount > 0) {
         showTrashInlineStatus(
-          `Đã khôi phục ${restoredCount} ${getTrashTypeLabel(type, true)}, còn ${failedCount} ${getTrashTypeLabel(type, true)} lỗi.`,
+          `Đã khôi phục ${safeRestoredCount} ${getTrashTypeLabel(type, true)}, còn ${failedCount} ${getTrashTypeLabel(type, true)} lỗi.`,
           "error"
         );
       } else {
-        showTrashInlineStatus(`Đã khôi phục ${restoredCount} ${getTrashTypeLabel(type, true)}.`, "success");
+        showTrashInlineStatus(`Đã khôi phục ${safeRestoredCount} ${getTrashTypeLabel(type, true)}.`, "success");
       }
     } catch (err) {
       const message = (err && err.message) || "Thao tác thất bại. Vui lòng thử lại.";
@@ -1065,6 +1083,7 @@
     }
 
     const isDeleteAll = isMangaAll || isChapterAll;
+    const totalCountBeforeDelete = readTrashTotalCount(type);
     const button =
       submitter instanceof HTMLButtonElement ? submitter : form.querySelector("button[type='submit']");
 
@@ -1097,7 +1116,30 @@
 
       const finished = await waitForAdminJob(jobId);
       if (finished && finished.assumedMissing) {
-        window.location.reload();
+        let removedCount = 0;
+        if (isDeleteAll) {
+          removedCount = removeAllTrashRows(type);
+        } else if (selectedIds.length) {
+          removedCount = removeTrashRowsByIds(type, selectedIds);
+        }
+
+        if (removedCount > 0) {
+          const fallbackDeletedCount = isDeleteAll
+            ? Math.max(totalCountBeforeDelete, 1)
+            : removedCount;
+          decrementTrashTotalCount(type, fallbackDeletedCount);
+          ensureTrashTableEmptyState(type);
+          syncTrashSelectionUi(type);
+
+          showTrashInlineStatus(
+            isDeleteAll
+              ? `Đã xử lý xóa toàn bộ ${getTrashTypeLabel(type, true)}.`
+              : `Đã xử lý xóa ${fallbackDeletedCount} ${getTrashTypeLabel(type, true)}.`,
+            "success"
+          );
+        } else {
+          showTrashInlineStatus("Không thể xác nhận kết quả tiến trình. Vui lòng tải lại trang để đồng bộ.", "error");
+        }
         return;
       }
       const result = finished && finished.result && typeof finished.result === "object" ? finished.result : {};
@@ -1119,31 +1161,36 @@
         removedCount = removeTrashRowsByIds(type, deletedIds);
       }
 
-      if (isDeleteAll && deletedCount > 0) {
+      if (!removedCount && !isDeleteAll && deletedCount > 0 && failedCount <= 0 && selectedIds.length) {
+        removedCount = removeTrashRowsByIds(type, selectedIds);
+      }
+
+      if (isDeleteAll && failedCount <= 0 && deletedCount > 0) {
         removedCount = Math.max(removedCount, removeAllTrashRows(type));
       }
 
       if (!removedCount && deletedCount > 0) {
-        window.location.reload();
+        showTrashInlineStatus("Đã xóa thành công nhưng danh sách chưa kịp cập nhật. Vui lòng tải lại trang để đồng bộ.", "error");
         return;
       }
 
-      if (isDeleteAll && failedCount > 0) {
-        window.location.reload();
-        return;
-      }
+      const effectiveRemovedCount = Math.max(removedCount, 0);
+      const safeDeletedCount = Math.max(
+        deletedCount,
+        isDeleteAll ? Math.min(totalCountBeforeDelete, effectiveRemovedCount || deletedCount) : effectiveRemovedCount
+      );
 
-      decrementTrashTotalCount(type, deletedCount);
+      decrementTrashTotalCount(type, safeDeletedCount);
       ensureTrashTableEmptyState(type);
       syncTrashSelectionUi(type);
 
       if (failedCount > 0) {
         showTrashInlineStatus(
-          `Đã xóa ${deletedCount} ${getTrashTypeLabel(type, true)}, còn ${failedCount} ${getTrashTypeLabel(type, true)} lỗi.`,
+          `Đã xóa ${safeDeletedCount} ${getTrashTypeLabel(type, true)}, còn ${failedCount} ${getTrashTypeLabel(type, true)} lỗi.`,
           "error"
         );
       } else {
-        showTrashInlineStatus(`Đã xóa ${deletedCount} ${getTrashTypeLabel(type, true)}.`, "success");
+        showTrashInlineStatus(`Đã xóa ${safeDeletedCount} ${getTrashTypeLabel(type, true)}.`, "success");
       }
     } catch (err) {
       const message = (err && err.message) || "Thao tác thất bại. Vui lòng thử lại.";
@@ -1200,12 +1247,13 @@
     try {
       if (isRestoreAction) {
         const data = await postJson(form.action);
-        if (!removeFormRow(form)) {
-          window.location.reload();
+        const removedCount = removeSingleTrashRow(form, type);
+        if (!removedCount) {
+          showTrashInlineStatus("Đã khôi phục nhưng danh sách chưa kịp cập nhật. Vui lòng tải lại trang để đồng bộ.", "error");
           return;
         }
 
-        decrementTrashTotalCount(type, 1);
+        decrementTrashTotalCount(type, removedCount);
         ensureTrashTableEmptyState(type);
         syncTrashSelectionUi(type);
         const restoredChapterCount =
@@ -1231,15 +1279,31 @@
 
       const finished = await waitForAdminJob(jobId);
       if (finished && finished.assumedMissing) {
-        window.location.reload();
+        const assumedRemovedCount = removeSingleTrashRow(form, type);
+        if (assumedRemovedCount > 0) {
+          decrementTrashTotalCount(type, assumedRemovedCount);
+          ensureTrashTableEmptyState(type);
+          syncTrashSelectionUi(type);
+
+          const assumedMessage = isPurgeManga
+            ? `Đã xử lý xóa ${mangaTitle ? `"${mangaTitle}"` : "truyện"}.`
+            : `Đã xử lý xóa ${chapterLabel}${mangaTitle ? ` của "${mangaTitle}"` : ""}.`;
+
+          if (!showTrashInlineStatus(assumedMessage, "success")) {
+            window.alert(assumedMessage);
+          }
+        } else {
+          showTrashInlineStatus("Không thể xác nhận kết quả tiến trình. Vui lòng tải lại trang để đồng bộ.", "error");
+        }
         return;
       }
-      if (!removeFormRow(form)) {
-        window.location.reload();
+      const removedCount = removeSingleTrashRow(form, type);
+      if (!removedCount) {
+        showTrashInlineStatus("Đã xóa thành công nhưng danh sách chưa kịp cập nhật. Vui lòng tải lại trang để đồng bộ.", "error");
         return;
       }
 
-      decrementTrashTotalCount(type, 1);
+      decrementTrashTotalCount(type, removedCount);
       ensureTrashTableEmptyState(type);
       syncTrashSelectionUi(type);
       const successMessage = isPurgeManga

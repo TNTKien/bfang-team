@@ -5,6 +5,7 @@ export type SiteBranding = {
   aboutNavLabel: string;
   footerYear: string;
   newsPageEnabled: boolean;
+  shareOrigin: string;
 };
 
 const DEFAULT_SITE_BRANDING: SiteBranding = {
@@ -14,6 +15,7 @@ const DEFAULT_SITE_BRANDING: SiteBranding = {
   aboutNavLabel: "Về BFANG",
   footerYear: String(new Date().getFullYear()),
   newsPageEnabled: true,
+  shareOrigin: "",
 };
 
 const readText = (value: unknown, fallback: string): string => {
@@ -50,6 +52,7 @@ export const getSiteBranding = (): SiteBranding => {
     };
     __FORUM_META?: {
       newsPageEnabled?: unknown;
+      shareOrigin?: unknown;
     };
   };
 
@@ -67,6 +70,12 @@ export const getSiteBranding = (): SiteBranding => {
   );
 
   const siteName = readText(branding.siteName, DEFAULT_SITE_BRANDING.siteName);
+  const shareOrigin = readText(
+    runtimeWindow.__FORUM_META && Object.prototype.hasOwnProperty.call(runtimeWindow.__FORUM_META, "shareOrigin")
+      ? runtimeWindow.__FORUM_META.shareOrigin
+      : "",
+    DEFAULT_SITE_BRANDING.shareOrigin
+  );
   const brandMark = readText(branding.brandMark, siteName.split(" ")[0] || DEFAULT_SITE_BRANDING.brandMark);
   const brandSubmark = readText(
     branding.brandSubmark,
@@ -80,5 +89,6 @@ export const getSiteBranding = (): SiteBranding => {
     aboutNavLabel: readText(branding.aboutNavLabel, `Về ${brandMark}`),
     footerYear: readText(branding.footerYear, DEFAULT_SITE_BRANDING.footerYear),
     newsPageEnabled,
+    shareOrigin,
   };
 };

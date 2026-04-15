@@ -59,6 +59,7 @@ const registerSiteRoutes = (app, deps) => {
     getMentionProfileMapForManga,
     getPaginatedCommentTree,
     getPublicOriginFromRequest,
+    getShareOriginFromRequest,
     getUserBadgeContext,
     hasOwnObjectKey,
     isDuplicateCommentRequestError,
@@ -114,6 +115,7 @@ const registerSiteRoutes = (app, deps) => {
     siteConfig,
     team,
     toAbsolutePublicUrl,
+    toAbsoluteShareUrl,
     toBooleanFlag,
     toIsoDate,
     uploadAvatar,
@@ -8874,27 +8876,10 @@ const registerSiteRoutes = (app, deps) => {
 
   const buildBookmarkShareToken = () => crypto.randomBytes(10).toString("hex");
 
-  const getBookmarkShareOriginFromRequest = (req) => {
-    if (!req) return getPublicOriginFromRequest(req) || "";
-
-    const canUseForwardedHeaders = Boolean(app.get("trust proxy"));
-    const forwardedHost = canUseForwardedHeaders
-      ? (req.get("x-forwarded-host") || "").toString().split(",")[0].trim()
-      : "";
-    const host = forwardedHost || (req.get("host") || "").toString().split(",")[0].trim();
-    if (!host) return getPublicOriginFromRequest(req) || "";
-
-    const forwardedProto = canUseForwardedHeaders
-      ? (req.get("x-forwarded-proto") || "").toString().split(",")[0].trim()
-      : "";
-    const protocol = (forwardedProto || req.protocol || "http").toLowerCase() === "https" ? "https" : "http";
-    return `${protocol}://${host}`;
-  };
-
   const buildBookmarkPublicShareUrl = (req, shareToken) => {
     const token = (shareToken || "").toString().trim();
     if (!token) return "";
-    return `${getBookmarkShareOriginFromRequest(req)}/account/saved/share/${encodeURIComponent(token)}`;
+    return toAbsoluteShareUrl(req, `/account/saved/share/${encodeURIComponent(token)}`);
   };
 
   const ensureDefaultFollowBookmarkList = async ({ userId, dbGetFn = dbGet, dbRunFn = dbRun }) => {
@@ -12131,7 +12116,9 @@ const registerSiteRoutes = (app, deps) => {
       }
 
       const canonicalMangaPath = `/manga/${encodeURIComponent(mangaRow.slug)}`;
-      if (mangaResolution.matchedBy !== "slug") {
+      const requestedMangaRouteParam = (req.params && req.params.slug ? String(req.params.slug) : "").trim();
+      const requestedMangaRouteIsIdOnly = /^\d+$/.test(requestedMangaRouteParam);
+      if (mangaResolution.matchedBy !== "slug" && !requestedMangaRouteIsIdOnly) {
         return res.redirect(301, canonicalMangaPath);
       }
 
@@ -12342,6 +12329,10 @@ const registerSiteRoutes = (app, deps) => {
         190
       );
       const canonicalPath = `/manga/${encodeURIComponent(mangaRow.slug)}`;
+      const mangaSharePath = Number.isFinite(Number(mangaRow.id)) && Number(mangaRow.id) > 0
+        ? `/manga/${encodeURIComponent(String(Math.floor(Number(mangaRow.id))))}`
+        : canonicalPath;
+      const mangaShareUrl = toAbsoluteShareUrl(req, mangaSharePath);
       const ampPath = `/amp/manga/${encodeURIComponent(mangaRow.slug)}`;
       const mangaKeywords = buildSeoKeywordList([
         SEO_TRENDING_KEYWORDS,
@@ -12401,6 +12392,7 @@ const registerSiteRoutes = (app, deps) => {
         commentsLoadUrl,
         commentComposerEnabled,
         mangaBookmarked,
+        mangaShareUrl,
         seo: buildSeoPayload(req, {
           title: mangaSeoTitle,
           titleAbsolute: true,

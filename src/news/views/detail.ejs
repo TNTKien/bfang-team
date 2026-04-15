@@ -3,15 +3,16 @@
 <%
     const newsBase = (newsBasePath || "/tin-tuc").toString().trim().replace(/\/+$/, "") || "/tin-tuc";
     const newsAssets = (newsAssetPath || `${newsBase}/assets`).toString().trim().replace(/\/+$/, "");
-    const newsSite = (siteUrl || "").toString().trim().replace(/\/+$/, "");
-    const newsUrl = `${newsSite}/${newsItem.id}`;
+    const newsCanonicalSite = (siteUrl || "").toString().trim().replace(/\/+$/, "");
+    const newsShareSite = (shareSiteUrl || siteUrl || "").toString().trim().replace(/\/+$/, "");
+    const newsUrl = `${newsShareSite}/${newsItem.id}`;
     const fallbackImage = `${newsAssets}/images/avatar.svg`;
     const seoData = seo && typeof seo === "object" ? seo : {};
     const seoTitle = (seoData.title || newsItem.noidung.substring(0, 70).trim()).toString().trim();
     const seoDescription = (seoData.description || newsItem.noidung.substring(0, 160).trim()).toString().trim();
     const seoKeywords = (seoData.keywords || `anime news, manga news, tin tức anime, tin tức manga, ${newsItem.noidung.substring(0, 50).trim()}`).toString().trim();
     const seoRobots = (seoData.robots || "index,follow").toString().trim() || "index,follow";
-    const seoCanonical = (seoData.canonical || newsUrl).toString().trim() || newsUrl;
+    const seoCanonical = (seoData.canonical || `${newsCanonicalSite}/${newsItem.id}`).toString().trim() || `${newsCanonicalSite}/${newsItem.id}`;
     const seoImage = (seoData.image || fallbackImage).toString().trim() || fallbackImage;
     const seoOgType = (seoData.ogType || "article").toString().trim() || "article";
     const seoTwitterCard = (seoData.twitterCard || "summary_large_image").toString().trim() || "summary_large_image";

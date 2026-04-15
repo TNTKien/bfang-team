@@ -50,6 +50,7 @@ import {
   buildForumPostSeo,
   extractSeoDescriptionFromHtml,
 } from "@/lib/forum-seo";
+import { getSiteBranding } from "@/lib/site-branding";
 import {
   FORUM_COMMENT_MAX_LENGTH,
   FORUM_POST_MAX_LENGTH,
@@ -621,6 +622,14 @@ const PostDetail = () => {
   );
 
   const post = detail ? mapApiPostToUiPost(detail.post, sectionOptionsForDetail) : null;
+  const shareOrigin = useMemo(() => {
+    const origin = (getSiteBranding().shareOrigin || "").toString().trim();
+    if (origin) return origin;
+    if (typeof window !== "undefined") {
+      return window.location.origin || "";
+    }
+    return "";
+  }, []);
 
   useEffect(() => {
     if (loading) return;
@@ -1209,7 +1218,10 @@ const PostDetail = () => {
   };
 
   const handleShare = async () => {
-    const shareUrl = window.location.href;
+    const safePostId = String(detail && detail.post && detail.post.id ? detail.post.id : id || "").trim();
+    const shareUrl = safePostId
+      ? new URL(`/forum/post/${encodeURIComponent(safePostId)}`, shareOrigin || window.location.origin).toString()
+      : window.location.href;
     try {
       if (navigator.share) {
         await navigator.share({

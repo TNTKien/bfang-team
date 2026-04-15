@@ -3,13 +3,14 @@
 <%
     const newsBase = (newsBasePath || "/tin-tuc").toString().trim().replace(/\/+$/, "") || "/tin-tuc";
     const newsAssets = (newsAssetPath || `${newsBase}/assets`).toString().trim().replace(/\/+$/, "");
-    const newsSite = (siteUrl || "").toString().trim().replace(/\/+$/, "");
+    const newsShareSite = (shareSiteUrl || siteUrl || "").toString().trim().replace(/\/+$/, "");
     const seoData = seo && typeof seo === "object" ? seo : {};
     const seoTitle = (seoData.title || title || "Tin tức Anime & Manga").toString().trim() || "Tin tức Anime & Manga";
     const seoDescription = (seoData.description || "Cập nhật tin tức Anime, Manga, Light Novel mới nhất mỗi ngày.").toString().trim();
     const seoKeywords = (seoData.keywords || "tin tức anime, tin tức manga, light novel").toString().trim();
     const seoRobots = (seoData.robots || "index,follow").toString().trim() || "index,follow";
-    const seoCanonical = (seoData.canonical || `${newsSite}/`).toString().trim() || `${newsSite}/`;
+    const seoCanonicalBase = (siteUrl || "").toString().trim().replace(/\/+$/, "");
+    const seoCanonical = (seoData.canonical || `${seoCanonicalBase}/`).toString().trim() || `${seoCanonicalBase}/`;
     const seoImage = (seoData.image || `${newsAssets}/images/avatar.svg`).toString().trim() || `${newsAssets}/images/avatar.svg`;
     const seoOgType = (seoData.ogType || "website").toString().trim() || "website";
     const seoTwitterCard = (seoData.twitterCard || "summary_large_image").toString().trim() || "summary_large_image";
@@ -264,11 +265,11 @@
                                 
                                 <div class="news-card-footer">
                                     <div class="action-buttons">
-                                        <button class="action-btn share-btn" data-url="<%= `${newsSite}/${item.id}` %>">
+                                        <button class="action-btn share-btn" data-url="<%= `${newsShareSite}/${item.id}` %>">
                                             <i class="fas fa-share"></i>
                                             <span>Chia sẻ</span>
                                         </button>
-                                        <button class="action-btn copy-btn" data-url="<%= `${newsSite}/${item.id}` %>">
+                                        <button class="action-btn copy-btn" data-url="<%= `${newsShareSite}/${item.id}` %>">
                                             <i class="fas fa-copy"></i>
                                             <span>Copy link</span>
                                         </button>

@@ -279,6 +279,7 @@ const appDomainOrigin = normalizeSiteOriginFromEnv(
 const configuredPublicOrigin = normalizeSiteOriginFromEnv(
   process.env.SITE_URL || process.env.PUBLIC_SITE_URL || appDomainOrigin
 );
+const configuredShareOrigin = normalizeSiteOriginFromEnv(process.env.URL_SHORT || "");
 const localDevOrigin = `http://localhost:${PORT}`;
 
 const normalizeSeoText = (value, maxLength) => {
@@ -347,6 +348,37 @@ const toAbsolutePublicUrl = (req, value) => {
 
   const withSlash = ensureLeadingSlash(raw);
   const origin = getPublicOriginFromRequest(req);
+  return origin ? `${origin}${withSlash}` : withSlash;
+};
+
+const getShareOriginFromRequest = (req) => {
+  if (configuredShareOrigin) return configuredShareOrigin;
+
+  if (req) {
+    const canUseForwardedHeaders = Boolean(trustProxy || app.get("trust proxy"));
+    const forwardedHost = canUseForwardedHeaders
+      ? (req.get("x-forwarded-host") || "").toString().split(",")[0].trim()
+      : "";
+    const host = forwardedHost || (req.get("host") || "").toString().split(",")[0].trim();
+    if (host) {
+      const forwardedProto = canUseForwardedHeaders
+        ? (req.get("x-forwarded-proto") || "").toString().split(",")[0].trim()
+        : "";
+      const protocol = (forwardedProto || req.protocol || "http").toLowerCase() === "https" ? "https" : "http";
+      return `${protocol}://${host}`;
+    }
+  }
+
+  return getPublicOriginFromRequest(req);
+};
+
+const toAbsoluteShareUrl = (req, value) => {
+  const raw = (value || "").toString().trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const withSlash = ensureLeadingSlash(raw);
+  const origin = getShareOriginFromRequest(req);
   return origin ? `${origin}${withSlash}` : withSlash;
 };
 
@@ -4332,6 +4364,7 @@ const appContainer = {
   getMentionProfileMapForManga,
   getPaginatedCommentTree,
   getPublicOriginFromRequest,
+  getShareOriginFromRequest,
   getUserBadgeContext,
   hasOwnObjectKey,
   commentImageUploadsEnabled,
@@ -4386,6 +4419,7 @@ const appContainer = {
   siteConfig,
   team,
   toAbsolutePublicUrl,
+  toAbsoluteShareUrl,
   toBooleanFlag,
   toIsoDate,
   uploadAvatar,
@@ -4455,6 +4489,7 @@ const appContainer = {
   isTruthyInput,
   listQuery,
   loadCoverTempBuffer,
+  configuredShareOrigin,
   localDevOrigin,
   mapBadgeRow,
   mapNotificationRow,
@@ -4507,7 +4542,7 @@ if (isForumPageAvailable) {
       (siteSeoConfig && siteSeoConfig.twitterSite ? String(siteSeoConfig.twitterSite).trim() : "") ||
       (derivedTwitterSiteToken ? `@${derivedTwitterSiteToken}` : "");
 
-    const forumBaseRuntimePayload = {
+    const buildForumBaseRuntimePayload = (req) => ({
       siteConfig,
       forumMeta: {
         siteName: forumSiteName,
@@ -4515,9 +4550,10 @@ if (isForumPageAvailable) {
         description: forumDescription,
         twitterSite: forumTwitterSite,
         imagePath: FORUM_DEFAULT_SOCIAL_IMAGE_PATH,
-        newsPageEnabled: Boolean(isNewsPageEnabled)
+        newsPageEnabled: Boolean(isNewsPageEnabled),
+        shareOrigin: getShareOriginFromRequest(req) || ""
       }
-    };
+    });
     const serializeSafeInlineJson = (value) =>
       JSON.stringify(value || {})
         .replace(/</g, "\\u003c")
@@ -4525,14 +4561,16 @@ if (isForumPageAvailable) {
         .replace(/&/g, "\\u0026")
         .replace(/\u2028/g, "\\u2028")
         .replace(/\u2029/g, "\\u2029");
-    const forumRuntimePayloadJson = serializeSafeInlineJson(forumBaseRuntimePayload);
-    const forumRuntimeScript = [
-      "(() => {",
-      `  const payload = ${forumRuntimePayloadJson};`,
-      "  window.__SITE_CONFIG = payload && payload.siteConfig ? payload.siteConfig : {};",
-      "  window.__FORUM_META = payload && payload.forumMeta ? payload.forumMeta : {};",
-      "})();"
-    ].join("\n");
+    const buildForumRuntimeScript = (req) => {
+      const forumRuntimePayloadJson = serializeSafeInlineJson(buildForumBaseRuntimePayload(req));
+      return [
+        "(() => {",
+        `  const payload = ${forumRuntimePayloadJson};`,
+        "  window.__SITE_CONFIG = payload && payload.siteConfig ? payload.siteConfig : {};",
+        "  window.__FORUM_META = payload && payload.forumMeta ? payload.forumMeta : {};",
+        "})();"
+      ].join("\n");
+    };
     const forumConfigScriptTag = '<script src="/forum/site-config.js"></script>';
     const forumDefaultSectionLabelBySlug = new Map([
       ["thao-luan-chung", "Thảo luận chung"],
@@ -4956,7 +4994,7 @@ if (isForumPageAvailable) {
       }
       return `${source}\n${scriptTag}`;
     };
-    const applyForumHeadBranding = (html, seoPayload) => {
+    const applyForumHeadBranding = (req, html, seoPayload) => {
       let nextHtml = String(html || "");
       const seo = seoPayload && typeof seoPayload === "object" ? seoPayload : {};
       const resolvedTitle = sanitizeForumMetaText(seo.title, 140, forumTitle);
@@ -4997,7 +5035,7 @@ if (isForumPageAvailable) {
       nextHtml = upsertJsonLdScript(nextHtml, Array.isArray(seo.jsonLd) ? seo.jsonLd : []);
 
       const runtimeSeoPayload = {
-        ...forumBaseRuntimePayload,
+        ...buildForumBaseRuntimePayload(req),
         seo: {
           title: resolvedTitle,
           description: resolvedDescription,
@@ -5043,7 +5081,7 @@ if (isForumPageAvailable) {
       try {
         const baseHtml = getForumIndexHtml();
         const seoPayload = await buildForumSeoData(req);
-        const html = applyForumHeadBranding(baseHtml, seoPayload);
+        const html = applyForumHeadBranding(req, baseHtml, seoPayload);
         res.type("text/html; charset=utf-8");
         res.set("Cache-Control", "no-store");
         return res.send(html);
@@ -5056,10 +5094,10 @@ if (isForumPageAvailable) {
     app.get("/forum", (req, res) => {
       return sendForumIndex(req, res);
     });
-    app.get("/forum/site-config.js", (_req, res) => {
+    app.get("/forum/site-config.js", (req, res) => {
       res.type("application/javascript; charset=utf-8");
       res.set("Cache-Control", "no-store");
-      return res.send(forumRuntimeScript);
+      return res.send(buildForumRuntimeScript(req));
     });
     app.use(
       "/forum",

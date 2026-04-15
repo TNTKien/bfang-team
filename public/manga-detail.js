@@ -8,7 +8,12 @@
   let resizeTimer = null;
   let lastViewportWidth = window.innerWidth;
 
-  const getUrl = () => window.location.href.split("#")[0];
+  const getUrl = (button) => {
+    const attrValue = button && button.getAttribute ? button.getAttribute("data-share-url") : "";
+    const explicitUrl = (attrValue || "").toString().trim();
+    if (explicitUrl) return explicitUrl;
+    return window.location.href.split("#")[0];
+  };
 
   const getTitle = () => {
     const h1 = document.querySelector(".detail-info h1") || document.querySelector("h1");
@@ -76,7 +81,7 @@
       const original = getLabel();
       const onShareClick = async (event) => {
         event.preventDefault();
-        const url = getUrl();
+        const url = getUrl(button);
         const title = getTitle();
 
         if (navigator.share) {
