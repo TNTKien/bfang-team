@@ -91,8 +91,8 @@
 
     body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible,
     body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible {
-      grid-template-columns: 34px 34px minmax(0, 1fr) 34px 34px !important;
-      column-gap: 0.38rem !important;
+      grid-template-columns: 32px 32px minmax(0, 1fr) 32px 32px !important;
+      column-gap: 0.32rem !important;
     }
 
     body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-float-btn--nav,
@@ -101,10 +101,10 @@
     body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-float-btn--nav,
     body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dock-collapse-toggle,
     body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-mode-toggle {
-      width: 34px !important;
-      min-width: 34px !important;
-      height: 34px !important;
-      min-height: 34px !important;
+      width: 32px !important;
+      min-width: 32px !important;
+      height: 32px !important;
+      min-height: 32px !important;
     }
 
     body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible > .reader-dropdown,
@@ -114,16 +114,16 @@
 
     body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav,
     body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav {
-      grid-template-columns: 34px 34px minmax(0, 1fr) 34px 34px !important;
-      column-gap: 0.38rem !important;
+      grid-template-columns: 32px 32px minmax(0, 1fr) 32px 32px !important;
+      column-gap: 0.32rem !important;
     }
 
     body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-float-btn--nav,
     body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-float-btn--nav {
-      width: 34px !important;
-      min-width: 34px !important;
-      height: 34px !important;
-      min-height: 34px !important;
+      width: 32px !important;
+      min-width: 32px !important;
+      height: 32px !important;
+      min-height: 32px !important;
     }
 
     body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown,
@@ -135,7 +135,36 @@
     body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown .reader-dropdown-trigger,
     body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown .reader-dropdown-trigger {
       width: 100% !important;
-      min-height: 34px !important;
+      min-height: 32px !important;
+    }
+
+    @media (min-width: 1120px) {
+      body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible,
+      body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-fixed-inner--dock-collapsible,
+      body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav,
+      body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav {
+        position: relative;
+        overflow: visible;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-dropdown,
+      body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-dropdown,
+      body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown,
+      body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown {
+        position: static !important;
+      }
+
+      body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-dropdown-panel,
+      body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__controls .reader-dropdown-panel,
+      body.reader-page.reader-page--reader-mode.reader-dock-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown .reader-dropdown-panel,
+      body.reader-page.reader-page--reader-mode.reader-dock-ultra-compact:not(.reader-dock-collapsed) .reader-dock__page-nav > .reader-dropdown .reader-dropdown-panel {
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: none !important;
+        box-sizing: border-box;
+      }
     }
 
     .reader-dropdown-trigger-icon {
