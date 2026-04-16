@@ -661,6 +661,49 @@
     return registration.pushManager.getSubscription().catch(() => null);
   };
 
+  const queryPermissionState = async (descriptor) => {
+    if (!navigator.permissions || typeof navigator.permissions.query !== "function") {
+      return "";
+    }
+    try {
+      const status = await navigator.permissions.query(descriptor);
+      return status && typeof status.state === "string" ? String(status.state).trim().toLowerCase() : "";
+    } catch (_error) {
+      return "";
+    }
+  };
+
+  const readEffectivePushPermissionState = async () => {
+    const notificationPermission =
+      window.Notification && typeof window.Notification.permission === "string"
+        ? String(window.Notification.permission).trim().toLowerCase()
+        : "";
+    const notificationsPermission = await queryPermissionState({ name: "notifications" });
+    const pushPermission = await queryPermissionState({ name: "push", userVisibleOnly: true });
+
+    let effective = "default";
+    if (
+      notificationPermission === "granted" ||
+      notificationsPermission === "granted" ||
+      pushPermission === "granted"
+    ) {
+      effective = "granted";
+    } else if (
+      notificationPermission === "denied" ||
+      notificationsPermission === "denied" ||
+      pushPermission === "denied"
+    ) {
+      effective = "denied";
+    }
+
+    return {
+      notificationPermission,
+      notificationsPermission,
+      pushPermission,
+      effective
+    };
+  };
+
   const unsubscribePushLocallyAndRemotely = async (subscription, { allowServerCall } = {}) => {
     const targetSubscription = subscription || (await readCurrentPushSubscription().catch(() => null));
     if (!targetSubscription) return;
@@ -708,7 +751,8 @@
         return;
       }
 
-      const permission = window.Notification.permission;
+      const permissionState = await readEffectivePushPermissionState().catch(() => ({ effective: "default" }));
+      const permission = permissionState && permissionState.effective ? permissionState.effective : "default";
       if (permission === "denied") {
         await unsubscribePushLocallyAndRemotely(existingSubscription, { allowServerCall: true });
         lastPushSyncAt = Date.now();
@@ -724,7 +768,7 @@
 
       let activeSubscription = existingSubscription;
       if (!activeSubscription) {
-        if (window.Notification.permission !== "granted") {
+        if (permission !== "granted") {
           const canPromptPermission =
             force &&
             allowPrompt &&
@@ -732,8 +776,9 @@
             typeof window.Notification.requestPermission === "function";
           if (canPromptPermission) {
             markPushPermissionPromptAttempt();
-            const nextPermission = await window.Notification.requestPermission().catch(() => "default");
-            if (nextPermission !== "granted") {
+            await window.Notification.requestPermission().catch(() => "default");
+            const nextPermissionState = await readEffectivePushPermissionState().catch(() => ({ effective: "default" }));
+            if (!nextPermissionState || nextPermissionState.effective !== "granted") {
               lastPushSyncAt = Date.now();
               return;
             }
@@ -797,33 +842,35 @@
   const requestPushPermissionFromUserGesture = () => {
     if (!signedIn || !isPushNotificationSupported()) return;
 
-    const permission = window.Notification.permission;
-    if (permission === "granted") {
-      syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
-      return;
-    }
-    if (permission === "denied") {
-      syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
-      return;
-    }
-    if (permission !== "default") {
-      return;
-    }
-    if (isPushPermissionPromptCooldownActive()) {
-      return;
-    }
-    if (typeof window.Notification.requestPermission !== "function") {
-      return;
-    }
-
-    markPushPermissionPromptAttempt();
-    window.Notification.requestPermission()
-      .then((nextPermission) => {
-        if (nextPermission === "granted") {
+    readEffectivePushPermissionState()
+      .then((permissionState) => {
+        const permission = permissionState && permissionState.effective ? permissionState.effective : "default";
+        if (permission === "granted") {
           syncPushSubscriptionState({ force: true, allowPrompt: false }).catch(() => null);
           return;
         }
-        syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+        if (permission === "denied") {
+          syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+          return;
+        }
+        if (isPushPermissionPromptCooldownActive()) {
+          return;
+        }
+        if (typeof window.Notification.requestPermission !== "function") {
+          return;
+        }
+
+        markPushPermissionPromptAttempt();
+        window.Notification.requestPermission()
+          .then(() => readEffectivePushPermissionState().catch(() => ({ effective: "default" })))
+          .then((nextPermissionState) => {
+            if (nextPermissionState && nextPermissionState.effective === "granted") {
+              syncPushSubscriptionState({ force: true, allowPrompt: false }).catch(() => null);
+              return;
+            }
+            syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+          })
+          .catch(() => null);
       })
       .catch(() => null);
   };
