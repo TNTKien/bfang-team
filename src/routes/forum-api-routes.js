@@ -28,6 +28,7 @@ const registerForumApiRoutes = (app, deps) => {
     b2DeleteAllByPrefix,
     b2DeleteFileVersions,
     b2UploadBuffer,
+    buildPushNotificationPayloadFromRow,
     buildCommentNotificationPreview,
     buildCommentMentionsForContent,
     createMentionNotificationsForComment,
@@ -51,6 +52,8 @@ const registerForumApiRoutes = (app, deps) => {
     sharp,
     sqlRedisCache,
     sqlRedisCacheEnabled,
+    resolveForumCommentPermalinkForNotification,
+    sendPushNotificationToUser,
     uploadCommentImage,
     uploadImageBufferToGoogleDrive,
     commentImageUploadsEnabled,
@@ -314,6 +317,12 @@ const registerForumApiRoutes = (app, deps) => {
     const createdAt = Date.now();
     const preview =
       typeof buildCommentNotificationPreview === "function" ? buildCommentNotificationPreview(content) : "";
+    const actorRow = actorUserId
+      ? await dbGet("SELECT username, display_name, avatar_url FROM users WHERE id = ? LIMIT 1", [actorUserId])
+      : null;
+    const actorDisplayName = actorRow && actorRow.display_name ? String(actorRow.display_name).trim() : "";
+    const actorUsername = actorRow && actorRow.username ? String(actorRow.username).trim() : "";
+    const actorAvatarUrl = actorRow && actorRow.avatar_url ? String(actorRow.avatar_url).trim() : "";
 
     const inserted = await dbRun(
       `
@@ -346,6 +355,38 @@ const registerForumApiRoutes = (app, deps) => {
 
     if (inserted && inserted.changes) {
       publishNotificationStreamUpdate({ userId: targetUserId, reason: "created" }).catch(() => null);
+      if (typeof sendPushNotificationToUser === "function") {
+        const pushUrl =
+          typeof resolveForumCommentPermalinkForNotification === "function"
+            ? await resolveForumCommentPermalinkForNotification({ commentId: safeCommentId })
+            : `/forum/post/${Math.floor(safePostId)}#comment-${Math.floor(safeCommentId)}`;
+        const pushPayload =
+          typeof buildPushNotificationPayloadFromRow === "function"
+            ? buildPushNotificationPayloadFromRow(
+                {
+                  id: safeCommentId,
+                  type: notificationType,
+                  is_read: false,
+                  actor_display_name: actorDisplayName,
+                  actor_username: actorUsername,
+                  actor_avatar_url: actorAvatarUrl,
+                  manga_title: "",
+                  manga_slug: "",
+                  chapter_number: null,
+                  comment_id: safeCommentId,
+                  content_preview: preview,
+                  created_at: createdAt
+                },
+                { url: pushUrl }
+              )
+            : null;
+        if (pushPayload) {
+          sendPushNotificationToUser({
+            userId: targetUserId,
+            notification: pushPayload
+          }).catch(() => null);
+        }
+      }
       return {
         createdCount: inserted.changes,
         notifiedUserIds: [targetUserId]

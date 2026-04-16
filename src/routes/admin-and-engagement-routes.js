@@ -72,6 +72,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     mapBadgeRow,
     mapMangaListRow,
     mapNotificationRow,
+    buildPushNotificationPayloadFromRow,
     markMangaUpdatedAtForNewChapter,
     normalizeAdminJobError,
     normalizeAvatarUrl,
@@ -111,6 +112,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     uploadChapterPage,
     uploadChapterPages,
     uploadCover,
+    sendPushNotificationToUser,
     softDeleteChapter,
     softDeleteManga,
     wantsJson,
@@ -231,6 +233,20 @@ const notifyBookmarkedUsersForNewChapter = async ({ mangaId, chapterNumber }) =>
   const safeMangaId = Math.floor(mangaIdValue);
   const safeChapterNumber = Math.abs(chapterValue) < 1e-9 ? 0 : chapterValue;
   const createdAt = Date.now();
+  const mangaMetaRow = await dbGet("SELECT title, slug FROM manga WHERE id = ? LIMIT 1", [safeMangaId]).catch(
+    () => null
+  );
+  const mangaTitle = mangaMetaRow && mangaMetaRow.title ? String(mangaMetaRow.title).trim() : "";
+  const mangaSlug = mangaMetaRow && mangaMetaRow.slug ? String(mangaMetaRow.slug).trim() : "";
+
+  const chapterText =
+    Math.abs(safeChapterNumber - Math.round(safeChapterNumber)) < 1e-9
+      ? String(Math.round(safeChapterNumber))
+      : safeChapterNumber.toFixed(3).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+  const chapterPath = chapterText
+    ? `/manga/${encodeURIComponent(mangaSlug)}/chapters/${encodeURIComponent(chapterText)}`
+    : `/manga/${encodeURIComponent(mangaSlug)}`;
+  const pushUrl = mangaSlug ? chapterPath : "/manga";
 
   const insertedRows = await dbAll(
     `
@@ -284,13 +300,44 @@ const notifyBookmarkedUsersForNewChapter = async ({ mangaId, chapterNumber }) =>
     [NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER, safeMangaId, safeChapterNumber, createdAt, safeMangaId, safeMangaId]
   );
 
+  const insertedList = Array.isArray(insertedRows) ? insertedRows : [];
   let createdCount = 0;
-  insertedRows.forEach((row) => {
+  for (const row of insertedList) {
     const userId = row && row.user_id ? String(row.user_id).trim() : "";
-    if (!userId) return;
+    if (!userId) continue;
     createdCount += 1;
     publishNotificationStreamUpdate({ userId, reason: "created" }).catch(() => null);
-  });
+
+    if (typeof sendPushNotificationToUser === "function") {
+      const pushPayload =
+        typeof buildPushNotificationPayloadFromRow === "function"
+          ? buildPushNotificationPayloadFromRow(
+              {
+                id: safeMangaId,
+                type: NOTIFICATION_TYPE_MANGA_BOOKMARK_NEW_CHAPTER,
+                is_read: false,
+                actor_display_name: "",
+                actor_username: "",
+                actor_avatar_url: "",
+                manga_title: mangaTitle,
+                manga_slug: mangaSlug,
+                chapter_number: safeChapterNumber,
+                comment_id: null,
+                content_preview: "",
+                created_at: createdAt
+              },
+              { url: pushUrl }
+            )
+          : null;
+
+      if (pushPayload) {
+        sendPushNotificationToUser({
+          userId,
+          notification: pushPayload
+        }).catch(() => null);
+      }
+    }
+  }
 
   return createdCount;
 };

@@ -27,6 +27,7 @@ const registerSiteRoutes = (app, deps) => {
     buildCommentChapterContext,
     buildCommentMentionsForContent,
     buildCommentNotificationPreview,
+    buildPushNotificationPayloadFromRow,
     buildHomepageNotices,
     buildOAuthCallbackUrl,
     buildSeoPayload,
@@ -99,12 +100,14 @@ const registerSiteRoutes = (app, deps) => {
     requireAuthUserForComments,
     rotateUserApiKey,
     resolveCommentScope,
+    resolveCommentPermalinkForNotification,
     resolveOrCreateUserFromOauthProfile,
     resolvePaginationParams,
     sendCommentCooldownResponse,
     sendCommentDuplicateContentResponse,
     sendCommentRequestIdInvalidResponse,
     sendDuplicateCommentRequestResponse,
+    sendPushNotificationToUser,
     serverSessionVersion,
     setAuthSessionUser,
     sharp,
@@ -1871,12 +1874,25 @@ const registerSiteRoutes = (app, deps) => {
     const preview =
       typeof buildCommentNotificationPreview === "function" ? buildCommentNotificationPreview(content) : "";
     const createdAt = Date.now();
+    const actorRow = actorUserId
+      ? await dbGet("SELECT username, display_name, avatar_url FROM users WHERE id = ? LIMIT 1", [actorUserId])
+      : null;
+    const actorDisplayName = actorRow && actorRow.display_name ? String(actorRow.display_name).trim() : "";
+    const actorUsername = actorRow && actorRow.username ? String(actorRow.username).trim() : "";
+    const actorAvatarUrl = actorRow && actorRow.avatar_url ? String(actorRow.avatar_url).trim() : "";
     const mangaIdValue = Number(mangaId);
     const chapterValue = chapterNumber == null ? NaN : Number(chapterNumber);
     const notificationMangaId =
       !isForumRequest && Number.isFinite(mangaIdValue) && mangaIdValue > 0 ? Math.floor(mangaIdValue) : null;
     const notificationChapterNumber =
       !isForumRequest && Number.isFinite(chapterValue) ? chapterValue : null;
+    let notificationMangaSlug = "";
+    let notificationMangaTitle = "";
+    if (!isForumRequest && notificationMangaId != null) {
+      const mangaRow = await dbGet("SELECT slug, title FROM manga WHERE id = ? LIMIT 1", [notificationMangaId]);
+      notificationMangaSlug = mangaRow && mangaRow.slug ? String(mangaRow.slug).trim() : "";
+      notificationMangaTitle = mangaRow && mangaRow.title ? String(mangaRow.title).trim() : "";
+    }
 
     const normalizedParentAuthorUserId = (parentAuthorUserId || "").toString().trim();
     const notificationsToCreate = [];
@@ -1939,6 +1955,44 @@ const registerSiteRoutes = (app, deps) => {
         createdCount += inserted.changes;
         notifiedUserIdSet.add(notification.userId);
         publishNotificationStreamUpdate({ userId: notification.userId, reason: "created" }).catch(() => null);
+        if (typeof sendPushNotificationToUser === "function") {
+          const pushUrl = isForumRequest
+            ? `/forum/post/${safeRootId}#comment-${safeCommentId}`
+            : await resolveCommentPermalinkForNotification({
+                mangaSlug: notificationMangaSlug,
+                mangaId: notificationMangaId,
+                chapterNumber: notificationChapterNumber,
+                commentId: safeCommentId,
+                perPage: 20
+              });
+          const pushPayload =
+            typeof buildPushNotificationPayloadFromRow === "function"
+              ? buildPushNotificationPayloadFromRow(
+                  {
+                    id: safeCommentId,
+                    type: notification.type,
+                    is_read: false,
+                    actor_display_name: actorDisplayName,
+                    actor_username: actorUsername,
+                    actor_avatar_url: actorAvatarUrl,
+                    manga_title: notificationMangaTitle,
+                    manga_slug: notificationMangaSlug,
+                    chapter_number: notificationChapterNumber,
+                    comment_id: safeCommentId,
+                    content_preview: preview,
+                    created_at: createdAt
+                  },
+                  { url: pushUrl }
+                )
+              : null;
+
+          if (pushPayload) {
+            sendPushNotificationToUser({
+              userId: notification.userId,
+              notification: pushPayload
+            }).catch(() => null);
+          }
+        }
       }
     }
 
@@ -2014,6 +2068,15 @@ const registerSiteRoutes = (app, deps) => {
 
     let createdCount = 0;
     const notifiedUserIdSet = new Set();
+    const actorRow = actorUserId
+      ? await dbGet("SELECT username, display_name, avatar_url FROM users WHERE id = ? LIMIT 1", [actorUserId])
+      : null;
+    const actorDisplayName = actorRow && actorRow.display_name ? String(actorRow.display_name).trim() : "";
+    const actorUsername = actorRow && actorRow.username ? String(actorRow.username).trim() : "";
+    const actorAvatarUrl = actorRow && actorRow.avatar_url ? String(actorRow.avatar_url).trim() : "";
+    const mangaRow = await dbGet("SELECT slug, title FROM manga WHERE id = ? LIMIT 1", [safeMangaId]);
+    const notificationMangaSlug = mangaRow && mangaRow.slug ? String(mangaRow.slug).trim() : "";
+    const notificationMangaTitle = mangaRow && mangaRow.title ? String(mangaRow.title).trim() : "";
 
     for (const userId of recipientUserIds) {
       const inserted = await dbRun(
@@ -2049,6 +2112,42 @@ const registerSiteRoutes = (app, deps) => {
         createdCount += inserted.changes;
         notifiedUserIdSet.add(userId);
         publishNotificationStreamUpdate({ userId, reason: "created" }).catch(() => null);
+        if (typeof sendPushNotificationToUser === "function") {
+          const pushUrl = await resolveCommentPermalinkForNotification({
+            mangaSlug: notificationMangaSlug,
+            mangaId: safeMangaId,
+            chapterNumber: safeChapterNumber,
+            commentId: safeCommentId,
+            perPage: 20
+          });
+          const pushPayload =
+            typeof buildPushNotificationPayloadFromRow === "function"
+              ? buildPushNotificationPayloadFromRow(
+                  {
+                    id: safeCommentId,
+                    type: NOTIFICATION_TYPE_TEAM_MANGA_COMMENT,
+                    is_read: false,
+                    actor_display_name: actorDisplayName,
+                    actor_username: actorUsername,
+                    actor_avatar_url: actorAvatarUrl,
+                    manga_title: notificationMangaTitle,
+                    manga_slug: notificationMangaSlug,
+                    chapter_number: safeChapterNumber,
+                    comment_id: safeCommentId,
+                    content_preview: preview,
+                    created_at: createdAt
+                  },
+                  { url: pushUrl }
+                )
+              : null;
+
+          if (pushPayload) {
+            sendPushNotificationToUser({
+              userId,
+              notification: pushPayload
+            }).catch(() => null);
+          }
+        }
       }
     }
 

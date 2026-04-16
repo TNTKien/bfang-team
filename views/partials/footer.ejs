@@ -30,6 +30,10 @@
           <span class="footer-links__legal-dot" aria-hidden="true">·</span>
           <a class="inline-link" href="/terms-of-service">Điều khoản dịch vụ</a>
         </span>
+        <span class="footer-links__legal">
+          <span class="footer-separator footer-separator--legal-start" aria-hidden="true">·</span>
+          <button class="inline-link" style="background: transparent; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer;" type="button" data-push-test-trigger>Test Push Noti</button>
+        </span>
       </div>
       <% if (dmcaFooterHtml) { %>
         <div class="footer-dmca"><%- dmcaFooterHtml %></div>
@@ -37,6 +41,63 @@
     </div>
   </div>
 </footer>
+
+<script nonce="<%= cspNonce || "" %>">
+  (() => {
+    const trigger = document.querySelector("[data-push-test-trigger]");
+    if (!trigger) return;
+
+    const showToast = (message, tone = "info", kind = "push-test", dedupe = true) => {
+      const text = (message || "").toString().trim();
+      if (!text) return;
+      if (!window.BfangToast || typeof window.BfangToast.show !== "function") {
+        window.alert(text);
+        return;
+      }
+      window.BfangToast.show({ message: text, tone, kind, dedupe });
+    };
+
+    trigger.addEventListener("click", async () => {
+      if (trigger.disabled) return;
+      trigger.disabled = true;
+      trigger.style.opacity = "0.65";
+      trigger.style.cursor = "not-allowed";
+      const originalLabel = trigger.textContent;
+      trigger.textContent = "Đang gửi...";
+
+      try {
+        const response = await fetch("/notifications/push/test", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify({})
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data || data.ok !== true) {
+          const errorMessage =
+            data && data.error ? String(data.error).trim() : "Gửi push test thất bại.";
+          showToast(errorMessage, "error", "push-test-error", false);
+          return;
+        }
+
+        const stats = data && data.result && typeof data.result === "object" ? data.result : {};
+        const sent = Number(stats.sent) || 0;
+        const total = Number(stats.total) || 0;
+        showToast(`Đã gửi push test thành công (${sent}/${total}).`, "success", "push-test-success", false);
+      } catch (_error) {
+        showToast("Không thể gọi API test push. Vui lòng thử lại.", "error", "push-test-network", false);
+      } finally {
+        trigger.disabled = false;
+        trigger.style.opacity = "";
+        trigger.style.cursor = "pointer";
+        trigger.textContent = originalLabel;
+      }
+    });
+  })();
+</script>
 
 <dialog class="modal" data-public-confirm-dialog aria-label="Xác nhận thao tác">
   <div class="modal-card">

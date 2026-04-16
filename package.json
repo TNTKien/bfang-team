@@ -56,7 +56,8 @@
     "passport-oauth2": "^1.8.0",
     "pg": "^8.13.1",
     "sharp": "^0.34.5",
-    "terser": "^5.46.0"
+    "terser": "^5.46.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "flowbite": "^2.5.2",

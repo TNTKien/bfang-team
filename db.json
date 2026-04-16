@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "public",
-  "generated_at": "2026-04-15T12:36:16.958Z",
+  "generated_at": "2026-04-16T08:24:04.774Z",
   "generated_by": "scripts/sync-db-json.js",
   "source_files": [
     "src/domains/init-db-domain.js",
@@ -1229,6 +1229,72 @@
         {
           "name": "read_at",
           "data_type": "bigint",
+          "is_nullable": true
+        }
+      ]
+    },
+    {
+      "name": "push_subscriptions",
+      "exists": true,
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "integer",
+          "is_nullable": false
+        },
+        {
+          "name": "user_id",
+          "data_type": "text",
+          "is_nullable": false
+        },
+        {
+          "name": "endpoint",
+          "data_type": "text",
+          "is_nullable": false
+        },
+        {
+          "name": "p256dh",
+          "data_type": "text",
+          "is_nullable": false
+        },
+        {
+          "name": "auth_key",
+          "data_type": "text",
+          "is_nullable": false
+        },
+        {
+          "name": "expiration_time",
+          "data_type": "bigint",
+          "is_nullable": true
+        },
+        {
+          "name": "user_agent",
+          "data_type": "text",
+          "is_nullable": true
+        },
+        {
+          "name": "created_at",
+          "data_type": "bigint",
+          "is_nullable": false
+        },
+        {
+          "name": "updated_at",
+          "data_type": "bigint",
+          "is_nullable": false
+        },
+        {
+          "name": "last_success_at",
+          "data_type": "bigint",
+          "is_nullable": true
+        },
+        {
+          "name": "last_error_at",
+          "data_type": "bigint",
+          "is_nullable": true
+        },
+        {
+          "name": "last_error_code",
+          "data_type": "text",
           "is_nullable": true
         }
       ]

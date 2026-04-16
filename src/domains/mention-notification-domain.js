@@ -9,6 +9,7 @@ const createMentionNotificationDomain = (deps) => {
     dbAll,
     dbGet,
     dbRun,
+    sendPushNotificationToUser,
     formatTimeAgo,
     normalizeAvatarUrl,
     normalizeHexColor,
@@ -175,6 +176,12 @@ const buildCommentNotificationPreview = (value) => {
   if (compact.length <= 180) return compact;
   return `${compact.slice(0, 177)}...`;
 };
+
+const buildMappedNotificationContextText = (mapped) =>
+  [mapped && mapped.mangaTitle, mapped && mapped.chapterLabel]
+    .map((value) => (value == null ? "" : String(value)).trim())
+    .filter(Boolean)
+    .join(" • ");
 
 const buildCommentPermalink = ({ mangaSlug, chapterNumber, commentId, commentPage }) => {
   const slug = (mangaSlug || "").toString().trim();
@@ -669,7 +676,7 @@ const publishNotificationStreamUpdate = async ({ userId, reason }) => {
   });
 };
 
-const createMentionNotificationsForComment = async ({
+  const createMentionNotificationsForComment = async ({
   mangaId,
   chapterNumber,
   commentId,
@@ -715,6 +722,19 @@ const createMentionNotificationsForComment = async ({
   const chapterValue = chapterNumber == null ? null : Number(chapterNumber);
   const safeChapterNumber = !isForumRequest && Number.isFinite(chapterValue) ? chapterValue : null;
   const safeAuthorUserId = (authorUserId || "").toString().trim();
+  let safeMangaSlug = "";
+  let safeMangaTitle = "";
+  if (!isForumRequest && safeMangaId != null) {
+    const mangaRow = await dbGet("SELECT slug, title FROM manga WHERE id = ? LIMIT 1", [safeMangaId]);
+    safeMangaSlug = mangaRow && mangaRow.slug ? String(mangaRow.slug).trim() : "";
+    safeMangaTitle = mangaRow && mangaRow.title ? String(mangaRow.title).trim() : "";
+  }
+  const actorRow = safeAuthorUserId
+    ? await dbGet("SELECT username, display_name, avatar_url FROM users WHERE id = ? LIMIT 1", [safeAuthorUserId])
+    : null;
+  const actorDisplayName = actorRow && actorRow.display_name ? String(actorRow.display_name).trim() : "";
+  const actorUsername = actorRow && actorRow.username ? String(actorRow.username).trim() : "";
+  const actorAvatarUrl = actorRow && actorRow.avatar_url ? String(actorRow.avatar_url).trim() : "";
   const preview = buildCommentNotificationPreview(content);
   const createdAt = Date.now();
 
@@ -752,11 +772,46 @@ const createMentionNotificationsForComment = async ({
       ]
     );
 
-    if (result && result.changes) {
-      createdCount += result.changes;
-      publishNotificationStreamUpdate({ userId: targetUserId, reason: "created" }).catch(() => null);
+      if (result && result.changes) {
+        createdCount += result.changes;
+        publishNotificationStreamUpdate({ userId: targetUserId, reason: "created" }).catch(() => null);
+        if (typeof sendPushNotificationToUser === "function") {
+          const pushUrl = isForumRequest
+            ? `/forum/post/${encodeURIComponent(String(Math.floor(rootCommentId || safeCommentId)))}#comment-${safeCommentId}`
+            : await resolveCommentPermalinkForNotification({
+                mangaSlug: safeMangaSlug,
+                mangaId: safeMangaId,
+                chapterNumber: safeChapterNumber,
+                commentId: safeCommentId,
+                perPage: 20
+              });
+          const pushPayload = buildPushNotificationPayloadFromRow(
+            {
+              id: safeCommentId,
+              type: NOTIFICATION_TYPE_MENTION,
+              is_read: false,
+              actor_display_name: actorDisplayName,
+              actor_username: actorUsername,
+              actor_avatar_url: actorAvatarUrl,
+              manga_title: safeMangaTitle,
+              manga_slug: safeMangaSlug,
+              chapter_number: safeChapterNumber,
+              comment_id: safeCommentId,
+              content_preview: preview,
+              created_at: createdAt
+            },
+            { url: pushUrl }
+          );
+
+          if (pushPayload) {
+            sendPushNotificationToUser({
+              userId: targetUserId,
+              notification: pushPayload
+            }).catch(() => null);
+          }
+        }
+      }
     }
-  }
 
   return createdCount;
 };
@@ -1182,6 +1237,29 @@ const mapNotificationRow = (row, options = {}) => {
   };
 };
 
+const buildPushNotificationPayloadFromRow = (row, options = {}) => {
+  const mapped = mapNotificationRow(row, options);
+  if (!mapped || typeof mapped !== "object") return null;
+  const title = mapped.message || "Bạn có thông báo mới.";
+  const body = [buildMappedNotificationContextText(mapped), mapped.preview]
+    .map((value) => (value == null ? "" : String(value)).trim())
+    .filter(Boolean)
+    .join("\n");
+  const url = mapped.url && String(mapped.url).startsWith("/") ? mapped.url : "/";
+  return {
+    type: mapped.type || "mention",
+    title,
+    body,
+    icon: mapped.actorAvatarUrl || undefined,
+    tag: mapped.id ? `notification-${mapped.id}` : "notification",
+    url,
+    data: {
+      notificationId: mapped.id || 0,
+      notificationType: mapped.type || "mention"
+    }
+  };
+};
+
   return {
     addNotificationStreamClient,
     buildCommentMentionsForContent,
@@ -1198,6 +1276,7 @@ const mapNotificationRow = (row, options = {}) => {
     getMentionProfileMapForManga,
     getUnreadNotificationCount,
     mapNotificationRow,
+    buildPushNotificationPayloadFromRow,
     normalizeMentionSearchQuery,
     publishNotificationStreamUpdate,
     removeNotificationStreamClient,

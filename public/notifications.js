@@ -13,6 +13,12 @@
   const NOTIFY_STALE_STREAM_MS = 75 * 1000;
   const NOTIFY_REALTIME_HEALTH_TICK_MS = 20 * 1000;
   const NOTIFY_FETCH_TIMEOUT_MS = 10000;
+  const PUSH_SYNC_THROTTLE_MS = 30 * 1000;
+  const PUSH_PERMISSION_PROMPT_COOLDOWN_MS = 60 * 1000;
+  const PUSH_SYNC_CROSS_TAB_LOCK_TTL_MS = 12 * 1000;
+  const PUSH_SYNC_LOCK_KEY = "__bfang_push_sync_lock";
+  const PUSH_PERMISSION_PROMPT_TS_KEY = "__bfang_push_prompt_last_at";
+  const PUSH_SYNC_RETRY_DELAY_MS = PUSH_SYNC_CROSS_TAB_LOCK_TTL_MS + 300;
 
   const hasAuthSession = (session) =>
     Boolean(
@@ -257,6 +263,149 @@
   let realtimeBackoffMs = NOTIFY_REALTIME_RETRY_BASE_MS;
   let lastRealtimeEventAt = 0;
   let teamMembershipRequestPromise = null;
+  let pushSyncPromise = null;
+  let lastPushSyncAt = 0;
+  let pushPermissionPromptedAt = 0;
+  let pushSyncRetryTimer = null;
+
+  const parseJsonObjectSafe = (value) => {
+    if (typeof value !== "string" || !value) return null;
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const randomLockToken = () => {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") {
+        return window.crypto.randomUUID();
+      }
+    } catch (_error) {
+      // ignore
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+
+  const readPushSyncLock = () => {
+    try {
+      return parseJsonObjectSafe(window.localStorage.getItem(PUSH_SYNC_LOCK_KEY));
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const writePushSyncLock = (lock) => {
+    try {
+      window.localStorage.setItem(PUSH_SYNC_LOCK_KEY, JSON.stringify(lock));
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  };
+
+  const clearPushSyncLock = (lockToken) => {
+    if (!lockToken) return;
+    const current = readPushSyncLock();
+    if (!current || current.token !== lockToken) return;
+    try {
+      window.localStorage.removeItem(PUSH_SYNC_LOCK_KEY);
+    } catch (_error) {
+      // ignore
+    }
+  };
+
+  const readPushPermissionPromptedAtFromStorage = () => {
+    try {
+      if (!window.localStorage) return 0;
+    } catch (_error) {
+      return 0;
+    }
+
+    try {
+      const rawValue = Number(window.localStorage.getItem(PUSH_PERMISSION_PROMPT_TS_KEY));
+      return Number.isFinite(rawValue) && rawValue > 0 ? Math.floor(rawValue) : 0;
+    } catch (_error) {
+      return 0;
+    }
+  };
+
+  const writePushPermissionPromptedAtToStorage = (value) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) return;
+    try {
+      if (!window.localStorage) return;
+    } catch (_error) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(PUSH_PERMISSION_PROMPT_TS_KEY, String(Math.floor(numericValue)));
+    } catch (_error) {
+      // ignore
+    }
+  };
+
+  const isPushPermissionPromptCooldownActive = () => {
+    const latestPromptedAt = Math.max(pushPermissionPromptedAt, readPushPermissionPromptedAtFromStorage());
+    if (!latestPromptedAt) return false;
+    return Date.now() - latestPromptedAt < PUSH_PERMISSION_PROMPT_COOLDOWN_MS;
+  };
+
+  const markPushPermissionPromptAttempt = () => {
+    const now = Date.now();
+    pushPermissionPromptedAt = now;
+    writePushPermissionPromptedAtToStorage(now);
+  };
+
+  const acquirePushSyncLock = () => {
+    try {
+      if (!window.localStorage) return null;
+    } catch (_error) {
+      return null;
+    }
+
+    const now = Date.now();
+    const existingLock = readPushSyncLock();
+    if (existingLock && Number.isFinite(Number(existingLock.expiresAt)) && Number(existingLock.expiresAt) > now) {
+      return "";
+    }
+
+    const token = randomLockToken();
+    const lockPayload = {
+      token,
+      expiresAt: now + PUSH_SYNC_CROSS_TAB_LOCK_TTL_MS,
+    };
+    if (!writePushSyncLock(lockPayload)) {
+      return null;
+    }
+
+    const current = readPushSyncLock();
+    if (!current) {
+      return null;
+    }
+    if (current.token !== token) {
+      return "";
+    }
+    return token;
+  };
+
+  const clearPushSyncRetryTimer = () => {
+    if (!pushSyncRetryTimer) return;
+    window.clearTimeout(pushSyncRetryTimer);
+    pushSyncRetryTimer = null;
+  };
+
+  const schedulePushSyncRetry = () => {
+    if (pushSyncRetryTimer || !signedIn) return;
+    pushSyncRetryTimer = window.setTimeout(() => {
+      pushSyncRetryTimer = null;
+      if (!signedIn) return;
+      syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+    }, PUSH_SYNC_RETRY_DELAY_MS);
+  };
 
   const closeMenusExcept = (exceptWidget) => {
     widgets.forEach((widget) => {
@@ -427,7 +576,7 @@
     if (!widget.menu.hidden) positionMenu(widget);
   };
 
-  const requestNotificationApi = async ({ url, method }) => {
+  const requestNotificationApi = async ({ url, method, body }) => {
     const token = await getAccessTokenSafe().catch(() => "");
     const headers = { Accept: "application/json" };
     if (method !== "GET") {
@@ -446,7 +595,7 @@
         cache: "no-store",
         headers,
         credentials: "same-origin",
-        body: method === "GET" ? undefined : JSON.stringify({}),
+        body: method === "GET" ? undefined : JSON.stringify(body && typeof body === "object" ? body : {}),
         signal
       });
       data = await response.json().catch(() => null);
@@ -458,6 +607,230 @@
 
     if (!response || !response.ok || !data || data.ok !== true) return null;
     return data;
+  };
+
+  const showNotificationToast = (message, tone = "info", kind = "notifications-push", dedupe = true) => {
+    const text = (message || "").toString().trim();
+    if (!text) return;
+    if (!window.BfangToast || typeof window.BfangToast.show !== "function") return;
+    window.BfangToast.show({
+      message: text,
+      tone,
+      kind,
+      dedupe
+    });
+  };
+
+  const isPushNotificationSupported = () =>
+    Boolean(
+      window.Notification &&
+        window.PushManager &&
+        navigator.serviceWorker &&
+        typeof navigator.serviceWorker.getRegistration === "function"
+    );
+
+  const base64UrlToUint8Array = (base64Url) => {
+    const normalized = String(base64Url || "").trim().replace(/-/g, "+").replace(/_/g, "/");
+    if (!normalized) throw new Error("Invalid VAPID key");
+    const padding = "=".repeat((4 - (normalized.length % 4 || 4)) % 4);
+    const base64 = normalized + padding;
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let index = 0; index < rawData.length; index += 1) {
+      outputArray[index] = rawData.charCodeAt(index);
+    }
+    return outputArray;
+  };
+
+  const readPushPublicKey = async () => {
+    const data = await requestNotificationApi({
+      url: "/notifications/push/public-key",
+      method: "GET"
+    });
+    if (!data || data.enabled !== true) return "";
+    const key = data.publicKey == null ? "" : String(data.publicKey).trim();
+    return key;
+  };
+
+  const readCurrentPushSubscription = async () => {
+    if (!isPushNotificationSupported()) return null;
+    const registration = await navigator.serviceWorker.ready.catch(() => null);
+    if (!registration || !registration.pushManager || typeof registration.pushManager.getSubscription !== "function") {
+      return null;
+    }
+    return registration.pushManager.getSubscription().catch(() => null);
+  };
+
+  const unsubscribePushLocallyAndRemotely = async (subscription, { allowServerCall } = {}) => {
+    const targetSubscription = subscription || (await readCurrentPushSubscription().catch(() => null));
+    if (!targetSubscription) return;
+
+    const endpoint =
+      targetSubscription && targetSubscription.endpoint
+        ? String(targetSubscription.endpoint).trim()
+        : "";
+
+    if (allowServerCall && signedIn && endpoint) {
+      await requestNotificationApi({
+        url: "/notifications/push/unsubscribe",
+        method: "POST",
+        body: { endpoint }
+      }).catch(() => null);
+    }
+
+    if (typeof targetSubscription.unsubscribe === "function") {
+      await targetSubscription.unsubscribe().catch(() => null);
+    }
+  };
+
+  const syncPushSubscriptionState = async ({ force = false, allowPrompt = false } = {}) => {
+    if (!isPushNotificationSupported()) return;
+    if (pushSyncPromise) return pushSyncPromise;
+
+    const now = Date.now();
+    if (!force && now - lastPushSyncAt < PUSH_SYNC_THROTTLE_MS) {
+      return;
+    }
+
+    const pushSyncLockToken = acquirePushSyncLock();
+    if (pushSyncLockToken === "") {
+      schedulePushSyncRetry();
+      return;
+    }
+    clearPushSyncRetryTimer();
+
+    pushSyncPromise = (async () => {
+      const existingSubscription = await readCurrentPushSubscription().catch(() => null);
+
+      if (!signedIn) {
+        await unsubscribePushLocallyAndRemotely(existingSubscription, { allowServerCall: true });
+        lastPushSyncAt = Date.now();
+        return;
+      }
+
+      const permission = window.Notification.permission;
+      if (permission === "denied") {
+        await unsubscribePushLocallyAndRemotely(existingSubscription, { allowServerCall: true });
+        lastPushSyncAt = Date.now();
+        return;
+      }
+
+      const publicKey = await readPushPublicKey().catch(() => "");
+      if (!publicKey) {
+        await unsubscribePushLocallyAndRemotely(existingSubscription, { allowServerCall: true });
+        lastPushSyncAt = Date.now();
+        return;
+      }
+
+      let activeSubscription = existingSubscription;
+      if (!activeSubscription) {
+        if (window.Notification.permission !== "granted") {
+          const canPromptPermission =
+            force &&
+            allowPrompt &&
+            !isPushPermissionPromptCooldownActive() &&
+            typeof window.Notification.requestPermission === "function";
+          if (canPromptPermission) {
+            markPushPermissionPromptAttempt();
+            const nextPermission = await window.Notification.requestPermission().catch(() => "default");
+            if (nextPermission !== "granted") {
+              lastPushSyncAt = Date.now();
+              return;
+            }
+          } else {
+            lastPushSyncAt = Date.now();
+            return;
+          }
+        }
+
+        const registration = await navigator.serviceWorker.ready.catch(() => null);
+        if (!registration || !registration.pushManager || typeof registration.pushManager.subscribe !== "function") {
+          lastPushSyncAt = Date.now();
+          return;
+        }
+
+        let applicationServerKey;
+        try {
+          applicationServerKey = base64UrlToUint8Array(publicKey);
+        } catch (_error) {
+          lastPushSyncAt = Date.now();
+          return;
+        }
+
+        activeSubscription = await registration.pushManager
+          .subscribe({
+            userVisibleOnly: true,
+            applicationServerKey
+          })
+          .catch(() => null);
+      }
+
+      if (!activeSubscription) {
+        lastPushSyncAt = Date.now();
+        return;
+      }
+
+      const serializedSubscription =
+        typeof activeSubscription.toJSON === "function"
+          ? activeSubscription.toJSON()
+          : activeSubscription;
+
+      const subscribeResult = await requestNotificationApi({
+        url: "/notifications/push/subscribe",
+        method: "POST",
+        body: { subscription: serializedSubscription }
+      }).catch(() => null);
+      if (!subscribeResult) {
+        schedulePushSyncRetry();
+        return;
+      }
+
+      lastPushSyncAt = Date.now();
+    })().finally(() => {
+      pushSyncPromise = null;
+      clearPushSyncLock(pushSyncLockToken);
+    });
+
+    return pushSyncPromise;
+  };
+
+  const requestPushPermissionFromUserGesture = () => {
+    if (!signedIn || !isPushNotificationSupported()) return;
+
+    const permission = window.Notification.permission;
+    if (permission === "granted") {
+      syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+      return;
+    }
+    if (permission === "denied") {
+      showNotificationToast(
+        "Trình duyệt đang chặn thông báo. Hãy bật lại quyền Thông báo cho trang này trong cài đặt trình duyệt.",
+        "warning",
+        "notifications-push-denied"
+      );
+      syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+      return;
+    }
+    if (permission !== "default") {
+      return;
+    }
+    if (isPushPermissionPromptCooldownActive()) {
+      return;
+    }
+    if (typeof window.Notification.requestPermission !== "function") {
+      return;
+    }
+
+    markPushPermissionPromptAttempt();
+    window.Notification.requestPermission()
+      .then((nextPermission) => {
+        if (nextPermission === "granted") {
+          syncPushSubscriptionState({ force: true, allowPrompt: false }).catch(() => null);
+          return;
+        }
+        syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+      })
+      .catch(() => null);
   };
 
   const setWidgetVisible = (widget, visible) => {
@@ -768,15 +1141,20 @@
     };
   };
 
-  const applySignedInState = async (nextSignedIn) => {
+  const applySignedInState = async (nextSignedIn, options = {}) => {
+    const settings = options && typeof options === "object" ? options : {};
+    const wasSignedIn = signedIn;
+    const allowPushPrompt = Boolean(settings.allowPushPrompt);
     signedIn = Boolean(nextSignedIn);
     if (!signedIn) {
       inTeam = false;
+      clearPushSyncRetryTimer();
       widgets.forEach((widget) => {
         setWidgetVisible(widget, false);
       });
       stopPolling();
       stopRealtime();
+      syncPushSubscriptionState({ force: true, allowPrompt: false }).catch(() => null);
       return;
     }
 
@@ -789,6 +1167,7 @@
     startPolling();
     if (isDocumentVisible()) startRealtime();
     refreshVisibleWidgets();
+    syncPushSubscriptionState({ force: true, allowPrompt: allowPushPrompt && !wasSignedIn }).catch(() => null);
   };
 
   widgets.forEach((widget) => {
@@ -797,6 +1176,7 @@
       const nextOpen = widget.menu.hidden;
       setMenuOpen(widget, nextOpen);
       if (nextOpen) {
+        requestPushPermissionFromUserGesture();
         loadNotifications(widget).catch(() => null);
       }
     });
@@ -899,16 +1279,19 @@
   window.addEventListener("bfang:auth", (event) => {
     const detail = event && typeof event === "object" ? event.detail : null;
     const session = detail && detail.session ? detail.session : null;
-    applySignedInState(hasAuthSession(session)).catch(() => null);
+    applySignedInState(hasAuthSession(session), { allowPushPrompt: false }).catch(() => null);
   });
 
   const refreshOnResume = () => {
     getSessionSafe()
-      .then((session) => applySignedInState(Boolean(session)))
+      .then((session) => applySignedInState(Boolean(session), { allowPushPrompt: false }))
       .catch(() => null)
       .finally(() => {
         if (signedIn && isDocumentVisible()) {
           startRealtime();
+        }
+        if (signedIn) {
+          syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
         }
       });
   };
@@ -924,6 +1307,6 @@
   });
 
   getSessionSafe()
-    .then((session) => applySignedInState(Boolean(session)))
+    .then((session) => applySignedInState(Boolean(session), { allowPushPrompt: false }))
     .catch(() => null);
 })();

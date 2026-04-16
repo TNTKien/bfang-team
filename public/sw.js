@@ -7,6 +7,10 @@ const STATIC_CACHE_MAX_ENTRIES = 240;
 const SCRIPT_CACHE_MAX_ENTRIES = 120;
 const PAGE_CACHE_MAX_ENTRIES = 24;
 const PREFETCH_PAGE_TTL_MS = 10 * 60 * 1000;
+const PUSH_DEFAULT_TITLE = "Thông báo mới";
+const PUSH_DEFAULT_BODY = "Bạn có thông báo mới.";
+const PUSH_DEFAULT_ICON = "/favicon.ico";
+const PUSH_DEFAULT_BADGE = "/favicon.ico";
 
 const CACHEABLE_DESTINATIONS = new Set(["script", "style", "font", "image"]);
 const STATIC_ASSET_PATH_PATTERN = /\.(?:avif|css|eot|gif|ico|jpe?g|js|json|mjs|png|svg|ttf|webp|woff2?)$/i;
@@ -472,6 +476,178 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     handleFetch(event, url).catch(() => resolveFetchFailure(request, url))
+  );
+});
+
+const normalizePushPayload = (event) => {
+  if (!event || !event.data) {
+    return {
+      title: PUSH_DEFAULT_TITLE,
+      options: {
+        body: PUSH_DEFAULT_BODY,
+        icon: PUSH_DEFAULT_ICON,
+        badge: PUSH_DEFAULT_BADGE,
+        data: { url: "/" }
+      }
+    };
+  }
+
+  let payload = null;
+  try {
+    payload = event.data.json();
+  } catch (_error) {
+    try {
+      payload = { body: event.data.text() };
+    } catch (_err) {
+      payload = null;
+    }
+  }
+
+  const safePayload = payload && typeof payload === "object" ? payload : {};
+  const hasExplicitTitle = Object.prototype.hasOwnProperty.call(safePayload, "title");
+  const hasExplicitBody = Object.prototype.hasOwnProperty.call(safePayload, "body");
+  const title =
+    hasExplicitTitle
+      ? String(safePayload.title == null ? "" : safePayload.title).trim()
+      : PUSH_DEFAULT_TITLE;
+  const body = hasExplicitBody
+    ? String(safePayload.body == null ? "" : safePayload.body).trim()
+    : PUSH_DEFAULT_BODY;
+  const icon =
+    (safePayload.icon == null ? "" : String(safePayload.icon).trim()) || PUSH_DEFAULT_ICON;
+  const badge =
+    (safePayload.badge == null ? "" : String(safePayload.badge).trim()) || PUSH_DEFAULT_BADGE;
+  const tag = safePayload.tag == null ? "" : String(safePayload.tag).trim();
+  const rawUrl = safePayload.url == null ? "" : String(safePayload.url).trim();
+  const dataPayload = safePayload.data && typeof safePayload.data === "object" ? safePayload.data : {};
+
+  let safeUrl = "/";
+  if (rawUrl) {
+    try {
+      const parsed = new URL(rawUrl, self.location.origin);
+      safeUrl = parsed.toString();
+    } catch (_error) {
+      safeUrl = "/";
+    }
+  }
+
+  const options = {
+    body,
+    icon,
+    badge,
+    data: {
+      ...dataPayload,
+      url: safeUrl
+    }
+  };
+
+  if (tag) options.tag = tag;
+  if (safePayload.renotify === true) options.renotify = true;
+  if (safePayload.requireInteraction === true) options.requireInteraction = true;
+
+  return { title, options };
+};
+
+self.addEventListener("push", (event) => {
+  const notification = normalizePushPayload(event);
+  event.waitUntil(self.registration.showNotification(notification.title, notification.options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const data = event.notification && event.notification.data && typeof event.notification.data === "object"
+    ? event.notification.data
+    : {};
+  const targetRawUrl = data.url == null ? "/" : String(data.url).trim() || "/";
+
+  event.waitUntil(
+    (async () => {
+      let targetUrl;
+      try {
+        targetUrl = new URL(targetRawUrl, self.location.origin);
+      } catch (_error) {
+        targetUrl = new URL("/", self.location.origin);
+      }
+
+      const windowClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const sameOriginClients = windowClients.filter((client) => {
+        if (!client || !client.url) return false;
+        try {
+          const clientUrl = new URL(client.url);
+          return clientUrl.origin === targetUrl.origin;
+        } catch (_error) {
+          return false;
+        }
+      });
+
+      const exactMatchClient = sameOriginClients.find((client) => {
+        try {
+          return new URL(client.url).toString() === targetUrl.toString();
+        } catch (_error) {
+          return false;
+        }
+      });
+
+      const focusClient = exactMatchClient || sameOriginClients[0] || null;
+      if (focusClient) {
+        if (typeof focusClient.focus === "function") {
+          await focusClient.focus();
+        }
+        if (typeof focusClient.navigate === "function") {
+          await focusClient.navigate(targetUrl.toString());
+        }
+        return;
+      }
+
+      if (typeof self.clients.openWindow === "function") {
+        await self.clients.openWindow(targetUrl.toString());
+      }
+    })()
+  );
+});
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      const oldEndpoint = event && event.oldSubscription && event.oldSubscription.endpoint
+        ? String(event.oldSubscription.endpoint).trim()
+        : "";
+      const newSubscription = event ? event.newSubscription : null;
+      const newSubscriptionPayload =
+        newSubscription && typeof newSubscription.toJSON === "function"
+          ? newSubscription.toJSON()
+          : newSubscription;
+      const newEndpoint =
+        newSubscriptionPayload && newSubscriptionPayload.endpoint
+          ? String(newSubscriptionPayload.endpoint).trim()
+          : "";
+
+      const shouldUnsubscribeOldEndpoint = Boolean(oldEndpoint && (!newEndpoint || oldEndpoint !== newEndpoint));
+
+      if (shouldUnsubscribeOldEndpoint) {
+        await fetch("/notifications/push/unsubscribe", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify({ endpoint: oldEndpoint })
+        }).catch(() => null);
+      }
+
+      if (newSubscriptionPayload) {
+        await fetch("/notifications/push/subscribe", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify({ subscription: newSubscriptionPayload })
+        }).catch(() => null);
+      }
+    })()
   );
 });
 

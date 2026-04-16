@@ -26,6 +26,12 @@ const registerEngagementRoutes = (app, deps) => {
     publishNotificationStreamUpdate,
     removeNotificationStreamClient,
     requireAuthUserForComments,
+    getPushNotificationPublicKey,
+    upsertUserPushSubscription,
+    removeUserPushSubscription,
+    removeAllPushSubscriptionsForUser,
+    isPushNotificationEnabled,
+    sendPushNotificationToUser,
     resolveCommentPermalinkForNotification,
     resolveForumCommentPermalinkForNotification,
     wantsJson,
@@ -353,6 +359,180 @@ const registerEngagementRoutes = (app, deps) => {
 
     return 0;
   };
+
+  app.get(
+    "/notifications/push/public-key",
+    asyncHandler(async (_req, res) => {
+      const enabled = typeof isPushNotificationEnabled === "function" ? isPushNotificationEnabled() : false;
+      const publicKey =
+        typeof getPushNotificationPublicKey === "function" ? String(getPushNotificationPublicKey() || "").trim() : "";
+      return res.json({
+        ok: true,
+        enabled: Boolean(enabled && publicKey),
+        publicKey: enabled ? publicKey : ""
+      });
+    })
+  );
+
+  app.post(
+    "/notifications/push/subscribe",
+    asyncHandler(async (req, res) => {
+      if (!wantsJson(req)) {
+        return res.status(406).send("Yêu cầu JSON.");
+      }
+
+      const user = await requireAuthUserForComments(req, res);
+      if (!user) return;
+      const userId = String(user.id || "").trim();
+      if (!userId) {
+        return res.status(401).json({ ok: false, error: "Phiên đăng nhập không hợp lệ." });
+      }
+
+      if (typeof upsertUserPushSubscription !== "function") {
+        return res.status(503).json({ ok: false, error: "Push notification chưa sẵn sàng trên máy chủ." });
+      }
+
+      const subscription = req && req.body && typeof req.body === "object" ? req.body.subscription : null;
+      const userAgent = req && req.headers ? req.headers["user-agent"] : "";
+      const result = await upsertUserPushSubscription({
+        userId,
+        subscription,
+        userAgent
+      });
+
+      if (!result || result.ok !== true) {
+        return res.status(400).json({
+          ok: false,
+          error: result && result.error ? result.error : "Không thể đăng ký push notification."
+        });
+      }
+
+      return res.json({ ok: true, endpoint: result.endpoint || "" });
+    })
+  );
+
+  app.post(
+    "/notifications/push/unsubscribe",
+    asyncHandler(async (req, res) => {
+      if (!wantsJson(req)) {
+        return res.status(406).send("Yêu cầu JSON.");
+      }
+
+      const user = await requireAuthUserForComments(req, res);
+      if (!user) return;
+      const userId = String(user.id || "").trim();
+      if (!userId) {
+        return res.status(401).json({ ok: false, error: "Phiên đăng nhập không hợp lệ." });
+      }
+
+      if (typeof removeUserPushSubscription !== "function") {
+        return res.status(503).json({ ok: false, error: "Push notification chưa sẵn sàng trên máy chủ." });
+      }
+
+      const endpoint =
+        req && req.body && typeof req.body === "object" && req.body.endpoint != null
+          ? String(req.body.endpoint).trim()
+          : "";
+      if (!endpoint) {
+        return res.status(400).json({ ok: false, error: "Thiếu endpoint đăng ký push." });
+      }
+
+      const removed = await removeUserPushSubscription({ userId, endpoint });
+      return res.json({ ok: true, removed: Number(removed) || 0 });
+    })
+  );
+
+  app.post(
+    "/notifications/push/unsubscribe-all",
+    asyncHandler(async (req, res) => {
+      if (!wantsJson(req)) {
+        return res.status(406).send("Yêu cầu JSON.");
+      }
+
+      const user = await requireAuthUserForComments(req, res);
+      if (!user) return;
+      const userId = String(user.id || "").trim();
+      if (!userId) {
+        return res.status(401).json({ ok: false, error: "Phiên đăng nhập không hợp lệ." });
+      }
+
+      if (typeof removeAllPushSubscriptionsForUser !== "function") {
+        return res.status(503).json({ ok: false, error: "Push notification chưa sẵn sàng trên máy chủ." });
+      }
+
+      const removed = await removeAllPushSubscriptionsForUser({ userId });
+      return res.json({ ok: true, removed: Number(removed) || 0 });
+    })
+  );
+
+  app.post(
+    "/notifications/push/test",
+    asyncHandler(async (req, res) => {
+      if (!wantsJson(req)) {
+        return res.status(406).send("Yêu cầu JSON.");
+      }
+
+      const user = await requireAuthUserForComments(req, res);
+      if (!user) return;
+      const userId = String(user.id || "").trim();
+      if (!userId) {
+        return res.status(401).json({ ok: false, error: "Phiên đăng nhập không hợp lệ." });
+      }
+
+      if (typeof sendPushNotificationToUser !== "function") {
+        return res.status(503).json({ ok: false, error: "Push notification chưa sẵn sàng trên máy chủ." });
+      }
+
+      if (typeof isPushNotificationEnabled === "function" && !isPushNotificationEnabled()) {
+        return res.status(503).json({
+          ok: false,
+          error: "Máy chủ chưa bật Push Notification (thiếu cấu hình VAPID)."
+        });
+      }
+
+      const sentAt = Date.now();
+      const result = await sendPushNotificationToUser({
+        userId,
+        notification: {
+          type: "push_test",
+          title: "Test Push Notification",
+          body: "Đây là thông báo test từ MoeTruyen.",
+          tag: `push-test-${userId}-${sentAt}`,
+          url: "/",
+          data: {
+            kind: "push_test",
+            sentAt
+          }
+        }
+      });
+
+      const total = Number(result && result.total) || 0;
+      const sent = Number(result && result.sent) || 0;
+      const failed = Number(result && result.failed) || 0;
+      const removed = Number(result && result.removed) || 0;
+
+      if (total <= 0) {
+        return res.status(400).json({
+          ok: false,
+          error: "Bạn chưa có đăng ký Push Notification trên thiết bị này.",
+          result: { total, sent, failed, removed }
+        });
+      }
+
+      if (sent <= 0) {
+        return res.status(502).json({
+          ok: false,
+          error: "Không thể gửi push test. Vui lòng thử lại.",
+          result: { total, sent, failed, removed }
+        });
+      }
+
+      return res.json({
+        ok: true,
+        result: { total, sent, failed, removed }
+      });
+    })
+  );
 
   app.get(
     "/comments/delete-capability",

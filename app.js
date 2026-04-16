@@ -12,6 +12,7 @@ const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const OAuth2Strategy = require("passport-oauth2").Strategy;
 const multer = require("multer");
 const sharp = require("sharp");
+const webPush = require("web-push");
 const { Readable } = require("stream");
 const { google } = require("googleapis");
 const {
@@ -33,6 +34,7 @@ const createMangaDomain = require("./src/domains/manga-domain");
 const createSecuritySessionDomain = require("./src/domains/security-session-domain");
 const createAuthUserDomain = require("./src/domains/auth-user-domain");
 const createMentionNotificationDomain = require("./src/domains/mention-notification-domain");
+const createPushNotificationDomain = require("./src/domains/push-notification-domain");
 const createInitDbDomain = require("./src/domains/init-db-domain");
 const configureCoreRuntime = require("./src/app/configure-core-runtime");
 const { parseEnvBoolean } = require("./src/utils/env");
@@ -3961,6 +3963,21 @@ const {
   upsertAuthIdentityForUser,
   upsertUserProfileFromAuthUser,
 } = authUserDomain;
+const pushNotificationDomain = createPushNotificationDomain({
+  dbAll,
+  dbRun,
+  webPush,
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY,
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY,
+  vapidSubject: process.env.VAPID_SUBJECT,
+  defaultIconUrl: "/favicon.ico",
+  defaultBadgeUrl: "/favicon.ico",
+});
+if (typeof pushNotificationDomain.isPushNotificationEnabled === "function" && !pushNotificationDomain.isPushNotificationEnabled()) {
+  console.warn(
+    "[push] Web Push disabled: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT missing or invalid"
+  );
+}
 const mentionNotificationDomain = createMentionNotificationDomain({
   COMMENT_MENTION_FETCH_LIMIT,
   NOTIFICATION_CLEANUP_INTERVAL_MS,
@@ -3971,6 +3988,7 @@ const mentionNotificationDomain = createMentionNotificationDomain({
   dbAll,
   dbGet,
   dbRun,
+  sendPushNotificationToUser: pushNotificationDomain.sendPushNotificationToUser,
   formatTimeAgo,
   normalizeAvatarUrl,
   normalizeHexColor,
@@ -3993,6 +4011,7 @@ const {
   getMentionProfileMapForManga,
   getUnreadNotificationCount,
   mapNotificationRow,
+  buildPushNotificationPayloadFromRow,
   normalizeMentionSearchQuery,
   publishNotificationStreamUpdate,
   removeNotificationStreamClient,
@@ -4303,6 +4322,7 @@ const appContainer = {
   ...securitySessionDomain,
   ...authUserDomain,
   ...mentionNotificationDomain,
+  ...pushNotificationDomain,
   AUTH_DISCORD_STRATEGY,
   AUTH_GOOGLE_STRATEGY,
   COMMENT_LINK_LABEL_FETCH_LIMIT,
