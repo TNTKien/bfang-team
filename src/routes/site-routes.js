@@ -169,6 +169,8 @@ const registerSiteRoutes = (app, deps) => {
   const HOMEPAGE_RANKING_WEEK_DAYS = 7;
   const HOMEPAGE_RANKING_MONTH_DAYS = 30;
   const HOMEPAGE_RECENT_COMMENT_LIMIT = 6;
+  const HOMEPAGE_GENRE_HIGHLIGHT_LIMIT = 6;
+  const HOMEPAGE_GENRE_HIGHLIGHT_POOL_LIMIT = HOMEPAGE_GENRE_HIGHLIGHT_LIMIT * 8;
   const ACTIVE_MANGA_SQL = "COALESCE(m.is_deleted, false) = false";
   const ACTIVE_CHAPTER_SQL = "COALESCE(c.is_deleted, false) = false";
   const teamCommunityNameCache = new Map();
@@ -353,6 +355,7 @@ const registerSiteRoutes = (app, deps) => {
     includeAdult,
     q,
     status,
+    includeMode,
     include,
     exclude,
     genre,
@@ -364,6 +367,7 @@ const registerSiteRoutes = (app, deps) => {
       "list",
       `q-${String(normalizeEndpointCacheInput(q) || "all").toLowerCase()}`,
       `status-${String(normalizeEndpointCacheInput(status) || "all").toLowerCase()}`,
+      `include-mode-${String(normalizeEndpointCacheInput(includeMode) || "all").toLowerCase()}`,
       `include-${String(normalizeEndpointCacheInput(include) || "none").toLowerCase()}`,
       `exclude-${String(normalizeEndpointCacheInput(exclude) || "none").toLowerCase()}`,
       `genre-${String(normalizeEndpointCacheInput(genre) || "none").toLowerCase()}`,
@@ -652,6 +656,9 @@ const registerSiteRoutes = (app, deps) => {
       safePayload.topRankings && typeof safePayload.topRankings === "object"
         ? safePayload.topRankings
         : {};
+    const safeGenreHighlights = Array.isArray(safePayload.genreHighlights)
+      ? safePayload.genreHighlights
+      : [];
     const safeStats = safePayload.stats && typeof safePayload.stats === "object" ? safePayload.stats : {};
     const totalSeriesValue = includeAdult
       ? Number(safeStats.totalSeries)
@@ -670,6 +677,10 @@ const registerSiteRoutes = (app, deps) => {
         month: filterAdultItemsForOverlay(safeTopRankings.month, includeAdult),
         total: filterAdultItemsForOverlay(safeTopRankings.total, includeAdult)
       },
+      genreHighlights: safeGenreHighlights.map((section) => ({
+        ...(section && typeof section === "object" ? section : {}),
+        items: filterAdultItemsForOverlay(section && section.items, includeAdult)
+      })),
       recentComments: filterAdultItemsForOverlay(safePayload.recentComments, includeAdult),
       stats: {
         totalSeries: Number.isFinite(totalSeriesValue) ? Math.max(0, Math.floor(totalSeriesValue)) : 0,
@@ -11187,6 +11198,343 @@ const registerSiteRoutes = (app, deps) => {
     return homepagePayload;
   };
 
+  const buildMangaGenreFilterHref = (includeValues, options = {}) => {
+    const safeValues = Array.isArray(includeValues)
+      ? includeValues
+        .map((value) => (value == null ? "" : String(value)).trim())
+        .filter(Boolean)
+      : [];
+    if (!safeValues.length) {
+      return "/manga";
+    }
+
+    const queryParams = new URLSearchParams();
+    const includeModeRaw = options && typeof options.includeMode === "string"
+      ? options.includeMode.trim().toLowerCase()
+      : "";
+    const includeMode = includeModeRaw === "any" ? "any" : "all";
+    if (includeMode === "any" && safeValues.length > 1) {
+      queryParams.set("includeMode", "any");
+    }
+    safeValues.forEach((value) => queryParams.append("include", value));
+    const query = queryParams.toString();
+    return query ? `/manga?${query}` : "/manga";
+  };
+
+  const pickRandomSubset = (values, limit) => {
+    const source = Array.isArray(values) ? values.slice() : [];
+    const safeLimitRaw = Number(limit);
+    const safeLimit = Number.isFinite(safeLimitRaw) && safeLimitRaw > 0
+      ? Math.floor(safeLimitRaw)
+      : 0;
+    if (!source.length || safeLimit <= 0) {
+      return [];
+    }
+
+    const takeCount = Math.min(safeLimit, source.length);
+    for (let index = 0; index < takeCount; index += 1) {
+      const randomOffset = Math.floor(Math.random() * (source.length - index));
+      const swapIndex = index + randomOffset;
+      const currentValue = source[index];
+      source[index] = source[swapIndex];
+      source[swapIndex] = currentValue;
+    }
+    return source.slice(0, takeCount);
+  };
+
+  const resolveGenreIdFromAliasSet = (genreIdByNormalizedName, aliases) => {
+    if (!(genreIdByNormalizedName instanceof Map) || !Array.isArray(aliases)) {
+      return null;
+    }
+
+    for (const alias of aliases) {
+      const normalizedAlias = normalizeGenreLabelForAdultCheck(alias);
+      if (!normalizedAlias) continue;
+      if (genreIdByNormalizedName.has(normalizedAlias)) {
+        return genreIdByNormalizedName.get(normalizedAlias);
+      }
+    }
+    return null;
+  };
+
+  const HOMEPAGE_GENRE_HIGHLIGHT_SPECS = [
+    {
+      key: "romcom",
+      title: "Romcom",
+      requiredGenreAliasGroups: [
+        ["romance"],
+        ["comedy"]
+      ],
+      fallbackIncludeValues: ["romance", "comedy"]
+    },
+    {
+      key: "drama",
+      title: "Cảm xúc - Bi kịch",
+      requiredGenreAliasGroups: [
+        ["drama"]
+      ],
+      fallbackIncludeValues: ["drama"]
+    },
+    {
+      key: "school-life",
+      title: "Thế giới học đường",
+      requiredGenreAliasGroups: [
+        ["school life", "school-life", "schoollife"]
+      ],
+      fallbackIncludeValues: ["school life"]
+    },
+    {
+      key: "fantasy",
+      title: "Thế giới fantasy",
+      requiredGenreAliasGroups: [
+        ["fantasy"]
+      ],
+      fallbackIncludeValues: ["fantasy"]
+    },
+    {
+      key: "mystery-psychological",
+      title: "Bí ẩn - Tâm lý",
+      requiredGenreAliasGroups: [
+        ["psychological", "tâm lý", "tam ly"],
+        ["mystery", "bí ẩn", "bi an"]
+      ],
+      genreMatchMode: "any",
+      fallbackIncludeValues: ["psychological", "mystery"]
+    },
+    {
+      key: "oneshot",
+      title: "Oneshot cực chất",
+      requiredGenreAliasGroups: [
+        ["oneshot", "one shot", "one-shot"]
+      ],
+      fallbackIncludeValues: ["oneshot"]
+    }
+  ];
+
+  const buildHomepageGenreHighlightWhereClause = ({ requiredGenreIds, includeAdult, genreMatchMode }) => {
+    const safeRequiredGenreIds = Array.isArray(requiredGenreIds)
+      ? requiredGenreIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.floor(value))
+      : [];
+    const safeGenreMatchMode = genreMatchMode === "any" ? "any" : "all";
+    const conditions = [
+      "m.is_hidden = 0",
+      ACTIVE_MANGA_SQL,
+      MANGA_HAS_CHAPTER_SQL
+    ];
+
+    if (!includeAdult) {
+      conditions.push(`NOT (${MANGA_HAS_ADULT_GENRE_SQL})`);
+    }
+
+    if (safeRequiredGenreIds.length) {
+      if (safeGenreMatchMode === "any") {
+        const genrePlaceholders = safeRequiredGenreIds.map(() => "?").join(",");
+        conditions.push(
+          `EXISTS (
+            SELECT 1
+            FROM manga_genres mg_filter
+            WHERE mg_filter.manga_id = m.id
+              AND mg_filter.genre_id IN (${genrePlaceholders})
+          )`
+        );
+      } else {
+        safeRequiredGenreIds.forEach(() => {
+          conditions.push(
+            `EXISTS (
+              SELECT 1
+              FROM manga_genres mg_filter
+              WHERE mg_filter.manga_id = m.id
+                AND mg_filter.genre_id = ?
+            )`
+          );
+        });
+      }
+    }
+
+    return {
+      whereClause: conditions.join(" AND "),
+      params: safeRequiredGenreIds
+    };
+  };
+
+  const resolveRandomMangaIdsForGenreHighlight = async ({
+    requiredGenreIds,
+    genreMatchMode,
+    includeAdult,
+    maxMangaId,
+    limit
+  }) => {
+    const safeLimitRaw = Number(limit);
+    const safeLimit = Number.isFinite(safeLimitRaw) && safeLimitRaw > 0
+      ? Math.floor(safeLimitRaw)
+      : 0;
+    const safeMaxMangaIdRaw = Number(maxMangaId);
+    const safeMaxMangaId = Number.isFinite(safeMaxMangaIdRaw) && safeMaxMangaIdRaw > 0
+      ? Math.floor(safeMaxMangaIdRaw)
+      : 0;
+    if (!safeLimit || !safeMaxMangaId) {
+      return [];
+    }
+
+    const { whereClause, params } = buildHomepageGenreHighlightWhereClause({
+      requiredGenreIds,
+      includeAdult,
+      genreMatchMode
+    });
+    if (!whereClause) {
+      return [];
+    }
+
+    const anchorMangaId = 1 + Math.floor(Math.random() * safeMaxMangaId);
+    const samplePoolLimit = Math.max(HOMEPAGE_GENRE_HIGHLIGHT_POOL_LIMIT, safeLimit * 6);
+    const collectedIds = [];
+    const seenIds = new Set();
+    const appendIds = (rows) => {
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const id = Number(row && row.id);
+        if (!Number.isFinite(id) || id <= 0) return;
+        const safeId = Math.floor(id);
+        if (seenIds.has(safeId)) return;
+        seenIds.add(safeId);
+        collectedIds.push(safeId);
+      });
+    };
+
+    const forwardRows = await dbAll(
+      `
+        SELECT m.id
+        FROM manga m
+        WHERE ${whereClause}
+          AND m.id >= ?
+        ORDER BY m.id ASC
+        LIMIT ?
+      `,
+      [...params, anchorMangaId, samplePoolLimit]
+    );
+    appendIds(forwardRows);
+
+    if (collectedIds.length < samplePoolLimit) {
+      const remainingLimit = samplePoolLimit - collectedIds.length;
+      const wrappedRows = await dbAll(
+        `
+          SELECT m.id
+          FROM manga m
+          WHERE ${whereClause}
+            AND m.id < ?
+          ORDER BY m.id ASC
+          LIMIT ?
+        `,
+        [...params, anchorMangaId, remainingLimit]
+      );
+      appendIds(wrappedRows);
+    }
+
+    return pickRandomSubset(collectedIds, safeLimit);
+  };
+
+  const resolveHomepageGenreHighlights = async ({ includeAdult }) => {
+    const [genreRows, maxMangaRow] = await Promise.all([
+      dbAll("SELECT id, name FROM genres"),
+      dbGet("SELECT COALESCE(MAX(id), 0) AS max_id FROM manga")
+    ]);
+    const maxMangaId = Number(maxMangaRow && maxMangaRow.max_id) || 0;
+    const genreIdByNormalizedName = new Map();
+    (Array.isArray(genreRows) ? genreRows : []).forEach((row) => {
+      const genreId = Number(row && row.id);
+      if (!Number.isFinite(genreId) || genreId <= 0) return;
+      const normalizedName = normalizeGenreLabelForAdultCheck(row && row.name ? row.name : "");
+      if (!normalizedName || genreIdByNormalizedName.has(normalizedName)) return;
+      genreIdByNormalizedName.set(normalizedName, Math.floor(genreId));
+    });
+
+    const sectionSpecs = HOMEPAGE_GENRE_HIGHLIGHT_SPECS.map((spec) => {
+      const requiredGenreIds = (Array.isArray(spec.requiredGenreAliasGroups) ? spec.requiredGenreAliasGroups : [])
+        .map((aliases) => resolveGenreIdFromAliasSet(genreIdByNormalizedName, aliases))
+        .filter((id) => Number.isFinite(id) && id > 0)
+        .map((id) => Math.floor(id));
+
+      return {
+        key: spec.key,
+        title: spec.title,
+        requiredGenreIds,
+        genreMatchMode: spec.genreMatchMode === "any" ? "any" : "all",
+        fallbackIncludeValues: Array.isArray(spec.fallbackIncludeValues) ? spec.fallbackIncludeValues : []
+      };
+    });
+
+    const sectionsWithMangaIds = await Promise.all(
+      sectionSpecs.map(async (sectionSpec) => {
+        const mangaIds = sectionSpec.requiredGenreIds.length
+          ? await resolveRandomMangaIdsForGenreHighlight({
+            requiredGenreIds: sectionSpec.requiredGenreIds,
+            genreMatchMode: sectionSpec.genreMatchMode,
+            includeAdult,
+            maxMangaId,
+            limit: HOMEPAGE_GENRE_HIGHLIGHT_LIMIT
+          })
+          : [];
+
+        return {
+          ...sectionSpec,
+          mangaIds
+        };
+      })
+    );
+
+    const resolvedMangaIds = Array.from(
+      new Set(
+        sectionsWithMangaIds
+          .flatMap((section) => (Array.isArray(section.mangaIds) ? section.mangaIds : []))
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+          .map((id) => Math.floor(id))
+      )
+    );
+    const mangaRowById = new Map();
+
+    if (resolvedMangaIds.length > 0) {
+      const placeholders = resolvedMangaIds.map(() => "?").join(",");
+      const highlightRows = await dbAll(
+        `${listQueryBase} WHERE m.id IN (${placeholders})`,
+        resolvedMangaIds
+      );
+      (Array.isArray(highlightRows) ? highlightRows : []).forEach((row) => {
+        const mangaId = Number(row && row.id);
+        if (!Number.isFinite(mangaId) || mangaId <= 0) return;
+        mangaRowById.set(Math.floor(mangaId), row);
+      });
+    }
+
+    return sectionsWithMangaIds.map((section) => {
+      const includeValues = section.requiredGenreIds.length
+        ? section.requiredGenreIds
+        : section.fallbackIncludeValues;
+      const items = (Array.isArray(section.mangaIds) ? section.mangaIds : [])
+        .map((mangaId) => {
+          const row = mangaRowById.get(Number(mangaId));
+          if (!row) return null;
+          const mapped = mapMangaListRow(row);
+          return {
+            ...mapped,
+            isAdult: shouldExposeAdultMarker(row)
+          };
+        })
+        .filter(Boolean);
+
+      return {
+        key: section.key,
+        title: section.title,
+        viewAllHref: buildMangaGenreFilterHref(includeValues, {
+          includeMode: section.genreMatchMode
+        }),
+        items
+      };
+    });
+  };
+
   const resolveHomepagePayload = async (options = {}) => {
     const forceFresh = Boolean(options && options.forceFresh);
     const includeAdult = Boolean(options && options.includeAdult);
@@ -11261,6 +11609,7 @@ const registerSiteRoutes = (app, deps) => {
           const latestRows = await dbAll(
         `${listQueryBase} WHERE m.is_hidden = 0 AND ${MANGA_HAS_CHAPTER_SQL}${adultVisibilityClause} ${listQueryOrder} LIMIT ${HOMEPAGE_LATEST_LIMIT}`
           );
+          const genreHighlights = await resolveHomepageGenreHighlights({ includeAdult });
           await ensureMangaDailyViewBaselineSynced();
           const topRankingDayRows = await resolveHomepageTopRankingByPeriod({
             includeAdult: false,
@@ -11579,6 +11928,7 @@ const registerSiteRoutes = (app, deps) => {
           let rebuiltPayload = {
             featured: mappedFeatured,
             latest: mappedLatest,
+            genreHighlights,
             topRankings: mappedTopRankings,
             recentComments: mappedRecentComments,
             latestForumPosts: mappedLatestForumPosts,
@@ -11687,6 +12037,7 @@ const registerSiteRoutes = (app, deps) => {
         team,
         featured: homepagePayload.featured,
         latest: homepagePayload.latest,
+        genreHighlights: homepagePayload.genreHighlights,
         topRankings: homepagePayload.topRankings,
         recentComments: homepagePayload.recentComments,
         forumLatestPosts: homepagePayload.latestForumPosts,
@@ -12246,6 +12597,7 @@ const registerSiteRoutes = (app, deps) => {
       const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
       const includeAdultForRequest = shouldIncludeAdultMangaForRequest(req);
       const rawStatus = typeof req.query.status === "string" ? req.query.status.trim() : "";
+      const rawIncludeMode = typeof req.query.includeMode === "string" ? req.query.includeMode.trim().toLowerCase() : "";
       const rawInclude = req.query.include;
       const rawExclude = req.query.exclude;
       const legacyGenre = typeof req.query.genre === "string" ? req.query.genre.trim() : "";
@@ -12253,6 +12605,7 @@ const registerSiteRoutes = (app, deps) => {
         includeAdult: includeAdultForRequest,
         q: normalizeEndpointCacheInput(q),
         status: normalizeEndpointCacheInput(rawStatus),
+        includeMode: normalizeEndpointCacheInput(rawIncludeMode),
         include: normalizeEndpointCacheInput(rawInclude),
         exclude: normalizeEndpointCacheInput(rawExclude),
         genre: normalizeEndpointCacheInput(legacyGenre),
@@ -12297,6 +12650,7 @@ const registerSiteRoutes = (app, deps) => {
             statusOptions: Array.isArray(mangaListRenderPayload.statusOptions)
               ? mangaListRenderPayload.statusOptions
               : [],
+            includeMode: cachedFilters.includeMode === "any" ? "any" : "all",
             include: Array.isArray(cachedFilters.include) ? cachedFilters.include : [],
             exclude: Array.isArray(cachedFilters.exclude) ? cachedFilters.exclude : []
           },
@@ -12374,6 +12728,7 @@ const registerSiteRoutes = (app, deps) => {
         addFilter(include, legacyGenre);
       }
 
+      const includeMode = rawIncludeMode === "any" ? "any" : "all";
       const includeSet = new Set(include);
       const filteredExclude = exclude.filter((id) => !includeSet.has(id));
 
@@ -12432,16 +12787,30 @@ const registerSiteRoutes = (app, deps) => {
         params.push(selectedStatus);
       }
 
-      include.forEach((genre) => {
-        conditions.push(
-          `EXISTS (
-          SELECT 1
-          FROM manga_genres mg
-          WHERE mg.manga_id = m.id AND mg.genre_id = ?
-        )`
-        );
-        params.push(genre);
-      });
+      if (include.length) {
+        if (includeMode === "any") {
+          const includePlaceholders = include.map(() => "?").join(",");
+          conditions.push(
+            `EXISTS (
+            SELECT 1
+            FROM manga_genres mg
+            WHERE mg.manga_id = m.id AND mg.genre_id IN (${includePlaceholders})
+          )`
+          );
+          params.push(...include);
+        } else {
+          include.forEach((genre) => {
+            conditions.push(
+              `EXISTS (
+              SELECT 1
+              FROM manga_genres mg
+              WHERE mg.manga_id = m.id AND mg.genre_id = ?
+            )`
+            );
+            params.push(genre);
+          });
+        }
+      }
 
       filteredExclude.forEach((genre) => {
         conditions.push(
@@ -12543,6 +12912,7 @@ const registerSiteRoutes = (app, deps) => {
         filters: {
           q,
           status: selectedStatus,
+          includeMode,
           include,
           exclude: filteredExclude
         },
@@ -12575,6 +12945,7 @@ const registerSiteRoutes = (app, deps) => {
           q,
           status: selectedStatus,
           statusOptions,
+          includeMode,
           include,
           exclude: filteredExclude
         },

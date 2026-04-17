@@ -16,6 +16,7 @@
   const firstFeaturedCover = firstFeaturedCoverSources.src;
   const homepageHeadPreloadImages = firstFeaturedCover ? [firstFeaturedCover] : [];
   const latestForumPosts = Array.isArray(forumLatestPosts) ? forumLatestPosts : [];
+  const homepageGenreHighlights = Array.isArray(genreHighlights) ? genreHighlights : [];
   const homepageTopRankingSource = topRankings && typeof topRankings === "object" ? topRankings : {};
   const homepageTopRankingPeriods = [
     {
@@ -60,6 +61,10 @@
 
   (featured || []).forEach((item) => appendHomepageSpeculationTarget(item && item.slug));
   (latest || []).forEach((item) => appendHomepageSpeculationTarget(item && item.slug));
+  homepageGenreHighlights.forEach((section) => {
+    const items = Array.isArray(section && section.items) ? section.items : [];
+    items.forEach((item) => appendHomepageSpeculationTarget(item && item.slug));
+  });
   homepageTopRankingPeriods.forEach((period) => {
     period.items.forEach((item) => appendHomepageSpeculationTarget(item && item.slug));
   });
@@ -427,6 +432,71 @@
             <% }) %>
           </div>
         </section>
+
+        <% homepageGenreHighlights.forEach((section) => { %>
+          <% const sectionItems = Array.isArray(section && section.items) ? section.items : []; %>
+          <section class="section container">
+            <div class="section-header section-header--homepage-list">
+              <h2>
+                <%= (section && section.title ? section.title : "").toString().trim() || "Thể loại nổi bật" %>
+              </h2>
+              <a class="section-header__view-all" href="<%= section && section.viewAllHref ? section.viewAllHref : "/manga" %>">
+                <span>Xem tất cả</span>
+                <i class="fa-solid fa-arrow-right-long" aria-hidden="true"></i>
+              </a>
+            </div>
+            <% if (sectionItems.length > 0) { %>
+              <div class="manga-grid manga-grid--home manga-grid--list-style">
+                <% sectionItems.forEach((manga) => { %>
+                  <% const genreSectionChapterLabel = manga.latestChapterIsOneshot ? "Oneshot" : `Ch. ${manga.latestChapterNumber || 0}`; %>
+                  <% const genreSectionStatusClass = manga.status === "Hoàn thành" ? "is-complete" : manga.status === "Tạm dừng" ? "is-hiatus" : "is-ongoing"; %>
+                  <article class="manga-card manga-card--list">
+                    <a href="/manga/<%= manga.slug %>">
+                      <div class="cover <%= manga.isAdult ? "cover--adult" : "" %>" <%= manga.isAdult ? "data-adult-cover" : "" %>>
+                        <% if (manga.cover) { %>
+                          <% const genreSectionCoverBaseUrl = cacheBust(manga.cover, manga.coverUpdatedAt); %>
+                          <% const genreSectionCoverSources = buildSafeCoverSources(genreSectionCoverBaseUrl, {
+                            slotWidths: [132, 172, 262],
+                            quality: 95,
+                            maxWidth: 900,
+                            defaultWidth: 172
+                          }); %>
+                          <img
+                            src="<%= genreSectionCoverSources.src %>"
+                            srcset="<%= genreSectionCoverSources.srcset %>"
+                            sizes="(max-width: 760px) 47vw, 174px"
+                            alt="Bìa <%= manga.title %>"
+                            loading="lazy"
+                            decoding="async"
+                            fetchpriority="low"
+                            width="420"
+                            height="600"
+                          />
+                        <% } else { %>
+                          <span class="cover__label">No Cover</span>
+                        <% } %>
+                        <span class="manga-badge <%= genreSectionStatusClass %>">
+                          <%= manga.status || "Đang ra" %>
+                        </span>
+                        <span class="manga-chapter-label"><%= genreSectionChapterLabel %></span>
+                      </div>
+                      <div class="manga-body">
+                        <% const genreSectionCardTitle = truncateCardTitle(manga.title); %>
+                        <h3 title="<%= manga.title %>"><%= genreSectionCardTitle %></h3>
+                        <div class="manga-list-meta" aria-label="Thông tin truyện theo thể loại">
+                          <span><i class="fa-regular fa-eye" aria-hidden="true"></i> <%= Number((manga.totalViews ?? manga.total_views) || 0).toLocaleString("vi-VN") %> lượt xem</span>
+                          <span><i class="fa-regular fa-comments" aria-hidden="true"></i> <%= Number((manga.commentCount ?? manga.comment_count) || 0).toLocaleString("vi-VN") %> bình luận</span>
+                        </div>
+                      </div>
+                    </a>
+                  </article>
+                <% }) %>
+              </div>
+            <% } else { %>
+              <p class="note">Chưa có truyện phù hợp.</p>
+            <% } %>
+          </section>
+        <% }) %>
 
         <% if (hasHomepageTopRankings || homepageRecentComments.length > 0) { %>
           <section class="section container">
