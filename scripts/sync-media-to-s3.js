@@ -51,11 +51,6 @@ if (!S3_MEDIA_BUCKET || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
   process.exit(1);
 }
 
-if (!MEDIA_CDN_BASE_URL) {
-  console.error("MEDIA_CDN_BASE_URL (or CHAPTER_CDN_BASE_URL/S3_ENDPOINT) is required to rewrite DB URLs");
-  process.exit(1);
-}
-
 const pool = new Pool({ connectionString: DATABASE_URL });
 const s3 = new S3Client({
   region: S3_REGION,
@@ -151,19 +146,10 @@ function extractUploadPathFromUrl(value) {
   }
 }
 
-function toAbsoluteMediaUrlFromUploadPath(uploadPath, originalValue) {
+function toRelativeMediaUrlFromUploadPath(uploadPath, _originalValue) {
   const safePath = normalizeS3Key(uploadPath);
   if (!safePath) return "";
-  const original = (originalValue == null ? "" : String(originalValue)).trim();
-  let suffix = "";
-  if (original) {
-    const queryIndex = original.indexOf("?");
-    const hashIndex = original.indexOf("#");
-    if (queryIndex >= 0) {
-      suffix = hashIndex > queryIndex ? original.slice(queryIndex, hashIndex) : original.slice(queryIndex);
-    }
-  }
-  return `${MEDIA_CDN_BASE_URL}/${safePath}${suffix}`;
+  return `/${safePath}`;
 }
 
 async function listFilesInDirectory(directoryPath) {
@@ -417,7 +403,7 @@ async function rewriteTableUploadUrls(client, { tableName, idColumn, columns }) 
 
       const uploadPath = extractUploadPathFromUrl(currentValue);
       if (!uploadPath.startsWith("uploads/")) return;
-      const nextValue = toAbsoluteMediaUrlFromUploadPath(uploadPath, currentValue);
+      const nextValue = toRelativeMediaUrlFromUploadPath(uploadPath, currentValue);
       if (!nextValue || nextValue === currentValue) return;
 
       assignments.push(`${columnName} = $${assignments.length + 1}`);
@@ -454,7 +440,7 @@ async function main() {
     console.log(`- dry run: ${APPLY ? "no" : "yes"}`);
     console.log(`- media bucket: ${S3_MEDIA_BUCKET}`);
     console.log(`- media prefix: ${S3_MEDIA_PREFIX}`);
-    console.log(`- media CDN: ${MEDIA_CDN_BASE_URL}`);
+    console.log(`- media CDN: ${MEDIA_CDN_BASE_URL || "(not configured)"}`);
 
     const avatarStats = await syncAvatarFiles();
     const coverStats = await syncCoverFiles();

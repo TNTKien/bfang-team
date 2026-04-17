@@ -22,7 +22,6 @@ const registerSiteRoutes = (app, deps) => {
     asyncHandler,
     avatarsDir,
     coversDir,
-    buildAvatarUrlFromAuthUser,
     buildCommentAuthorFromAuthUser,
     buildCommentChapterContext,
     buildCommentMentionsForContent,
@@ -47,6 +46,7 @@ const registerSiteRoutes = (app, deps) => {
     ensureLeadingSlash,
     ensureUserRowFromAuthUser,
     escapeXml,
+    extractMediaStoragePathFromUpload,
     extractMentionUsernamesFromContent,
     formatDate,
     formatChapterNumberValue,
@@ -79,6 +79,7 @@ const registerSiteRoutes = (app, deps) => {
     mapPublicUserRow,
     mapReadingHistoryRow,
     normalizeChapterPasswordInput,
+    normalizeAvatarStoragePath,
     normalizeAvatarUrl,
     normalizeHomepageRow,
     normalizeNextPath,
@@ -87,6 +88,9 @@ const registerSiteRoutes = (app, deps) => {
     normalizeProfileDiscord,
     normalizeProfileDisplayName,
     normalizeProfileFacebook,
+    resolvePublicAvatarUrl,
+    resolvePublicMangaCoverUrl,
+    resolvePublicTeamAssetUrl,
     normalizeSeoText,
     parseChapterNumberInput,
     passport,
@@ -2753,11 +2757,7 @@ const registerSiteRoutes = (app, deps) => {
   };
 
   const normalizeTeamAssetUrl = (value) => {
-    const raw = (value || "").toString().trim();
-    if (!raw || raw.length > 500) return "";
-    if (/^https?:\/\//i.test(raw)) return raw;
-    if (raw.startsWith("/uploads/avatars/") || raw.startsWith("/uploads/covers/")) return raw;
-    return "";
+    return resolvePublicTeamAssetUrl(value);
   };
 
   const readTeamMemberPermissionFlag = (value, fallback) => {
@@ -4731,22 +4731,13 @@ const registerSiteRoutes = (app, deps) => {
         ? normalizeProfileBio(payload.bio)
         : normalizeProfileBio(currentRow && currentRow.bio ? currentRow.bio : "");
 
-      let avatarUrl = normalizeAvatarUrl(currentRow && currentRow.avatar_url ? currentRow.avatar_url : "");
+      let avatarUrl = currentRow && currentRow.avatar_url ? String(currentRow.avatar_url).trim() : "";
       if (hasAvatarCustom) {
-        const requestedCustomAvatar = normalizeAvatarUrl(payload.avatar_url_custom);
+        const requestedCustomAvatar = normalizeAvatarStoragePath(payload.avatar_url_custom);
         if (requestedCustomAvatar && isUploadedAvatarUrl(requestedCustomAvatar)) {
           avatarUrl = requestedCustomAvatar;
         } else {
-          avatarUrl = buildAvatarUrlFromAuthUser(
-            {
-              ...baseUser,
-              user_metadata: {
-                ...(baseUser && typeof baseUser.user_metadata === "object" ? baseUser.user_metadata : {}),
-                avatar_url_custom: ""
-              }
-            },
-            currentRow && currentRow.avatar_url ? currentRow.avatar_url : ""
-          );
+          avatarUrl = normalizeAvatarStoragePath(currentRow && currentRow.avatar_url ? currentRow.avatar_url : "");
         }
       }
 
@@ -6726,11 +6717,14 @@ const registerSiteRoutes = (app, deps) => {
             fileName: avatarFileName,
             buffer: avatarOutput
           });
-          const avatarUploadedUrl = avatarUploaded && avatarUploaded.url ? String(avatarUploaded.url).trim() : "";
-          if (!avatarUploadedUrl) {
-            throw new Error("Team avatar upload returned empty URL");
+          const avatarUploadedPath = extractMediaStoragePathFromUpload(avatarUploaded, {
+            kind: "team_avatar",
+            fileName: avatarFileName
+          });
+          if (!avatarUploadedPath) {
+            throw new Error("Team avatar upload returned empty path");
           }
-          avatarUrl = cacheBust(avatarUploadedUrl, stamp);
+          avatarUrl = avatarUploadedPath;
         }
 
         if (coverInputBuffer) {
@@ -6745,11 +6739,14 @@ const registerSiteRoutes = (app, deps) => {
             fileName: coverFileName,
             buffer: coverOutput
           });
-          const coverUploadedUrl = coverUploaded && coverUploaded.url ? String(coverUploaded.url).trim() : "";
-          if (!coverUploadedUrl) {
-            throw new Error("Team cover upload returned empty URL");
+          const coverUploadedPath = extractMediaStoragePathFromUpload(coverUploaded, {
+            kind: "team_cover",
+            fileName: coverFileName
+          });
+          if (!coverUploadedPath) {
+            throw new Error("Team cover upload returned empty path");
           }
-          coverUrl = cacheBust(coverUploadedUrl, stamp);
+          coverUrl = coverUploadedPath;
         }
       } catch (_err) {
         setTeamPageFlash(req, managedTeam.team_id, {
@@ -6865,11 +6862,13 @@ const registerSiteRoutes = (app, deps) => {
           fileName,
           buffer: output
         });
-        const uploadedUrl = uploaded && uploaded.url ? String(uploaded.url).trim() : "";
-        if (!uploadedUrl) {
-          throw new Error("Team avatar upload returned empty URL");
+        const avatarUrl = extractMediaStoragePathFromUpload(uploaded, {
+          kind: "team_avatar",
+          fileName
+        });
+        if (!avatarUrl) {
+          throw new Error("Team avatar upload returned empty path");
         }
-        const avatarUrl = cacheBust(uploadedUrl, stamp);
         await dbRun("UPDATE translation_teams SET avatar_url = ?, updated_at = ? WHERE id = ?", [
           avatarUrl,
           stamp,
@@ -6959,11 +6958,13 @@ const registerSiteRoutes = (app, deps) => {
           fileName,
           buffer: output
         });
-        const uploadedUrl = uploaded && uploaded.url ? String(uploaded.url).trim() : "";
-        if (!uploadedUrl) {
-          throw new Error("Team cover upload returned empty URL");
+        const coverUrl = extractMediaStoragePathFromUpload(uploaded, {
+          kind: "team_cover",
+          fileName
+        });
+        if (!coverUrl) {
+          throw new Error("Team cover upload returned empty path");
         }
-        const coverUrl = cacheBust(uploadedUrl, stamp);
         await dbRun("UPDATE translation_teams SET cover_url = ?, updated_at = ? WHERE id = ?", [
           coverUrl,
           stamp,
@@ -9473,7 +9474,7 @@ const registerSiteRoutes = (app, deps) => {
       mangaGroupName: row && row.manga_group_name ? String(row.manga_group_name).trim() : "",
       mangaStatus: row && row.manga_status ? String(row.manga_status).trim() : "",
       mangaGenres,
-      mangaCover: row && row.manga_cover ? String(row.manga_cover) : "",
+      mangaCover: resolvePublicMangaCoverUrl(row && row.manga_cover ? row.manga_cover : ""),
       mangaCoverUpdatedAt: Number(row && row.manga_cover_updated_at) || 0,
       latestChapterNumber: Number.isFinite(latestChapterNumber) ? latestChapterNumber : null,
       latestChapterNumberText,
@@ -10654,8 +10655,10 @@ const registerSiteRoutes = (app, deps) => {
             fileName,
             buffer: output
           });
-          const uploadedUrl = uploaded && uploaded.url ? String(uploaded.url).trim() : "";
-          avatarUrl = uploadedUrl ? cacheBust(uploadedUrl, stamp) : "";
+          avatarUrl = extractMediaStoragePathFromUpload(uploaded, {
+            kind: "user_avatar",
+            fileName
+          });
         } catch (error) {
           console.warn("Failed to upload user avatar via api_server", error);
           return res.status(500).json({ ok: false, error: "Không thể tải avatar lên hệ thống lưu trữ." });
@@ -10676,7 +10679,7 @@ const registerSiteRoutes = (app, deps) => {
           console.warn("Failed to update user avatar", err);
         }
 
-        return res.json({ ok: true, avatarUrl });
+        return res.json({ ok: true, avatarUrl: resolvePublicAvatarUrl(avatarUrl) });
       } finally {
         inputBuffer = null;
         output = null;

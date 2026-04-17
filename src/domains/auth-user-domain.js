@@ -8,6 +8,8 @@ const createAuthUserDomain = (deps) => {
     dbGet,
     dbRun,
     formatDate,
+    normalizeAvatarStoragePath,
+    resolvePublicAvatarUrl,
     serverSessionVersion,
     wantsJson,
   } = deps;
@@ -18,10 +20,29 @@ const isSafeAvatarUrl = (value) => {
   if (url.length > 500) return false;
   if (/^https?:\/\//i.test(url)) return true;
   if (url.startsWith("/uploads/avatars/")) return true;
+  if (url.startsWith("uploads/avatars/")) return true;
   return false;
 };
 
-const normalizeAvatarUrl = (value) => (isSafeAvatarUrl(value) ? String(value).trim() : "");
+const normalizeAvatarStorageValue = (value) => {
+  const directPath = typeof normalizeAvatarStoragePath === "function"
+    ? normalizeAvatarStoragePath(value)
+    : "";
+  return directPath || "";
+};
+
+const normalizeAvatarUrl = (value) => {
+  const raw = (value == null ? "" : String(value)).trim();
+  if (!raw) return "";
+
+  const stored = normalizeAvatarStorageValue(raw);
+  if (!stored) return "";
+  if (typeof resolvePublicAvatarUrl === "function") {
+    const resolved = resolvePublicAvatarUrl(stored);
+    return resolved || "";
+  }
+  return stored;
+};
 
 const API_KEY_TOKEN_PATTERN = /^bfk_[a-f0-9]{16}_[a-f0-9]{48}$/;
 const API_KEY_MIN_LENGTH = 20;
@@ -482,7 +503,7 @@ const readAuthIdentityAvatar = (user, provider) => {
     );
     if (identityProvider !== wantedProvider) continue;
 
-    const avatarUrl = normalizeAvatarUrl(
+    const avatarUrl = normalizeAvatarStorageValue(
       identityData.avatar_url ||
       identityData.picture ||
       identityData.photo_url ||
@@ -497,9 +518,10 @@ const readAuthIdentityAvatar = (user, provider) => {
 };
 
 const isUploadedAvatarUrl = (value) => {
-  const avatarUrl = normalizeAvatarUrl(value);
+  const avatarUrl = normalizeAvatarStorageValue(value);
   if (!avatarUrl) return false;
   if (avatarUrl.startsWith("/uploads/avatars/")) return true;
+  if (avatarUrl.startsWith("uploads/avatars/")) return true;
   if (!/^https?:\/\//i.test(avatarUrl)) return false;
 
   try {
@@ -529,28 +551,15 @@ const isGoogleAvatarUrl = (value) => {
 
 const buildAvatarUrlFromAuthUser = (user, currentAvatarUrl) => {
   const meta = user && typeof user.user_metadata === "object" ? user.user_metadata : null;
-  const customAvatarUrl = normalizeAvatarUrl(meta && meta.avatar_url_custom ? meta.avatar_url_custom : "");
+  const customAvatarUrl = normalizeAvatarStorageValue(
+    meta && meta.avatar_url_custom ? meta.avatar_url_custom : ""
+  );
   if (customAvatarUrl) return customAvatarUrl;
 
-  const currentAvatar = normalizeAvatarUrl(currentAvatarUrl);
+  const currentAvatar = normalizeAvatarStorageValue(currentAvatarUrl);
   if (currentAvatar && isUploadedAvatarUrl(currentAvatar)) {
     return currentAvatar;
   }
-
-  const googleAvatarUrl = readAuthIdentityAvatar(user, "google");
-  if (googleAvatarUrl) return googleAvatarUrl;
-
-  if (currentAvatar && isGoogleAvatarUrl(currentAvatar)) {
-    return currentAvatar;
-  }
-
-  const metadataAvatarUrl = normalizeAvatarUrl(
-    (meta && meta.avatar_url ? meta.avatar_url : "") || (meta && meta.picture ? meta.picture : "") || ""
-  );
-  if (metadataAvatarUrl) return metadataAvatarUrl;
-
-  const discordAvatarUrl = readAuthIdentityAvatar(user, "discord");
-  if (discordAvatarUrl) return discordAvatarUrl;
 
   return currentAvatar;
 };
@@ -1237,7 +1246,9 @@ const upsertUserProfileFromAuthUser = async (user) => {
   const currentDisplayName = normalizeProfileDisplayName(row && row.display_name ? row.display_name : "");
   const displayName = currentDisplayName ||
     (hasOwnObjectKey(userMeta, "display_name") ? displayNameFromAuth : "");
-  const avatarUrl = buildAvatarUrlFromAuthUser(user, row && row.avatar_url ? row.avatar_url : "");
+  const avatarUrl = normalizeAvatarStorageValue(
+    buildAvatarUrlFromAuthUser(user, row && row.avatar_url ? row.avatar_url : "")
+  );
   const extras = readUserProfileExtrasFromAuthUser(user, row);
   const now = Date.now();
 
@@ -1311,6 +1322,7 @@ const mapPublicUserRow = (row) => {
     mapPublicUserRow,
     memberBadgeCacheTtlMs,
     normalizeAuthIdentityProvider,
+    normalizeAvatarStorageValue,
     normalizeAvatarUrl,
     normalizeBadgeCode,
     normalizeHexColor,

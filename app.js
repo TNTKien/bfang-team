@@ -2108,20 +2108,14 @@ const buildChapterTimestampIso = (dateInput) => {
 };
 
 const coversUrlPrefix = "/uploads/covers/";
+const avatarsUrlPrefix = "/uploads/avatars/";
 
 const extractLocalCoverFilename = (coverUrl) => {
-  if (!coverUrl || typeof coverUrl !== "string") return "";
-  if (coverUrl.startsWith(coversUrlPrefix)) {
-    return coverUrl.slice(coversUrlPrefix.length).split("?")[0].split("#")[0].trim();
-  }
-  try {
-    const parsed = new URL(coverUrl);
-    const pathname = (parsed.pathname || "").toString();
-    if (!pathname.startsWith(coversUrlPrefix)) return "";
-    return pathname.slice(coversUrlPrefix.length).split("?")[0].split("#")[0].trim();
-  } catch (_err) {
-    return "";
-  }
+  const normalizedPath = normalizeMediaStoragePath(coverUrl, {
+    allowedPrefixes: ["uploads/covers"]
+  });
+  if (!normalizedPath.startsWith(coversUrlPrefix)) return "";
+  return normalizedPath.slice(coversUrlPrefix.length).trim();
 };
 
 const deleteFileIfExists = async (filePath) => {
@@ -2142,8 +2136,13 @@ const saveCoverBuffer = async (filename, buffer) => {
     fileName: filename,
     buffer
   });
+  const coverPath = extractMediaStoragePathFromUpload(uploaded, {
+    kind: "manga_cover",
+    fileName: filename
+  });
   return {
-    coverUrl: uploaded && uploaded.url ? String(uploaded.url).trim() : "",
+    coverUrl: coverPath,
+    coverPath,
     key: uploaded && uploaded.key ? String(uploaded.key).trim() : "",
     variants: uploaded && uploaded.variants && typeof uploaded.variants === "object" ? uploaded.variants : null
   };
@@ -2288,6 +2287,130 @@ const normalizeAbsoluteHttpUrl = (value) => {
 
 const normalizePathPrefix = (value) =>
   (value || "").toString().trim().replace(/^\/+/, "").replace(/\/+$/, "");
+
+const normalizeAllowedUploadPrefixes = (allowedPrefixes) => {
+  if (!Array.isArray(allowedPrefixes)) return [];
+  return Array.from(
+    new Set(
+      allowedPrefixes
+        .map((prefix) =>
+          (prefix == null ? "" : String(prefix))
+            .trim()
+            .replace(/^\/+/, "")
+            .replace(/\/+$/, "")
+            .toLowerCase()
+        )
+        .filter(Boolean)
+    )
+  );
+};
+
+const normalizeMediaStoragePath = (value, options = {}) => {
+  const raw = (value == null ? "" : String(value)).trim();
+  if (!raw || raw.length > 2048) return "";
+
+  let candidatePath = raw;
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      candidatePath = (parsed.pathname || "").toString();
+    } catch (_err) {
+      return "";
+    }
+  } else {
+    const queryIndex = raw.indexOf("?");
+    const hashIndex = raw.indexOf("#");
+    let endIndex = raw.length;
+    if (queryIndex >= 0) endIndex = Math.min(endIndex, queryIndex);
+    if (hashIndex >= 0) endIndex = Math.min(endIndex, hashIndex);
+    candidatePath = raw.slice(0, endIndex);
+  }
+
+  const compactPath = candidatePath
+    .replace(/\\/g, "/")
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "")
+    .replace(/\/+/g, "/");
+  if (!compactPath) return "";
+
+  const allowedPrefixes = normalizeAllowedUploadPrefixes(options.allowedPrefixes);
+  if (allowedPrefixes.length) {
+    const lowerCompactPath = compactPath.toLowerCase();
+    const isAllowed = allowedPrefixes.some(
+      (prefix) => lowerCompactPath === prefix || lowerCompactPath.startsWith(`${prefix}/`)
+    );
+    if (!isAllowed) return "";
+  }
+
+  return `/${compactPath}`;
+};
+
+const resolveMediaPathPrefixByKind = (kind) => {
+  const safeKind = (kind == null ? "" : String(kind)).trim().toLowerCase();
+  if (safeKind === "user_avatar" || safeKind === "team_avatar") return "uploads/avatars";
+  if (safeKind === "team_cover" || safeKind === "manga_cover") return "uploads/covers";
+  return "";
+};
+
+const isSafeMediaUploadFileName = (value) => {
+  const raw = (value == null ? "" : String(value)).trim().toLowerCase();
+  if (!raw || raw.length > 180) return "";
+  if (!/^[a-z0-9][a-z0-9._-]*\.webp$/i.test(raw)) return "";
+  return raw;
+};
+
+const extractMediaStoragePathFromUpload = (uploaded, options = {}) => {
+  const mediaKind = options && options.kind ? String(options.kind) : "";
+  const pathPrefix = resolveMediaPathPrefixByKind(mediaKind);
+  const allowedPrefixes = pathPrefix ? [pathPrefix] : [];
+  const candidates = [];
+
+  if (uploaded && typeof uploaded === "object") {
+    const uploadKey = uploaded.key == null ? "" : String(uploaded.key).trim();
+    const uploadUrl = uploaded.url == null ? "" : String(uploaded.url).trim();
+    if (uploadKey) candidates.push(uploadKey);
+    if (uploadUrl) candidates.push(uploadUrl);
+  }
+
+  const safeFileName = isSafeMediaUploadFileName(options && options.fileName ? options.fileName : "");
+  if (pathPrefix && safeFileName) {
+    candidates.push(`/${pathPrefix}/${safeFileName}`);
+  }
+
+  for (const candidate of candidates) {
+    const normalized = normalizeMediaStoragePath(candidate, { allowedPrefixes });
+    if (normalized) return normalized;
+  }
+  return "";
+};
+
+const mediaCdnBaseUrl = normalizeBaseUrl(
+  process.env.MEDIA_CDN_BASE_URL || process.env.CHAPTER_CDN_BASE_URL || ""
+);
+
+const resolveMediaPublicUrl = (value, options = {}) => {
+  const normalizedPath = normalizeMediaStoragePath(value, options);
+  if (normalizedPath) {
+    if (mediaCdnBaseUrl) {
+      return `${mediaCdnBaseUrl}${normalizedPath}`;
+    }
+    return normalizedPath;
+  }
+  return normalizeAbsoluteHttpUrl(value);
+};
+
+const resolvePublicAvatarUrl = (value) =>
+  resolveMediaPublicUrl(value, { allowedPrefixes: ["uploads/avatars"] });
+
+const normalizeAvatarStoragePath = (value) =>
+  normalizeMediaStoragePath(value, { allowedPrefixes: ["uploads/avatars"] });
+
+const resolvePublicMangaCoverUrl = (value) =>
+  resolveMediaPublicUrl(value, { allowedPrefixes: ["uploads/covers"] });
+
+const resolvePublicTeamAssetUrl = (value) =>
+  resolveMediaPublicUrl(value, { allowedPrefixes: ["uploads/avatars", "uploads/covers"] });
 
 const mediaUploadApiBaseUrl = normalizeBaseUrl(
   process.env.MEDIA_UPLOAD_API_URL || process.env.CHAPTER_UPLOAD_API_URL || ""
@@ -2701,7 +2824,7 @@ const {
 const mapCommentRow = (row, session) => {
   const liked = Boolean(row && row.liked_by_me);
   const reported = Boolean(row && row.reported_by_me);
-  const avatarUrl = normalizeAvatarUrl(row && row.author_avatar_url ? row.author_avatar_url : "");
+  const avatarUrl = resolvePublicAvatarUrl(row && row.author_avatar_url ? row.author_avatar_url : "");
   const authorUserId = row && row.author_user_id ? String(row.author_user_id).trim() : "";
 
   const rawBadges = row && row.author_badges_json != null ? row.author_badges_json : null;
@@ -3563,7 +3686,7 @@ const mapMangaRow = (row) => ({
   status: row.status,
   description: row.description,
   updatedAt: row.updated_at,
-  cover: row.cover,
+  cover: resolvePublicMangaCoverUrl(row && row.cover ? row.cover : ""),
   coverUpdatedAt: Number(row.cover_updated_at) || 0,
   archive: row.archive,
   isHidden: Boolean(row.is_hidden),
@@ -3611,7 +3734,7 @@ const mapReadingHistoryRow = (row) => {
     mangaTitle: row && row.manga_title ? String(row.manga_title).trim() : "",
     mangaSlug,
     mangaUrl: mangaSlug ? `/manga/${encodeURIComponent(mangaSlug)}` : "",
-    mangaCover: row && row.manga_cover ? String(row.manga_cover) : "",
+    mangaCover: resolvePublicMangaCoverUrl(row && row.manga_cover ? row.manga_cover : ""),
     mangaCoverUpdatedAt: Number(row && row.manga_cover_updated_at) || 0,
     mangaAuthor: row && row.manga_author ? String(row.manga_author).trim() : "",
     mangaGroupName: row && row.manga_group_name ? String(row.manga_group_name).trim() : "",
@@ -3905,6 +4028,8 @@ const authUserDomain = createAuthUserDomain({
   dbGet,
   dbRun,
   formatDate,
+  normalizeAvatarStoragePath,
+  resolvePublicAvatarUrl,
   isServerSessionVersionMismatch,
   serverSessionVersion,
   wantsJson,
@@ -4375,6 +4500,7 @@ const appContainer = {
   ensureUserRowFromAuthUser,
   escapeXml,
   extractMentionUsernamesFromContent,
+  extractMediaStoragePathFromUpload,
   formatChapterNumberValue,
   formatTimeAgo,
   fs,
@@ -4405,6 +4531,7 @@ const appContainer = {
   mapMangaRow,
   mapPublicUserRow,
   mapReadingHistoryRow,
+  normalizeAvatarStoragePath,
   normalizeAvatarUrl,
   normalizeHomepageRow,
   normalizeNextPath,
@@ -4414,6 +4541,9 @@ const appContainer = {
   normalizeProfileDiscord,
   normalizeProfileDisplayName,
   normalizeProfileFacebook,
+  resolvePublicAvatarUrl,
+  resolvePublicMangaCoverUrl,
+  resolvePublicTeamAssetUrl,
   normalizeSeoText,
   parseChapterNumberInput,
   minifyJs,
