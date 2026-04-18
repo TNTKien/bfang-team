@@ -2,6 +2,7 @@
   const BOUND_SHARE_ATTR = "data-manga-share-bound";
   const BOUND_SHARE_KEY = "__bfangShareBound";
   const BOUND_SHARE_HANDLER_KEY = "__bfangShareHandler";
+  const BOUND_PUBLISH_VN_ATTR = "data-publish-vn-link-bound";
   const SHARE_REBIND_PENDING_ATTR = "data-share-rebind-pending";
   const BOUND_DESC_ATTR = "data-description-bound";
   const CHAPTER_READ_STORAGE_KEY_PREFIX = "bfang:manga-read-map:v2:";
@@ -194,6 +195,64 @@
     } catch (_err) {
       return false;
     }
+  };
+
+  const decodeBase64UrlToText = (value) => {
+    const token = (value || "").toString().trim();
+    if (!token) return "";
+    const normalized = token.replace(/-/g, "+").replace(/_/g, "/");
+    const paddingLength = (4 - (normalized.length % 4)) % 4;
+    const padded = `${normalized}${"=".repeat(paddingLength)}`;
+
+    try {
+      const binary = window.atob(padded);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      if (typeof TextDecoder === "function") {
+        return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      }
+      let utf8PercentEncoded = "";
+      for (let index = 0; index < bytes.length; index += 1) {
+        utf8PercentEncoded += `%${bytes[index].toString(16).padStart(2, "0")}`;
+      }
+      return decodeURIComponent(utf8PercentEncoded);
+    } catch (_error) {
+      return "";
+    }
+  };
+
+  const resolvePublishVnUrl = (button) => {
+    if (!(button instanceof HTMLElement)) return "";
+    const token = button.getAttribute("data-publish-vn-link-token");
+    const decoded = decodeBase64UrlToText(token).trim();
+    if (!decoded) return "";
+    try {
+      const parsed = new URL(decoded);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      return parsed.toString();
+    } catch (_error) {
+      return "";
+    }
+  };
+
+  const initPublishVnButtons = (root) => {
+    const scope = root && root.querySelectorAll ? root : document;
+    const buttons = Array.from(scope.querySelectorAll("[data-publish-vn-link-button]"));
+    buttons.forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) return;
+      if (button.getAttribute(BOUND_PUBLISH_VN_ATTR) === "1") return;
+      button.setAttribute(BOUND_PUBLISH_VN_ATTR, "1");
+      button.addEventListener("click", () => {
+        const targetUrl = resolvePublishVnUrl(button);
+        if (!targetUrl) return;
+        const opened = window.open(targetUrl, "_blank", "noopener,noreferrer");
+        if (opened && typeof opened.opener !== "undefined") {
+          opened.opener = null;
+        }
+      });
+    });
   };
 
   const initShareButtons = (root) => {
@@ -670,6 +729,7 @@
 
   const initMangaDetail = (root, options = {}) => {
     initShareButtons(root);
+    initPublishVnButtons(root);
     initDescription(root);
     const settings = options && typeof options === "object" ? options : {};
     hydrateChapterReadState({ force: settings.force === true }).catch(() => null);

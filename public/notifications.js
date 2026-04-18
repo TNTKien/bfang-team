@@ -673,11 +673,13 @@
     }
   };
 
+  const readNotificationPermissionSync = () =>
+    window.Notification && typeof window.Notification.permission === "string"
+      ? String(window.Notification.permission).trim().toLowerCase()
+      : "";
+
   const readEffectivePushPermissionState = async () => {
-    const notificationPermission =
-      window.Notification && typeof window.Notification.permission === "string"
-        ? String(window.Notification.permission).trim().toLowerCase()
-        : "";
+    const notificationPermission = readNotificationPermissionSync();
     const notificationsPermission = await queryPermissionState({ name: "notifications" });
     const pushPermission = await queryPermissionState({ name: "push", userVisibleOnly: true });
 
@@ -752,7 +754,7 @@
       }
 
       const permissionState = await readEffectivePushPermissionState().catch(() => ({ effective: "default" }));
-      const permission = permissionState && permissionState.effective ? permissionState.effective : "default";
+      let permission = permissionState && permissionState.effective ? permissionState.effective : "default";
       if (permission === "denied") {
         await unsubscribePushLocallyAndRemotely(existingSubscription, { allowServerCall: true });
         lastPushSyncAt = Date.now();
@@ -776,9 +778,15 @@
             typeof window.Notification.requestPermission === "function";
           if (canPromptPermission) {
             markPushPermissionPromptAttempt();
-            await window.Notification.requestPermission().catch(() => "default");
-            const nextPermissionState = await readEffectivePushPermissionState().catch(() => ({ effective: "default" }));
-            if (!nextPermissionState || nextPermissionState.effective !== "granted") {
+            const permissionResult = await window.Notification.requestPermission().catch(() => "default");
+            const nextPermissionText = (permissionResult == null ? "" : String(permissionResult)).trim().toLowerCase();
+            if (nextPermissionText === "granted" || nextPermissionText === "denied" || nextPermissionText === "default") {
+              permission = nextPermissionText;
+            } else {
+              const nextPermissionState = await readEffectivePushPermissionState().catch(() => ({ effective: "default" }));
+              permission = nextPermissionState && nextPermissionState.effective ? nextPermissionState.effective : "default";
+            }
+            if (permission !== "granted") {
               lastPushSyncAt = Date.now();
               return;
             }
@@ -841,6 +849,32 @@
 
   const requestPushPermissionFromUserGesture = () => {
     if (!signedIn || !isPushNotificationSupported()) return;
+    const notificationPermission = readNotificationPermissionSync();
+    if (notificationPermission === "granted") {
+      syncPushSubscriptionState({ force: true, allowPrompt: false }).catch(() => null);
+      return;
+    }
+    if (notificationPermission === "denied") {
+      syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+      return;
+    }
+    if (notificationPermission === "default") {
+      if (isPushPermissionPromptCooldownActive()) return;
+      if (typeof window.Notification.requestPermission !== "function") return;
+
+      markPushPermissionPromptAttempt();
+      Promise.resolve(window.Notification.requestPermission())
+        .then((permissionResult) => {
+          const nextPermission = (permissionResult == null ? "" : String(permissionResult)).trim().toLowerCase();
+          if (nextPermission === "granted") {
+            syncPushSubscriptionState({ force: true, allowPrompt: false }).catch(() => null);
+            return;
+          }
+          syncPushSubscriptionState({ force: false, allowPrompt: false }).catch(() => null);
+        })
+        .catch(() => null);
+      return;
+    }
 
     readEffectivePushPermissionState()
       .then((permissionState) => {
@@ -1321,7 +1355,7 @@
   window.addEventListener("bfang:auth", (event) => {
     const detail = event && typeof event === "object" ? event.detail : null;
     const session = detail && detail.session ? detail.session : null;
-    applySignedInState(hasAuthSession(session), { allowPushPrompt: false }).catch(() => null);
+    applySignedInState(hasAuthSession(session), { allowPushPrompt: true }).catch(() => null);
   });
 
   const refreshOnResume = () => {
@@ -1349,6 +1383,6 @@
   });
 
   getSessionSafe()
-    .then((session) => applySignedInState(Boolean(session), { allowPushPrompt: false }))
+    .then((session) => applySignedInState(Boolean(session), { allowPushPrompt: true }))
     .catch(() => null);
 })();

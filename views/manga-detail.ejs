@@ -112,16 +112,19 @@
                       </span>
                   </span>
                   <% const publishVnUrl = (manga && manga.publishVnUrl ? String(manga.publishVnUrl) : "").trim(); %>
-                  <% if (publishVnUrl) { %>
-                    <a
+                  <% const publishVnToken = publishVnUrl ? Buffer.from(publishVnUrl, "utf8").toString("base64url") : ""; %>
+                  <% if (publishVnToken) { %>
+                    <button
                       class="tag manga-detail-publish-vn-link"
-                      href="<%= publishVnUrl %>"
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      type="button"
+                      data-publish-vn-link-button
+                      data-publish-vn-link-token="<%= publishVnToken %>"
+                      aria-label="Xuất bản ở VN"
+                      title="Xuất bản ở VN"
                     >
                       <i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i>
                       <span>Xuất bản ở VN</span>
-                    </a>
+                    </button>
                   <% } %>
                   <div class="manga-detail-stats-meta">
                     <span>

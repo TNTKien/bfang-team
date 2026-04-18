@@ -18516,6 +18516,10 @@ body.admin-page .panel>.note {
   text-decoration: none;
   text-transform: none;
   letter-spacing: normal;
+  border: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .manga-detail-publish-vn-link:hover {
