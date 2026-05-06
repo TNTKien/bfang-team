@@ -41,6 +41,7 @@ const { normalizeHomepageBannerLink } = require("./src/utils/homepage-banner-lin
 const { buildMangaSlug } = require("./src/utils/manga-slug");
 const publicOriginUtils = require("./src/utils/public-origin");
 const { createRedisCache } = require("./src/utils/redis-cache");
+const { createWinterModeMiddleware } = require("./src/utils/winter-mode");
 const viewCoverHelpers = require("./src/utils/view-cover-helpers");
 const { loadSiteConfig } = require("./src/config/site-config");
 require("dotenv").config();
@@ -152,8 +153,10 @@ const cssMinifier = new CleanCSS({ level: 1, inline: false });
 const forumDistIndexPath = path.join(__dirname, "sampleforum", "dist", "index.html");
 const isForumFrontendAvailable = fs.existsSync(forumDistIndexPath);
 
-const isNewsPageEnabled = parseEnvBoolean(process.env.NEWS_PAGE_ENABLED, true);
-const isForumPageEnabled = parseEnvBoolean(process.env.FORUM_PAGE_ENABLED, false);
+const isWebEnabled = parseEnvBoolean(process.env.WEB_ENABLED, true);
+const isWinterModeEnabled = !isWebEnabled;
+const isNewsPageEnabled = !isWinterModeEnabled && parseEnvBoolean(process.env.NEWS_PAGE_ENABLED, true);
+const isForumPageEnabled = isWinterModeEnabled || parseEnvBoolean(process.env.FORUM_PAGE_ENABLED, false);
 const isForumPageAvailable = isForumPageEnabled && isForumFrontendAvailable;
 const isGoogleDriveUploadEnabled = parseEnvBoolean(process.env.GOOGLE_DRIVE_UPLOAD_ENABLED, false);
 const isAdultContentControlBypassed = parseEnvBoolean(process.env.ADULT_CONTENT_CONTROL, true);
@@ -165,7 +168,11 @@ const messageImageUploadsEnabled =
 const trustProxy = parseEnvBoolean(process.env.TRUST_PROXY, false);
 app.locals.isForumPageEnabled = isForumPageEnabled;
 app.locals.isForumPageAvailable = isForumPageAvailable;
+app.locals.isWebEnabled = isWebEnabled;
+app.locals.isWinterModeEnabled = isWinterModeEnabled;
 app.locals.isNewsPageEnabled = isNewsPageEnabled;
+app.locals.webEnabled = isWebEnabled;
+app.locals.winterModeEnabled = isWinterModeEnabled;
 app.locals.newsPageEnabled = isNewsPageEnabled;
 app.locals.forumPageEnabled = isForumPageAvailable;
 app.locals.commentImageUploadsEnabled = commentImageUploadsEnabled;
@@ -2604,7 +2611,9 @@ const getAuthPublicConfigForRequest = (_req) => ({
 
 app.locals.authPublicConfig = getAuthPublicConfigForRequest(null);
 app.locals.newsPageEnabled = isNewsPageEnabled;
-app.locals.forumPageEnabled = isForumPageEnabled;
+app.locals.forumPageEnabled = isForumPageAvailable;
+app.locals.webEnabled = isWebEnabled;
+app.locals.winterModeEnabled = isWinterModeEnabled;
 
 if (!isOauthProviderEnabled("google")) {
   console.warn("Google OAuth chưa cấu hình đủ GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET.");
@@ -4772,6 +4781,8 @@ const appContainer = {
   isPasswordAdminEnabled,
   isForumPageAvailable,
   isForumPageEnabled,
+  isWebEnabled,
+  isWinterModeEnabled,
   adultContentControlEnabled: isAdultContentControlEnabled,
   isTruthyInput,
   listQuery,
@@ -4807,6 +4818,13 @@ const appContainer = {
   verifyChapterPasswordHash,
   writeNotificationStreamEvent,
 };
+if (isWinterModeEnabled && !isForumPageAvailable) {
+  console.warn("WEB_ENABLED=false đang bật chế độ nghỉ đông nhưng forum frontend chưa sẵn sàng tại sampleforum/dist.");
+}
+app.use(createWinterModeMiddleware({
+  enabled: isWinterModeEnabled,
+  wantsJson
+}));
 
 registerSiteRoutes(app, appContainer);
 if (isNewsPageEnabled) {

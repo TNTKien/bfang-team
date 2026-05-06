@@ -1,0 +1,39 @@
+﻿Dead chapter image audit - FINAL
+Generated at: 2026-05-03T16:03:50.116Z
+Formula: active DB chapter is dead if its first reader image key is absent from S3 (HeadObject 404/NoSuchKey).
+Scope: chapters where COALESCE(is_deleted,false)=false.
+Transient S3 errors from first pass were retried separately with lower concurrency and exponential backoff.
+Checked chapters: 35891
+Confirmed dead/missing first image: 29
+Remaining needs-review S3 errors (not counted as confirmed dead): 0
+Columns: chapter_id	manga_id	manga_slug	manga_title	chapter_number	chapter_title	pages	reason	first_image_s3_key	chapter_url
+
+33766	65	65-shokuryou-jinrui-re-starving-re-velation	Shokuryou Jinrui Re: Starving Re:velation	42		24	MISSING_S3_OBJECT	chapters/manga-65/ch-42/001_WXlzp.webp	/manga/65-shokuryou-jinrui-re-starving-re-velation/chapters/42
+33767	65	65-shokuryou-jinrui-re-starving-re-velation	Shokuryou Jinrui Re: Starving Re:velation	55		19	MISSING_S3_OBJECT	chapters/manga-65/ch-55/001_ADZvb.webp	/manga/65-shokuryou-jinrui-re-starving-re-velation/chapters/55
+35317	102	102-hanh-trinh-diet-quy	๖Hành Trình Diệt Quỷ乄🍀	2		21	MISSING_S3_OBJECT	chapters/manga-102/ch-2/001_HHFmn.webp	/manga/102-hanh-trinh-diet-quy/chapters/2
+35328	102	102-hanh-trinh-diet-quy	๖Hành Trình Diệt Quỷ乄🍀	3		22	MISSING_S3_OBJECT	chapters/manga-102/ch-3/001_iodkl.webp	/manga/102-hanh-trinh-diet-quy/chapters/3
+35330	102	102-hanh-trinh-diet-quy	๖Hành Trình Diệt Quỷ乄🍀	4		20	MISSING_S3_OBJECT	chapters/manga-102/ch-4/001_SsqDw.webp	/manga/102-hanh-trinh-diet-quy/chapters/4
+35331	102	102-hanh-trinh-diet-quy	๖Hành Trình Diệt Quỷ乄🍀	5		23	MISSING_S3_OBJECT	chapters/manga-102/ch-5/001_OHjoV.webp	/manga/102-hanh-trinh-diet-quy/chapters/5
+35355	102	102-hanh-trinh-diet-quy	๖Hành Trình Diệt Quỷ乄🍀	25		30	MISSING_S3_OBJECT	chapters/manga-102/ch-25/001_BgaRT.webp	/manga/102-hanh-trinh-diet-quy/chapters/25
+35356	102	102-hanh-trinh-diet-quy	๖Hành Trình Diệt Quỷ乄🍀	26		28	MISSING_S3_OBJECT	chapters/manga-102/ch-26/001_ePGfV.webp	/manga/102-hanh-trinh-diet-quy/chapters/26
+5181	149	149-rokudenashi-blues	Rokudenashi Blues	98		19	MISSING_S3_OBJECT	chapters/manga-149/ch-98/001_gGnbn.webp	/manga/149-rokudenashi-blues/chapters/98
+7120	157	157-oan-gia-chung-nha	Oan gia chung nhà	75		65	MISSING_S3_OBJECT	chapters/manga-157/ch-75/001_mNZge.webp	/manga/157-oan-gia-chung-nha/chapters/75
+5688	168	168-haite-kudasai-takamine-san	Haite Kudasai, Takamine-san	29		27	MISSING_S3_OBJECT	chapters/manga-168/ch-29/001_KnQij.webp	/manga/168-haite-kudasai-takamine-san/chapters/29
+25311	217	217-nao-phang-sieu-nang-luc	Não phẳng siêu năng lực	51	Shape up cùng siêu nhân Fitness	30	MISSING_S3_OBJECT	chapters/manga-217/ch-51/001_Uaxud.webp	/manga/217-nao-phang-sieu-nang-luc/chapters/51
+9604	251	251-nine-peaks	Nine Peaks	132		18	MISSING_S3_OBJECT	chapters/manga-251/ch-132-0b53b8a3/001_QXnBF.webp	/manga/251-nine-peaks/chapters/132
+9387	267	267-vu-dieu-cua-thien-than-ngoc-nghech-va-ac-quy	Vũ điệu của Thiên Thần ngốc nghếch và Ác Quỷ	68		40	MISSING_S3_OBJECT	chapters/manga-267/ch-68/001_NFKRm.webp	/manga/267-vu-dieu-cua-thien-than-ngoc-nghech-va-ac-quy/chapters/68
+9403	267	267-vu-dieu-cua-thien-than-ngoc-nghech-va-ac-quy	Vũ điệu của Thiên Thần ngốc nghếch và Ác Quỷ	69		43	MISSING_S3_OBJECT	chapters/manga-267/ch-69/001_VHtVV.webp	/manga/267-vu-dieu-cua-thien-than-ngoc-nghech-va-ac-quy/chapters/69
+9408	267	267-vu-dieu-cua-thien-than-ngoc-nghech-va-ac-quy	Vũ điệu của Thiên Thần ngốc nghếch và Ác Quỷ	70		33	MISSING_S3_OBJECT	chapters/manga-267/ch-70/001_NvxPX.webp	/manga/267-vu-dieu-cua-thien-than-ngoc-nghech-va-ac-quy/chapters/70
+13476	480	480-shin-seiki-evangelion	Shin Seiki Evangelion	53		23	MISSING_S3_OBJECT	chapters/manga-480/ch-53/001_UiDiS.webp	/manga/480-shin-seiki-evangelion/chapters/53
+13611	484	484-iruma-gia-dao-if-episode-of-mafia	Iruma Giá Đáo!: IF Episode of MAFIA	20	Món quà (Trái tim thiếu nữ) thuần khiết	45	MISSING_S3_OBJECT	chapters/manga-484/ch-20/001_WMaws.webp	/manga/484-iruma-gia-dao-if-episode-of-mafia/chapters/20
+14196	509	509-em-den-cung-mua-ban-xuat-ban	Em đến cùng mưa (Bản xuất bản)	3		5	MISSING_S3_OBJECT	chapters/manga-509/ch-3/001_IRQNj.webp	/manga/509-em-den-cung-mua-ban-xuat-ban/chapters/3
+14311	513	513-give-my-regards-to-black-jack	Give my regards to Black Jack	8	Lời thú tội	24	MISSING_S3_OBJECT	chapters/manga-513/ch-8/001_ZilTo.webp	/manga/513-give-my-regards-to-black-jack/chapters/8
+14319	513	513-give-my-regards-to-black-jack	Give my regards to Black Jack	11	Tòa tháp vô pháp	21	MISSING_S3_OBJECT	chapters/manga-513/ch-11/001_nGVEn.webp	/manga/513-give-my-regards-to-black-jack/chapters/11
+14327	513	513-give-my-regards-to-black-jack	Give my regards to Black Jack	16	Nụ cười ấy	24	MISSING_S3_OBJECT	chapters/manga-513/ch-16/001_BcjYV.webp	/manga/513-give-my-regards-to-black-jack/chapters/16
+22722	913	913-si-land	Si Land	3	Bình minh tại Shambhala	43	MISSING_S3_OBJECT	chapters/manga-913/ch-3/001_IzQPT.webp	/manga/913-si-land/chapters/3
+31992	1001	1001-kuromaku-ikka-ni-tensei-shita-kedo-gensaku-mushishite-dokuritsu-suru	Kuromaku Ikka ni Tensei Shita kedo Gensaku Mushishite Dokuritsu Suru	1	Tránh khỏi cái chết và giành lấy sự tự do (được dịch bởi Dichvichans)	49	MISSING_S3_OBJECT	chapters/manga-1001/ch-1/001_YWlMY.webp	/manga/1001-kuromaku-ikka-ni-tensei-shita-kedo-gensaku-mushishite-dokuritsu-suru/chapters/1
+31994	1001	1001-kuromaku-ikka-ni-tensei-shita-kedo-gensaku-mushishite-dokuritsu-suru	Kuromaku Ikka ni Tensei Shita kedo Gensaku Mushishite Dokuritsu Suru	3	Thoát khỏi Thánh Nữ và hành trình tự lập	46	MISSING_S3_OBJECT	chapters/manga-1001/ch-3/001_eeLGR.webp	/manga/1001-kuromaku-ikka-ni-tensei-shita-kedo-gensaku-mushishite-dokuritsu-suru/chapters/3
+34287	1140	1140-pacific-rim-final-breach	Pacific Rim: Final Breach	1.1		24	MISSING_S3_OBJECT	chapters/manga-1140/ch-1.1/001_glXXW.webp	/manga/1140-pacific-rim-final-breach/chapters/1.1
+34610	1200	1200-dragon-quest-emblem-of-roto	Dragon Quest Emblem Of Roto	36	Sợi dây định mệnh	45	MISSING_S3_OBJECT	chapters/manga-1200/ch-36/001_xAFoQ.webp	/manga/1200-dragon-quest-emblem-of-roto/chapters/36
+35370	1220	1220-the-classroom-of-a-black-cat-and-a-witch	The Classroom of a Black Cat and a Witch	53		24	MISSING_S3_OBJECT	chapters/manga-1220/ch-53/001_LWWBg.webp	/manga/1220-the-classroom-of-a-black-cat-and-a-witch/chapters/53
+35382	1220	1220-the-classroom-of-a-black-cat-and-a-witch	The Classroom of a Black Cat and a Witch	59		21	MISSING_S3_OBJECT	chapters/manga-1220/ch-59/001_gVexJ.webp	/manga/1220-the-classroom-of-a-black-cat-and-a-witch/chapters/59
