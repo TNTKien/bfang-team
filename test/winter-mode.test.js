@@ -23,11 +23,21 @@ test("winter mode allows forum and forum support endpoints only", () => {
   assert.equal(isWinterModeAllowedPath({ path: "/admin" }), true);
   assert.equal(isWinterModeAllowedPath({ path: "/admin/manga/12" }), true);
   assert.equal(isWinterModeAllowedPath({ path: "/admin", query: { next: "/forum/admin" } }), true);
+  assert.equal(isWinterModeAllowedPath({ path: "/user/forum_member" }), true);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/users/auth-user-1" }), true);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/reactions", body: { forumMode: true } }), true);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/123/delete", body: { forumMode: true } }), true);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/123/edit", body: { forumMode: "1" } }), true);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/123/like", body: { forumMode: "yes" } }), true);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/123/report", body: { forumMode: "on" } }), true);
 
   assert.equal(isWinterModeAllowedPath({ path: "/" }), false);
   assert.equal(isWinterModeAllowedPath({ path: "/manga/demo" }), false);
   assert.equal(isWinterModeAllowedPath({ path: "/news" }), false);
   assert.equal(isWinterModeAllowedPath({ path: "/messages" }), false);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/123/delete" }), false);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/123/delete", body: { forumMode: false } }), false);
+  assert.equal(isWinterModeAllowedPath({ path: "/comments/delete-capability" }), false);
 });
 
 test("winter mode middleware redirects HTML traffic to forum", () => {
@@ -65,9 +75,12 @@ test("winter mode middleware is transparent when disabled or path is allowed", (
   allowedMiddleware({ path: "/forum/post/12", method: "GET", query: {} }, {}, () => {
     allowedNextCount += 1;
   });
+  allowedMiddleware({ path: "/comments/12/delete", method: "POST", query: {}, body: { forumMode: true } }, {}, () => {
+    allowedNextCount += 1;
+  });
 
   assert.equal(disabledNextCount, 1);
-  assert.equal(allowedNextCount, 1);
+  assert.equal(allowedNextCount, 2);
 });
 
 test("winter mode middleware rejects non-forum JSON/write traffic", () => {

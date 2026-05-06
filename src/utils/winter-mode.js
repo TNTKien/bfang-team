@@ -14,6 +14,11 @@ const hasPathPrefix = (pathValue, prefix) => {
   return safePath === safePrefix || safePath.startsWith(`${safePrefix}/`);
 };
 
+const isTruthyFlag = (value) => {
+  const raw = String(value == null ? "" : value).trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+};
+
 const isAdminForumBridgeRequest = (pathValue, query = {}) => {
   if (normalizePathname(pathValue) !== "/admin") return false;
 
@@ -21,7 +26,13 @@ const isAdminForumBridgeRequest = (pathValue, query = {}) => {
   return candidates.some((candidate) => hasPathPrefix(candidate, DEFAULT_FORUM_PATH));
 };
 
-const isWinterModeAllowedPath = ({ path, query } = {}) => {
+const isForumLegacyCommentActionPath = (pathValue) => (
+  /^\/comments\/(?:reactions|[1-9][0-9]*\/(?:delete|edit|like|report))$/i.test(normalizePathname(pathValue))
+);
+
+const isForumModeRequest = ({ body } = {}) => Boolean(body && isTruthyFlag(body.forumMode));
+
+const isWinterModeAllowedPath = ({ path, query, body } = {}) => {
   const pathValue = normalizePathname(path);
 
   if (hasPathPrefix(pathValue, DEFAULT_FORUM_PATH)) return true;
@@ -31,6 +42,9 @@ const isWinterModeAllowedPath = ({ path, query } = {}) => {
   if (hasPathPrefix(pathValue, "/auth")) return true;
   if (hasPathPrefix(pathValue, "/notifications")) return true;
   if (pathValue === "/messages/unread-count" || pathValue === "/messages/stream") return true;
+  if (hasPathPrefix(pathValue, "/user")) return true;
+  if (hasPathPrefix(pathValue, "/comments/users")) return true;
+  if (isForumLegacyCommentActionPath(pathValue) && isForumModeRequest({ body })) return true;
 
   if (isAdminForumBridgeRequest(pathValue, query)) return true;
 
@@ -49,7 +63,7 @@ const createWinterModeMiddleware = ({
   const redirectPath = normalizePathname(forumPath || DEFAULT_FORUM_PATH);
 
   return (req, res, next) => {
-    if (isWinterModeAllowedPath({ path: req && req.path, query: req && req.query })) {
+    if (isWinterModeAllowedPath({ path: req && req.path, query: req && req.query, body: req && req.body })) {
       return next();
     }
 
