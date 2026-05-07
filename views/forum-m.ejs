@@ -434,8 +434,7 @@
             <% postList.forEach((post) => { %>
               <article class="post-card">
                 <div class="meta">
-                  <% if (post.isHomePinned) { %><span class="badge">Trang chính</span><% } %>
-                  <% if (post.isPinned) { %><span class="badge">Ghim chuyên mục</span><% } %>
+                  <% if (post.isPinned) { %><span class="badge">Ghim mục</span><% } %>
                   <% if (post.isLocked) { %><span class="badge">Khóa</span><% } %>
                   <span><%= post.sectionLabel || "Thảo luận" %></span>
                   <span>•</span>

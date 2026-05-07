@@ -320,7 +320,7 @@ export const PostCard = memo(function PostCard({
       setPostHomePinned(typeof payload.homePinned === "boolean" ? payload.homePinned : nextPinned);
       await onPostUpdated?.();
     } catch (err) {
-      window.alert(err instanceof Error ? err.message : "Không thể ghim bài viết ra trang chính.");
+      window.alert(err instanceof Error ? err.message : "Không thể cập nhật ghim chính.");
     } finally {
       setPostActionBusy(false);
     }
@@ -440,12 +440,7 @@ export const PostCard = memo(function PostCard({
             )}
             {postPinned && !post.isAnnouncement && (
               <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-sticky">
-                <Pin className="h-3 w-3" /> Ghim chuyên mục
-              </span>
-            )}
-            {postHomePinned && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-primary">
-                <Pin className="h-3 w-3" /> Trang chính
+                <Pin className="h-3 w-3" /> Ghim mục
               </span>
             )}
             {postLocked && (
@@ -518,7 +513,7 @@ export const PostCard = memo(function PostCard({
                     }}
                     disabled={postActionBusy}
                   >
-                    <Pin className="mr-2 h-3.5 w-3.5" /> {postPinned ? "Bỏ ghim chuyên mục" : "Ghim chuyên mục"}
+                    <Pin className="mr-2 h-3.5 w-3.5" /> {postPinned ? "Bỏ ghim mục" : "Ghim mục"}
                   </DropdownMenuItem>
                 ) : null}
                 {canPinPost ? (
@@ -531,7 +526,7 @@ export const PostCard = memo(function PostCard({
                     }}
                     disabled={postActionBusy}
                   >
-                    <Pin className="mr-2 h-3.5 w-3.5" /> {postHomePinned ? "Bỏ ghim trang chính" : "Ghim trang chính"}
+                    <Pin className="mr-2 h-3.5 w-3.5" /> {postHomePinned ? "Bỏ ghim chính" : "Ghim chính"}
                   </DropdownMenuItem>
                 ) : null}
                 {(post.permissions?.canDelete && (post.permissions?.canEdit || canLockPost || canPinPost)) ? <DropdownMenuSeparator /> : null}

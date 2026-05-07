@@ -355,13 +355,13 @@ const AdminPosts = () => {
         if (action === "pin") {
           await setForumAdminPostPinned(postId, !post.isPinned);
           toast({
-            title: post.isPinned ? "Đã bỏ ghim chuyên mục" : "Đã ghim chuyên mục",
+            title: post.isPinned ? "Đã bỏ ghim mục" : "Đã ghim mục",
             description: post.title,
           });
         } else if (action === "home-pin") {
           await setForumAdminPostHomePinned(postId, !post.isHomePinned);
           toast({
-            title: post.isHomePinned ? "Đã bỏ ghim trang chính" : "Đã ghim trang chính",
+            title: post.isHomePinned ? "Đã bỏ ghim chính" : "Đã ghim chính",
             description: post.title,
           });
         } else {
@@ -751,22 +751,22 @@ const AdminPosts = () => {
                               <DropdownMenuItem onClick={() => void handleAction(post, "pin")}>
                                 {post.isPinned ? (
                                   <>
-                                    <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim chuyên mục
+                                    <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim mục
                                   </>
                                 ) : (
                                   <>
-                                    <Pin className="mr-2 h-3.5 w-3.5" /> Ghim chuyên mục
+                                    <Pin className="mr-2 h-3.5 w-3.5" /> Ghim mục
                                   </>
                                 )}
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => void handleAction(post, "home-pin")}>
                                 {post.isHomePinned ? (
                                   <>
-                                    <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim trang chính
+                                    <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim chính
                                   </>
                                 ) : (
                                   <>
-                                    <Pin className="mr-2 h-3.5 w-3.5" /> Ghim trang chính
+                                    <Pin className="mr-2 h-3.5 w-3.5" /> Ghim chính
                                   </>
                                 )}
                               </DropdownMenuItem>
@@ -801,8 +801,7 @@ const AdminPosts = () => {
                           {post.status === "hidden" ? (
                             <Badge className="border-0 bg-red-500/20 text-red-300 text-xs">Đã ẩn</Badge>
                           ) : null}
-                          {post.isHomePinned ? <Badge className="border-0 bg-sky-500/20 text-sky-300 text-xs">Trang chính</Badge> : null}
-                          {post.isPinned ? <Badge className="border-0 bg-yellow-500/20 text-yellow-300 text-xs">Ghim chuyên mục</Badge> : null}
+                          {post.isPinned ? <Badge className="border-0 bg-yellow-500/20 text-yellow-300 text-xs">Ghim mục</Badge> : null}
                           {post.isLocked ? <Badge className="border-0 bg-orange-500/20 text-orange-300 text-xs">Khóa</Badge> : null}
                           {post.status !== "hidden" && !post.isHomePinned && !post.isPinned && !post.isLocked ? (
                             <Badge className="border-0 bg-zinc-500/20 text-zinc-300 text-xs">Bình thường</Badge>
@@ -885,10 +884,7 @@ const AdminPosts = () => {
                                   <Badge className="border-0 bg-red-500/20 text-red-300 text-xs">Đã ẩn</Badge>
                                 ) : null}
                                 {post.isPinned ? (
-                                  <Badge className="border-0 bg-yellow-500/20 text-yellow-300 text-xs">Ghim chuyên mục</Badge>
-                                ) : null}
-                                {post.isHomePinned ? (
-                                  <Badge className="border-0 bg-sky-500/20 text-sky-300 text-xs">Trang chính</Badge>
+                                  <Badge className="border-0 bg-yellow-500/20 text-yellow-300 text-xs">Ghim mục</Badge>
                                 ) : null}
                                 {post.isLocked ? (
                                   <Badge className="border-0 bg-orange-500/20 text-orange-300 text-xs">Khóa</Badge>
@@ -926,11 +922,11 @@ const AdminPosts = () => {
                                   >
                                     {post.isPinned ? (
                                       <>
-                                        <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim chuyên mục
+                                        <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim mục
                                       </>
                                     ) : (
                                       <>
-                                        <Pin className="mr-2 h-3.5 w-3.5" /> Ghim chuyên mục
+                                        <Pin className="mr-2 h-3.5 w-3.5" /> Ghim mục
                                       </>
                                     )}
                                   </DropdownMenuItem>
@@ -942,11 +938,11 @@ const AdminPosts = () => {
                                   >
                                     {post.isHomePinned ? (
                                       <>
-                                        <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim trang chính
+                                        <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim chính
                                       </>
                                     ) : (
                                       <>
-                                        <Pin className="mr-2 h-3.5 w-3.5" /> Ghim trang chính
+                                        <Pin className="mr-2 h-3.5 w-3.5" /> Ghim chính
                                       </>
                                     )}
                                   </DropdownMenuItem>

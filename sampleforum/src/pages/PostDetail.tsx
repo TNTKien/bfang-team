@@ -1428,13 +1428,13 @@ const PostDetail = () => {
       await setForumPostHomePinned(Math.floor(safePostId), nextPinned);
       await refreshDetail(detail.post.id);
       toast({
-        title: nextPinned ? "Đã ghim trang chính" : "Đã bỏ ghim trang chính",
+        title: nextPinned ? "Đã ghim chính" : "Đã bỏ ghim chính",
         description: nextPinned
-          ? "Bài viết đã được ghim ra trang chính forum."
-          : "Bài viết đã được bỏ ghim khỏi trang chính forum.",
+          ? "Bài viết đã được ghim chính."
+          : "Bài viết đã được bỏ ghim chính.",
       });
     } catch (err) {
-      setActionNotice(err instanceof Error ? err.message : "Không thể cập nhật trạng thái ghim trang chính.");
+      setActionNotice(err instanceof Error ? err.message : "Không thể cập nhật trạng thái ghim chính.");
     } finally {
       markActionPending(String(detail.post.id), false);
     }
@@ -2057,7 +2057,7 @@ const PostDetail = () => {
                             void handleTogglePostPin();
                           }}
                         >
-                          <Pin className="h-3.5 w-3.5" /> {post?.isSticky ? "Bỏ ghim chuyên mục" : "Ghim chuyên mục"}
+                          <Pin className="h-3.5 w-3.5" /> {post?.isSticky ? "Bỏ ghim mục" : "Ghim mục"}
                         </button>
                       )}
                       {canPinPost && (
@@ -2070,7 +2070,7 @@ const PostDetail = () => {
                             void handleTogglePostHomePin();
                           }}
                         >
-                          <Pin className="h-3.5 w-3.5" /> {post?.isHomePinned ? "Bỏ ghim trang chính" : "Ghim trang chính"}
+                          <Pin className="h-3.5 w-3.5" /> {post?.isHomePinned ? "Bỏ ghim chính" : "Ghim chính"}
                         </button>
                       )}
                       {detail?.post.permissions?.canDelete && (
@@ -2102,12 +2102,7 @@ const PostDetail = () => {
               )}
               {post.isSticky && !post.isAnnouncement && (
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-sticky">
-                  <Pin className="h-3 w-3" /> Ghim chuyên mục
-                </span>
-              )}
-              {post.isHomePinned && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-primary">
-                  <Pin className="h-3 w-3" /> Trang chính
+                  <Pin className="h-3 w-3" /> Ghim mục
                 </span>
               )}
               {post.isLocked && (
