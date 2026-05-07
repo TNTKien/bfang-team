@@ -377,6 +377,7 @@ export const mapApiPostToUiPost = (
     commentCount: post.commentCount || 0,
     createdAt: post.timeAgo || "Vừa xong",
     isSticky: Boolean(post.isSticky),
+    isHomePinned: Boolean(post.isHomePinned),
     isLocked: Boolean(post.isLocked),
     isAnnouncement: section.slug === "thong-bao",
     permissions: post.permissions,

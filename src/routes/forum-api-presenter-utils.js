@@ -160,6 +160,7 @@ const createForumApiPresenterUtils = ({
       commentCount: Number(row && row.reply_count) || 0,
       isLocked: Boolean(row && row.forum_post_locked),
       isSticky: Boolean(row && row.forum_post_pinned),
+      isHomePinned: Boolean(row && row.forum_post_home_pinned),
       author: mapAuthor(row, {
         authorDecorationMap: options.authorDecorationMap,
         includeAllBadges
@@ -216,6 +217,7 @@ const createForumApiPresenterUtils = ({
       likeCount: Number(row && row.like_count) || 0,
       isLocked: Boolean(row && row.forum_post_locked),
       isPinned: Boolean(row && row.forum_post_pinned),
+      isHomePinned: Boolean(row && row.forum_post_home_pinned),
       author: {
         id: readText(row && row.author_user_id),
         username: authorUsername,

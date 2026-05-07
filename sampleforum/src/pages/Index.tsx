@@ -202,13 +202,9 @@ const Index = () => {
   );
 
   const sortedPosts = useMemo(() => {
-    if (!selectedCategory) {
-      return filteredPosts;
-    }
-
     return [...filteredPosts].sort((a, b) => {
-      const aPinned = Boolean(a && a.isSticky);
-      const bPinned = Boolean(b && b.isSticky);
+      const aPinned = selectedCategory ? Boolean(a && a.isSticky) : Boolean(a && a.isHomePinned);
+      const bPinned = selectedCategory ? Boolean(b && b.isSticky) : Boolean(b && b.isHomePinned);
       if (aPinned === bPinned) return 0;
       return aPinned ? -1 : 1;
     });
@@ -380,6 +376,9 @@ const Index = () => {
                     canModerateForum={canModerateForum}
                     onRequireLogin={handleLogin}
                     onPostDeleted={() => {
+                      void loadHome();
+                    }}
+                    onPostUpdated={() => {
                       void loadHome();
                     }}
                   />

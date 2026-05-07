@@ -38,6 +38,7 @@ export interface Post {
   commentCount: number;
   createdAt: string;
   isSticky?: boolean;
+  isHomePinned?: boolean;
   isLocked?: boolean;
   isAnnouncement?: boolean;
   userVote?: 'up' | 'down' | null;
@@ -118,6 +119,7 @@ export interface ForumApiPostSummary {
   saved?: boolean;
   isLocked?: boolean;
   isSticky?: boolean;
+  isHomePinned?: boolean;
 }
 
 export interface ForumSectionOption {
@@ -269,6 +271,7 @@ export interface ForumAdminPostSummary {
   likeCount: number;
   isLocked: boolean;
   isPinned: boolean;
+  isHomePinned: boolean;
   author: {
     id: string;
     username: string;

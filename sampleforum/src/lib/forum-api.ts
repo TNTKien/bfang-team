@@ -793,6 +793,33 @@ export const setForumPostPinned = async (postId: number, pinned?: boolean): Prom
   return readJson<{ ok: boolean; pinned?: boolean }>(response);
 };
 
+export const setForumPostHomePinned = async (
+  postId: number,
+  pinned?: boolean
+): Promise<{ ok: boolean; homePinned?: boolean }> => {
+  const safeId = Number(postId);
+  if (!Number.isFinite(safeId) || safeId <= 0) {
+    throw new Error("Mã bài viết không hợp lệ.");
+  }
+
+  const body: { pinned?: boolean } = {};
+  if (typeof pinned === "boolean") {
+    body.pinned = pinned;
+  }
+
+  const response = await fetch(`/forum/api/posts/${encodeURIComponent(String(Math.floor(safeId)))}/pin-home`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  return readJson<{ ok: boolean; homePinned?: boolean }>(response);
+};
+
 export const fetchForumAdminOverview = async (): Promise<ForumAdminOverviewResponse> => {
   const response = await fetch("/forum/api/admin/overview", {
     method: "GET",
@@ -1230,6 +1257,33 @@ export const setForumAdminPostPinned = async (postId: number, pinned?: boolean):
   });
 
   return readJson<{ ok: boolean; pinned?: boolean }>(response);
+};
+
+export const setForumAdminPostHomePinned = async (
+  postId: number,
+  pinned?: boolean
+): Promise<{ ok: boolean; homePinned?: boolean }> => {
+  const safeId = Number(postId);
+  if (!Number.isFinite(safeId) || safeId <= 0) {
+    throw new Error("Mã bài viết không hợp lệ.");
+  }
+
+  const body: { pinned?: boolean } = {};
+  if (typeof pinned === "boolean") {
+    body.pinned = pinned;
+  }
+
+  const response = await fetch(`/forum/api/admin/posts/${encodeURIComponent(String(Math.floor(safeId)))}/pin-home`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  return readJson<{ ok: boolean; homePinned?: boolean }>(response);
 };
 
 export const setForumAdminPostLocked = async (postId: number, locked?: boolean): Promise<{ ok: boolean; locked?: boolean }> => {

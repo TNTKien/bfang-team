@@ -131,6 +131,7 @@ const COPY_FORUM_ROWS_SQL = `
     report_count,
     forum_post_locked,
     forum_post_pinned,
+    forum_post_home_pinned,
     created_at
   )
   SELECT
@@ -150,6 +151,7 @@ const COPY_FORUM_ROWS_SQL = `
     COALESCE(c.report_count, 0),
     COALESCE(c.forum_post_locked, false),
     COALESCE(c.forum_post_pinned, false),
+    COALESCE(c.forum_post_home_pinned, false),
     COALESCE(
       NULLIF(TRIM(c.created_at), ''),
       to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
@@ -158,6 +160,13 @@ const COPY_FORUM_ROWS_SQL = `
   WHERE COALESCE(c.client_request_id, '') ILIKE $1
   ON CONFLICT (id) DO NOTHING
 `;
+
+const ENSURE_HOME_PIN_COLUMNS_SQL = [
+  "ALTER TABLE comments ADD COLUMN IF NOT EXISTS forum_post_home_pinned BOOLEAN NOT NULL DEFAULT false",
+  "ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS forum_post_home_pinned BOOLEAN NOT NULL DEFAULT false",
+  "UPDATE comments SET forum_post_home_pinned = false WHERE forum_post_home_pinned IS NULL",
+  "UPDATE forum_posts SET forum_post_home_pinned = false WHERE forum_post_home_pinned IS NULL"
+];
 
 const DELETE_MOVED_ROWS_SQL = `
   DELETE FROM comments c
@@ -207,6 +216,10 @@ const main = async () => {
     }
 
     await client.query("BEGIN");
+
+    for (const sql of ENSURE_HOME_PIN_COLUMNS_SQL) {
+      await client.query(sql);
+    }
 
     const prefixResult = await client.query(APPLY_PREFIX_SQL, [FORUM_META_LIKE, FORUM_REQUEST_LIKE]);
     const copiedResult = await client.query(COPY_FORUM_ROWS_SQL, [FORUM_REQUEST_LIKE]);

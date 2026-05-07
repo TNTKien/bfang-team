@@ -10,6 +10,7 @@ const createForumApiReadQueryUtils = ({ dbAll, dbGet }) => {
           c.report_count,
           c.forum_post_locked,
           c.forum_post_pinned,
+          c.forum_post_home_pinned,
           c.author,
           c.author_user_id,
           c.author_avatar_url,
@@ -106,6 +107,7 @@ const createForumApiReadQueryUtils = ({ dbAll, dbGet }) => {
           c.report_count,
           c.forum_post_locked,
           c.forum_post_pinned,
+          c.forum_post_home_pinned,
           c.author,
           c.author_user_id,
           c.author_avatar_url,
@@ -163,7 +165,8 @@ const createForumApiReadQueryUtils = ({ dbAll, dbGet }) => {
           c.id,
           c.author_user_id,
           COALESCE(c.forum_post_locked, false) AS forum_post_locked,
-          COALESCE(c.forum_post_pinned, false) AS forum_post_pinned
+          COALESCE(c.forum_post_pinned, false) AS forum_post_pinned,
+          COALESCE(c.forum_post_home_pinned, false) AS forum_post_home_pinned
         FROM comments c
         WHERE c.id = ?
           AND c.parent_id IS NULL

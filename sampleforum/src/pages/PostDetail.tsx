@@ -35,6 +35,7 @@ import {
   fetchForumPostDetail,
   finalizeForumPostLocalImages,
   reportComment,
+  setForumPostHomePinned,
   setForumPostLocked,
   setForumPostPinned,
   submitForumReply,
@@ -1416,6 +1417,29 @@ const PostDetail = () => {
     }
   };
 
+  const handleTogglePostHomePin = async () => {
+    if (!detail?.post?.id || postActionBusy || !canPinPost) return;
+    const safePostId = Number(detail.post.id);
+    if (!Number.isFinite(safePostId) || safePostId <= 0) return;
+
+    try {
+      markActionPending(String(detail.post.id), true);
+      const nextPinned = !post?.isHomePinned;
+      await setForumPostHomePinned(Math.floor(safePostId), nextPinned);
+      await refreshDetail(detail.post.id);
+      toast({
+        title: nextPinned ? "Đã ghim trang chính" : "Đã bỏ ghim trang chính",
+        description: nextPinned
+          ? "Bài viết đã được ghim ra trang chính forum."
+          : "Bài viết đã được bỏ ghim khỏi trang chính forum.",
+      });
+    } catch (err) {
+      setActionNotice(err instanceof Error ? err.message : "Không thể cập nhật trạng thái ghim trang chính.");
+    } finally {
+      markActionPending(String(detail.post.id), false);
+    }
+  };
+
   const openDeleteConfirmDialog = (targetId: string, isPost = false) => {
     const safeId = String(targetId || "").trim();
     if (!safeId) return;
@@ -2033,7 +2057,20 @@ const PostDetail = () => {
                             void handleTogglePostPin();
                           }}
                         >
-                          <Pin className="h-3.5 w-3.5" /> {post?.isSticky ? "Bỏ ghim" : "Ghim bài"}
+                          <Pin className="h-3.5 w-3.5" /> {post?.isSticky ? "Bỏ ghim chuyên mục" : "Ghim chuyên mục"}
+                        </button>
+                      )}
+                      {canPinPost && (
+                        <button
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                          type="button"
+                          disabled={postActionBusy}
+                          onClick={() => {
+                            setShowMenu(false);
+                            void handleTogglePostHomePin();
+                          }}
+                        >
+                          <Pin className="h-3.5 w-3.5" /> {post?.isHomePinned ? "Bỏ ghim trang chính" : "Ghim trang chính"}
                         </button>
                       )}
                       {detail?.post.permissions?.canDelete && (
@@ -2065,7 +2102,12 @@ const PostDetail = () => {
               )}
               {post.isSticky && !post.isAnnouncement && (
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-sticky">
-                  <Pin className="h-3 w-3" /> Ghim
+                  <Pin className="h-3 w-3" /> Ghim chuyên mục
+                </span>
+              )}
+              {post.isHomePinned && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-primary">
+                  <Pin className="h-3 w-3" /> Trang chính
                 </span>
               )}
               {post.isLocked && (

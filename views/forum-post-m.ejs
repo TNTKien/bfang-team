@@ -377,7 +377,8 @@
         <article class="post" aria-labelledby="post-title">
           <h1 id="post-title"><%= postTitle %></h1>
           <div class="meta">
-            <% if (postData.isPinned) { %><span class="badge">Ghim</span><% } %>
+            <% if (postData.isHomePinned) { %><span class="badge">Trang chính</span><% } %>
+            <% if (postData.isPinned) { %><span class="badge">Ghim chuyên mục</span><% } %>
             <% if (postData.isLocked) { %><span class="badge">Khóa</span><% } %>
             <span><%= postAuthorName %></span>
             <span>•</span>

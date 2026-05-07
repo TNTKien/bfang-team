@@ -52,6 +52,12 @@ const createForumApiViewerUtils = ({ getUserBadgeContext, loadSessionUserById, t
     const permissions = badgeContext && badgeContext.permissions ? badgeContext.permissions : {};
     const canComment = permissions.canComment !== false;
     const role = resolveViewerRole(badgeContext);
+    const canModerateForum = Boolean(
+      permissions.canDeleteAnyComment
+      || permissions.canAccessAdmin
+      || role === "admin"
+      || role === "moderator"
+    );
     const canCreateAnnouncement = role === "admin" || role === "moderator";
 
     return {
@@ -60,7 +66,7 @@ const createForumApiViewerUtils = ({ getUserBadgeContext, loadSessionUserById, t
       canComment: Boolean(canComment),
       canDeleteAnyComment: Boolean(permissions.canDeleteAnyComment),
       canAccessAdmin: Boolean(permissions.canAccessAdmin),
-      canModerateForum: Boolean(permissions.canDeleteAnyComment),
+      canModerateForum,
       canCreateAnnouncement,
       role
     };

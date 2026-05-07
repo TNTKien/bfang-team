@@ -119,7 +119,8 @@ const createForumApiAdminUtils = ({
           c.content,
           c.status,
           c.forum_post_locked,
-          c.forum_post_pinned
+          c.forum_post_pinned,
+          c.forum_post_home_pinned
         FROM comments c
         WHERE c.id = ?
           AND c.parent_id IS NULL
@@ -230,7 +231,7 @@ const createForumApiAdminUtils = ({
     const safePostId = typeof normalizePositiveInt === "function" ? normalizePositiveInt(postId, 0) : Number(postId) || 0;
     if (!safePostId) return false;
 
-    const allowedFields = new Set(["forum_post_pinned", "forum_post_locked"]);
+    const allowedFields = new Set(["forum_post_pinned", "forum_post_home_pinned", "forum_post_locked"]);
     if (!allowedFields.has(fieldName)) {
       throw new Error("Invalid forum root field update");
     }

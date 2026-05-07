@@ -19,6 +19,7 @@ import {
   fetchForumAdminPosts,
   hideForumAdminPost,
   restoreForumAdminPost,
+  setForumAdminPostHomePinned,
   setForumAdminPostLocked,
   setForumAdminPostPinned,
   updateForumAdminPost,
@@ -344,7 +345,7 @@ const AdminPosts = () => {
   }, []);
 
   const handleAction = useCallback(
-    async (post: ForumAdminPostSummary, action: "pin" | "lock") => {
+    async (post: ForumAdminPostSummary, action: "pin" | "home-pin" | "lock") => {
       const postId = Number(post.id);
       if (!Number.isFinite(postId) || postId <= 0) return;
 
@@ -354,7 +355,13 @@ const AdminPosts = () => {
         if (action === "pin") {
           await setForumAdminPostPinned(postId, !post.isPinned);
           toast({
-            title: post.isPinned ? "Đã bỏ ghim bài viết" : "Đã ghim bài viết",
+            title: post.isPinned ? "Đã bỏ ghim chuyên mục" : "Đã ghim chuyên mục",
+            description: post.title,
+          });
+        } else if (action === "home-pin") {
+          await setForumAdminPostHomePinned(postId, !post.isHomePinned);
+          toast({
+            title: post.isHomePinned ? "Đã bỏ ghim trang chính" : "Đã ghim trang chính",
             description: post.title,
           });
         } else {
@@ -744,11 +751,22 @@ const AdminPosts = () => {
                               <DropdownMenuItem onClick={() => void handleAction(post, "pin")}>
                                 {post.isPinned ? (
                                   <>
-                                    <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim
+                                    <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim chuyên mục
                                   </>
                                 ) : (
                                   <>
-                                    <Pin className="mr-2 h-3.5 w-3.5" /> Ghim
+                                    <Pin className="mr-2 h-3.5 w-3.5" /> Ghim chuyên mục
+                                  </>
+                                )}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => void handleAction(post, "home-pin")}>
+                                {post.isHomePinned ? (
+                                  <>
+                                    <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim trang chính
+                                  </>
+                                ) : (
+                                  <>
+                                    <Pin className="mr-2 h-3.5 w-3.5" /> Ghim trang chính
                                   </>
                                 )}
                               </DropdownMenuItem>
@@ -783,9 +801,10 @@ const AdminPosts = () => {
                           {post.status === "hidden" ? (
                             <Badge className="border-0 bg-red-500/20 text-red-300 text-xs">Đã ẩn</Badge>
                           ) : null}
-                          {post.isPinned ? <Badge className="border-0 bg-yellow-500/20 text-yellow-300 text-xs">Ghim</Badge> : null}
+                          {post.isHomePinned ? <Badge className="border-0 bg-sky-500/20 text-sky-300 text-xs">Trang chính</Badge> : null}
+                          {post.isPinned ? <Badge className="border-0 bg-yellow-500/20 text-yellow-300 text-xs">Ghim chuyên mục</Badge> : null}
                           {post.isLocked ? <Badge className="border-0 bg-orange-500/20 text-orange-300 text-xs">Khóa</Badge> : null}
-                          {post.status !== "hidden" && !post.isPinned && !post.isLocked ? (
+                          {post.status !== "hidden" && !post.isHomePinned && !post.isPinned && !post.isLocked ? (
                             <Badge className="border-0 bg-zinc-500/20 text-zinc-300 text-xs">Bình thường</Badge>
                           ) : null}
                         </div>
@@ -866,12 +885,15 @@ const AdminPosts = () => {
                                   <Badge className="border-0 bg-red-500/20 text-red-300 text-xs">Đã ẩn</Badge>
                                 ) : null}
                                 {post.isPinned ? (
-                                  <Badge className="border-0 bg-yellow-500/20 text-yellow-300 text-xs">Ghim</Badge>
+                                  <Badge className="border-0 bg-yellow-500/20 text-yellow-300 text-xs">Ghim chuyên mục</Badge>
+                                ) : null}
+                                {post.isHomePinned ? (
+                                  <Badge className="border-0 bg-sky-500/20 text-sky-300 text-xs">Trang chính</Badge>
                                 ) : null}
                                 {post.isLocked ? (
                                   <Badge className="border-0 bg-orange-500/20 text-orange-300 text-xs">Khóa</Badge>
                                 ) : null}
-                                {post.status !== "hidden" && !post.isPinned && !post.isLocked ? (
+                                {post.status !== "hidden" && !post.isHomePinned && !post.isPinned && !post.isLocked ? (
                                   <Badge className="border-0 bg-zinc-500/20 text-zinc-300 text-xs">Bình thường</Badge>
                                 ) : null}
                               </div>
@@ -904,11 +926,27 @@ const AdminPosts = () => {
                                   >
                                     {post.isPinned ? (
                                       <>
-                                        <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim
+                                        <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim chuyên mục
                                       </>
                                     ) : (
                                       <>
-                                        <Pin className="mr-2 h-3.5 w-3.5" /> Ghim
+                                        <Pin className="mr-2 h-3.5 w-3.5" /> Ghim chuyên mục
+                                      </>
+                                    )}
+                                  </DropdownMenuItem>
+
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      void handleAction(post, "home-pin");
+                                    }}
+                                  >
+                                    {post.isHomePinned ? (
+                                      <>
+                                        <PinOff className="mr-2 h-3.5 w-3.5" /> Bỏ ghim trang chính
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Pin className="mr-2 h-3.5 w-3.5" /> Ghim trang chính
                                       </>
                                     )}
                                   </DropdownMenuItem>

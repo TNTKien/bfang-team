@@ -5,7 +5,14 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ReactionBar, ReactionType, getDefaultReactionCounts } from "@/components/ReactionBar";
 import { UserInfo } from "@/components/UserInfo";
 import { ForumRichContent } from "@/components/ForumRichContent";
-import { deleteComment, setForumPostLocked, setForumPostPinned, toggleCommentLike, toggleForumPostBookmark } from "@/lib/forum-api";
+import {
+  deleteComment,
+  setForumPostHomePinned,
+  setForumPostLocked,
+  setForumPostPinned,
+  toggleCommentLike,
+  toggleForumPostBookmark,
+} from "@/lib/forum-api";
 import { openAuthProviderDialog } from "@/lib/auth-login";
 import {
   DropdownMenu,
@@ -30,6 +37,7 @@ import { getSiteBranding } from "@/lib/site-branding";
 interface PostCardProps {
   post: Post;
   onPostDeleted?: (postId: string) => void | Promise<void>;
+  onPostUpdated?: () => void | Promise<void>;
   isAuthenticated?: boolean;
   canModerateForum?: boolean;
   onRequireLogin?: () => void;
@@ -38,6 +46,7 @@ interface PostCardProps {
 export const PostCard = memo(function PostCard({
   post,
   onPostDeleted,
+  onPostUpdated,
   isAuthenticated,
   canModerateForum = false,
   onRequireLogin,
@@ -48,6 +57,7 @@ export const PostCard = memo(function PostCard({
   const [postActionBusy, setPostActionBusy] = useState(false);
   const [postLocked, setPostLocked] = useState(Boolean(post.isLocked));
   const [postPinned, setPostPinned] = useState(Boolean(post.isSticky));
+  const [postHomePinned, setPostHomePinned] = useState(Boolean(post.isHomePinned));
   const [isDeleted, setIsDeleted] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [shareState, setShareState] = useState<"idle" | "copied" | "failed">("idle");
@@ -88,6 +98,10 @@ export const PostCard = memo(function PostCard({
   useEffect(() => {
     setPostPinned(Boolean(post.isSticky));
   }, [post.isSticky]);
+
+  useEffect(() => {
+    setPostHomePinned(Boolean(post.isHomePinned));
+  }, [post.isHomePinned]);
 
   const handleReact = async (type: ReactionType | null) => {
     const postId = Number(post.id);
@@ -266,6 +280,7 @@ export const PostCard = memo(function PostCard({
       const nextLocked = !postLocked;
       const payload = await setForumPostLocked(Math.floor(postId), nextLocked);
       setPostLocked(typeof payload.locked === "boolean" ? payload.locked : nextLocked);
+      await onPostUpdated?.();
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Không thể thay đổi trạng thái khoá bài viết.");
     } finally {
@@ -284,8 +299,28 @@ export const PostCard = memo(function PostCard({
       const nextPinned = !postPinned;
       const payload = await setForumPostPinned(Math.floor(postId), nextPinned);
       setPostPinned(typeof payload.pinned === "boolean" ? payload.pinned : nextPinned);
+      await onPostUpdated?.();
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Không thể thay đổi trạng thái ghim bài viết.");
+    } finally {
+      setPostActionBusy(false);
+    }
+  };
+
+  const handleTogglePostHomePin = async () => {
+    if (!canPinPost || postActionBusy) return;
+
+    const postId = Number(post.id);
+    if (!Number.isFinite(postId) || postId <= 0) return;
+
+    try {
+      setPostActionBusy(true);
+      const nextPinned = !postHomePinned;
+      const payload = await setForumPostHomePinned(Math.floor(postId), nextPinned);
+      setPostHomePinned(typeof payload.homePinned === "boolean" ? payload.homePinned : nextPinned);
+      await onPostUpdated?.();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Không thể ghim bài viết ra trang chính.");
     } finally {
       setPostActionBusy(false);
     }
@@ -405,7 +440,12 @@ export const PostCard = memo(function PostCard({
             )}
             {postPinned && !post.isAnnouncement && (
               <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-sticky">
-                <Pin className="h-3 w-3" /> Ghim
+                <Pin className="h-3 w-3" /> Ghim chuyên mục
+              </span>
+            )}
+            {postHomePinned && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-primary">
+                <Pin className="h-3 w-3" /> Trang chính
               </span>
             )}
             {postLocked && (
@@ -478,7 +518,20 @@ export const PostCard = memo(function PostCard({
                     }}
                     disabled={postActionBusy}
                   >
-                    <Pin className="mr-2 h-3.5 w-3.5" /> {postPinned ? "Bỏ ghim bài viết" : "Ghim bài viết"}
+                    <Pin className="mr-2 h-3.5 w-3.5" /> {postPinned ? "Bỏ ghim chuyên mục" : "Ghim chuyên mục"}
+                  </DropdownMenuItem>
+                ) : null}
+                {canPinPost ? (
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      suppressCardNavigation(1200);
+                      void handleTogglePostHomePin();
+                    }}
+                    disabled={postActionBusy}
+                  >
+                    <Pin className="mr-2 h-3.5 w-3.5" /> {postHomePinned ? "Bỏ ghim trang chính" : "Ghim trang chính"}
                   </DropdownMenuItem>
                 ) : null}
                 {(post.permissions?.canDelete && (post.permissions?.canEdit || canLockPost || canPinPost)) ? <DropdownMenuSeparator /> : null}

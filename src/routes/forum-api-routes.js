@@ -2000,6 +2000,7 @@ const registerForumApiRoutes = (app, deps) => {
           c.report_count,
           c.forum_post_locked,
           c.forum_post_pinned,
+          c.forum_post_home_pinned,
           c.author,
           c.author_user_id,
           c.author_avatar_url,
@@ -2075,6 +2076,9 @@ const registerForumApiRoutes = (app, deps) => {
         pageCount = paginationState.pageCount;
 
         if (sort === "hot") {
+          const pinnedOrderSql = requestedSection
+            ? "COALESCE(bp.forum_post_pinned, false) DESC, "
+            : "COALESCE(bp.forum_post_home_pinned, false) DESC, ";
           const recentCutoffIso = new Date(Date.now() - HOT_RECENT_WINDOW_MS).toISOString();
           postRows = await dbAll(
             `
@@ -2132,16 +2136,19 @@ const registerForumApiRoutes = (app, deps) => {
               SELECT bp.*
               FROM ranked r
               JOIN base_posts bp ON bp.id = r.id
-              ORDER BY r.global_rank ASC
+              ORDER BY ${pinnedOrderSql}r.global_rank ASC
               LIMIT ? OFFSET ?
             `,
             [FORUM_REQUEST_ID_LIKE, FORUM_REQUEST_ID_LIKE, ...whereParams, recentCutoffIso, perPage, offset]
           );
         } else {
+          const pinnedOrderSql = requestedSection
+            ? "COALESCE(c.forum_post_pinned, false) DESC, "
+            : "COALESCE(c.forum_post_home_pinned, false) DESC, ";
           const orderSql =
             sort === "most-commented"
-              ? "ORDER BY COALESCE(reply_stats.reply_count, 0) DESC, c.created_at DESC, c.id DESC"
-              : "ORDER BY c.created_at DESC, c.id DESC";
+              ? `ORDER BY ${pinnedOrderSql}COALESCE(reply_stats.reply_count, 0) DESC, c.created_at DESC, c.id DESC`
+              : `ORDER BY ${pinnedOrderSql}c.created_at DESC, c.id DESC`;
 
           postRows = await dbAll(
             `
@@ -2434,6 +2441,43 @@ const registerForumApiRoutes = (app, deps) => {
         postId,
       });
       return res.json({ ok: true, pinned: nextPinned });
+    })
+  );
+
+  app.post(
+    "/forum/api/posts/:id/pin-home",
+    asyncHandler(async (req, res) => {
+      const postId = normalizePositiveInt(req.params.id, 0);
+      if (!postId) {
+        return res.status(400).json({ ok: false, error: "Mã chủ đề không hợp lệ." });
+      }
+
+      const viewer = await buildViewerContext(req);
+      if (!viewer.authenticated || !viewer.userId) {
+        return res.status(401).json({ ok: false, error: "Bạn cần đăng nhập để ghim chủ đề ra trang chính." });
+      }
+
+      if (!viewer.canModerateForum && !viewer.canDeleteAnyComment) {
+        return res.status(403).json({ ok: false, error: "Chỉ Mod/Admin mới có thể ghim chủ đề ra trang chính." });
+      }
+
+      const postRow = await loadVisibleForumRootPostModerationRow({
+        forumRequestIdLike: FORUM_REQUEST_ID_LIKE,
+        postId,
+      });
+      if (!postRow) {
+        return res.status(404).json({ ok: false, error: "Không tìm thấy chủ đề." });
+      }
+
+      const explicitPinned = req && req.body && typeof req.body.pinned === "boolean" ? req.body.pinned : null;
+      const currentPinned = Boolean(postRow && postRow.forum_post_home_pinned);
+      const nextPinned = await updateForumRootPostBooleanField({
+        currentValue: currentPinned,
+        explicitValue: explicitPinned,
+        fieldName: "forum_post_home_pinned",
+        postId,
+      });
+      return res.json({ ok: true, homePinned: nextPinned });
     })
   );
 
@@ -3165,6 +3209,27 @@ const registerForumApiRoutes = (app, deps) => {
         postId,
       });
       return res.json({ ok: true, pinned: nextPinned });
+    })
+  );
+
+  app.post(
+    "/forum/api/admin/posts/:id/pin-home",
+    requireAdmin,
+    asyncHandler(async (req, res) => {
+      const target = await resolveAdminRootPostTarget(req, res);
+      if (!target) return;
+
+      const { postId, postRow } = target;
+
+      const explicitPinned = req && req.body && typeof req.body.pinned === "boolean" ? req.body.pinned : null;
+      const currentPinned = Boolean(postRow && postRow.forum_post_home_pinned);
+      const nextPinned = await updateForumRootPostBooleanField({
+        currentValue: currentPinned,
+        explicitValue: explicitPinned,
+        fieldName: "forum_post_home_pinned",
+        postId,
+      });
+      return res.json({ ok: true, homePinned: nextPinned });
     })
   );
 

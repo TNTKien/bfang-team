@@ -802,6 +802,7 @@ const createInitDbDomain = (deps) => {
           report_count,
           forum_post_locked,
           forum_post_pinned,
+          forum_post_home_pinned,
           created_at
         )
         SELECT
@@ -818,6 +819,7 @@ const createInitDbDomain = (deps) => {
           COALESCE(c.report_count, 0),
           COALESCE(c.forum_post_locked, false),
           COALESCE(c.forum_post_pinned, false),
+          COALESCE(c.forum_post_home_pinned, false),
           c.created_at
         FROM comments c
         WHERE COALESCE(c.client_request_id, '') ILIKE 'forum-%'
@@ -1751,6 +1753,7 @@ const initDb = async () => {
       report_count INTEGER NOT NULL DEFAULT 0,
       forum_post_locked BOOLEAN NOT NULL DEFAULT false,
       forum_post_pinned BOOLEAN NOT NULL DEFAULT false,
+      forum_post_home_pinned BOOLEAN NOT NULL DEFAULT false,
       created_at TEXT NOT NULL
     )
   `
@@ -1774,6 +1777,7 @@ const initDb = async () => {
       report_count INTEGER NOT NULL DEFAULT 0,
       forum_post_locked BOOLEAN NOT NULL DEFAULT false,
       forum_post_pinned BOOLEAN NOT NULL DEFAULT false,
+      forum_post_home_pinned BOOLEAN NOT NULL DEFAULT false,
       created_at TEXT NOT NULL
     )
   `
@@ -1789,8 +1793,10 @@ const initDb = async () => {
   await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS image_url TEXT");
   await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS forum_post_locked BOOLEAN NOT NULL DEFAULT false");
   await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS forum_post_pinned BOOLEAN NOT NULL DEFAULT false");
+  await dbRun("ALTER TABLE comments ADD COLUMN IF NOT EXISTS forum_post_home_pinned BOOLEAN NOT NULL DEFAULT false");
   await dbRun("UPDATE comments SET forum_post_locked = false WHERE forum_post_locked IS NULL");
   await dbRun("UPDATE comments SET forum_post_pinned = false WHERE forum_post_pinned IS NULL");
+  await dbRun("UPDATE comments SET forum_post_home_pinned = false WHERE forum_post_home_pinned IS NULL");
   await dbRun(
     "CREATE INDEX IF NOT EXISTS idx_comments_manga_chapter_status_created ON comments (manga_id, chapter_number, status, created_at DESC)"
   );
@@ -1819,6 +1825,7 @@ const initDb = async () => {
   await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS image_url TEXT");
   await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS forum_post_locked BOOLEAN NOT NULL DEFAULT false");
   await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS forum_post_pinned BOOLEAN NOT NULL DEFAULT false");
+  await dbRun("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS forum_post_home_pinned BOOLEAN NOT NULL DEFAULT false");
   await dbRun("ALTER TABLE forum_posts DROP COLUMN IF EXISTS manga_id");
   await dbRun("ALTER TABLE forum_posts DROP COLUMN IF EXISTS chapter_number");
   const forumCreatedAtColumnRow = await dbGet(
@@ -1878,6 +1885,7 @@ const initDb = async () => {
   }
   await dbRun("UPDATE forum_posts SET forum_post_locked = false WHERE forum_post_locked IS NULL");
   await dbRun("UPDATE forum_posts SET forum_post_pinned = false WHERE forum_post_pinned IS NULL");
+  await dbRun("UPDATE forum_posts SET forum_post_home_pinned = false WHERE forum_post_home_pinned IS NULL");
   await dbRun("ALTER TABLE forum_posts ALTER COLUMN status SET DEFAULT 'visible'");
   await dbRun("DROP INDEX IF EXISTS idx_forum_posts_manga_chapter_status_created");
   await dbRun(

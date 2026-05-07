@@ -76,6 +76,7 @@ const createForumApiAdminListUtils = ({ dbAll, dbGet }) => {
           c.report_count,
           c.forum_post_locked,
           c.forum_post_pinned,
+          c.forum_post_home_pinned,
           c.created_at,
           c.author,
           c.author_user_id,

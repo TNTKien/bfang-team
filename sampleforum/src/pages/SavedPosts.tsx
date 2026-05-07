@@ -284,6 +284,9 @@ const SavedPosts = () => {
                 onPostDeleted={() => {
                   void loadSavedPosts();
                 }}
+                onPostUpdated={() => {
+                  void loadSavedPosts();
+                }}
               />
             ))}
 

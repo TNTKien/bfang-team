@@ -5466,6 +5466,7 @@ if (isForumPageAvailable) {
         likeCount: Math.max(Number(row && row.like_count) || 0, 0),
         replyCount,
         isPinned: toBooleanFlag(row && row.forum_post_pinned),
+        isHomePinned: toBooleanFlag(row && row.forum_post_home_pinned),
         isLocked: toBooleanFlag(row && row.forum_post_locked),
         sectionSlug,
         sectionLabel:
@@ -5539,11 +5540,14 @@ if (isForumPageAvailable) {
         perPage: forumLitePostLimit,
         total
       });
+      const forumLitePinOrderPrefix = queryState.section
+        ? "COALESCE(c.forum_post_pinned, false) DESC, "
+        : "COALESCE(c.forum_post_home_pinned, false) DESC, ";
       const orderBySql = queryState.sort === "new"
-        ? "COALESCE(c.forum_post_pinned, false) DESC, c.created_at DESC, c.id DESC"
+        ? `${forumLitePinOrderPrefix}c.created_at DESC, c.id DESC`
         : queryState.sort === "most-commented"
-          ? "COALESCE(c.forum_post_pinned, false) DESC, COALESCE(reply_stats.reply_count, 0) DESC, c.created_at DESC, c.id DESC"
-          : "COALESCE(c.forum_post_pinned, false) DESC, (COALESCE(c.like_count, 0) + (COALESCE(reply_stats.reply_count, 0) * 2)) DESC, c.created_at DESC, c.id DESC";
+          ? `${forumLitePinOrderPrefix}COALESCE(reply_stats.reply_count, 0) DESC, c.created_at DESC, c.id DESC`
+          : `${forumLitePinOrderPrefix}(COALESCE(c.like_count, 0) + (COALESCE(reply_stats.reply_count, 0) * 2)) DESC, c.created_at DESC, c.id DESC`;
       const postRows = await dbAll(
         `
           SELECT
@@ -5553,6 +5557,7 @@ if (isForumPageAvailable) {
             c.like_count,
             c.forum_post_locked,
             c.forum_post_pinned,
+            c.forum_post_home_pinned,
             c.author,
             c.author_user_id,
             u.username AS user_username,
@@ -5622,6 +5627,7 @@ if (isForumPageAvailable) {
             c.like_count,
             c.forum_post_locked,
             c.forum_post_pinned,
+            c.forum_post_home_pinned,
             c.author,
             c.author_user_id,
             u.username AS user_username,
