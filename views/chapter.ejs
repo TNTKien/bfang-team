@@ -1,8 +1,32 @@
 <%
   const isChapterLocked = Boolean(chapterLocked);
   const isChapterInteractionLocked = Boolean(chapterInteractionLocked);
+  const protectedPageDescriptorInput =
+    typeof protectedPageDescriptors !== "undefined" ? protectedPageDescriptors : [];
+  const protectedPages = Array.isArray(protectedPageDescriptorInput)
+    ? protectedPageDescriptorInput
+    : [];
+  const initialImgxPageInput =
+    typeof initialImgxPages !== "undefined" ? initialImgxPages : [];
+  const initialImgxPageGrants = Array.isArray(initialImgxPageInput)
+    ? initialImgxPageInput
+    : [];
+  const readerImgxRenderModeInput =
+    typeof readerImgxRenderMode !== "undefined" ? readerImgxRenderMode : "tiles";
+  const normalizedReaderImgxRenderMode =
+    String(readerImgxRenderModeInput || "").trim().toLowerCase() === "single" ? "single" : "tiles";
+  const hasProtectedReaderPages = !isChapterLocked && !isChapterInteractionLocked && protectedPages.length > 0;
+  const encodeDataJson = (value) => encodeURIComponent(JSON.stringify(value || []));
+  const buildProtectedPagePlaceholderSrc = (widthValue, heightValue) => {
+    const width = Math.max(Number(widthValue) || 960, 1);
+    const height = Math.max(Number(heightValue) || 1440, 1);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"></svg>`;
+    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  };
   let firstChapterPageUrl = "";
-  if (!isChapterLocked && !isChapterInteractionLocked && Array.isArray(pageUrls) && pageUrls.length > 0) {
+  if (hasProtectedReaderPages && initialImgxPageGrants.length > 0) {
+    firstChapterPageUrl = (initialImgxPageGrants[0].downloadUrl || "").toString().trim();
+  } else if (!hasProtectedReaderPages && !isChapterLocked && !isChapterInteractionLocked && Array.isArray(pageUrls) && pageUrls.length > 0) {
     firstChapterPageUrl = (pageUrls[0] || "").toString().trim();
   }
 
@@ -24,7 +48,18 @@
     readingHistory: true
   };
   const chapterProcessingState = (chapter && chapter.processing_state ? chapter.processing_state : "").toString().trim();
-  const hasReaderPages = !isChapterLocked && !isChapterInteractionLocked && chapterProcessingState !== "processing" && Array.isArray(pageUrls) && pageUrls.length > 0;
+  const imgxPreloadFetches = hasProtectedReaderPages
+    ? initialImgxPageGrants
+        .slice(0, 3)
+        .map((page) => (page && page.downloadUrl ? String(page.downloadUrl).trim() : ""))
+        .filter(Boolean)
+        .concat(["/wasm/z4x8n0p3.wasm"])
+    : [];
+  const hasReaderPages =
+    !isChapterLocked &&
+    !isChapterInteractionLocked &&
+    chapterProcessingState !== "processing" &&
+    ((Array.isArray(pageUrls) && pageUrls.length > 0) || hasProtectedReaderPages);
   const isWebtoonReader = Array.isArray(manga && manga.genres)
     ? manga.genres.some((genre) => {
         const normalizedGenre = (genre || "").toString().trim().toLowerCase();
@@ -37,7 +72,9 @@
   <%- include("partials/head", {
     title,
     headScripts: chapterHeadScripts,
-    headPreconnectOrigins: chapterPageOrigin ? [chapterPageOrigin] : []
+    headPreconnectOrigins: chapterPageOrigin ? [chapterPageOrigin] : [],
+      headModulePreloads: hasProtectedReaderPages ? ["/wasm/q7v9k2m1.js"] : [],
+    headPreloadFetches: imgxPreloadFetches
   }) %>
   <style>
     .reader-fixed-inner--dock-collapsible {
@@ -541,6 +578,7 @@
       visibility: hidden;
       pointer-events: none;
     }
+
   </style>
   <body class="reader-page<%= hasReaderPages ? ` reader-page--reader-mode reader-dock-preinit${isWebtoonReader ? " reader-webtoon" : ""}` : "" %>">
     <script nonce="<%= cspNonce || '' %>">
@@ -583,6 +621,93 @@
         body.dataset.readerMode = readerMode;
       })();
     </script>
+    <% if (hasProtectedReaderPages) { %>
+      <script nonce="<%= cspNonce || '' %>">
+        (() => {
+          const PROTECTED_ATTR = "data-imgx-protected-canvas";
+          const BLOCKED_MESSAGE = "IMGX protected canvas extraction is blocked";
+          const isProtectedCanvas = (value) =>
+            value instanceof HTMLCanvasElement && value.getAttribute(PROTECTED_ATTR) === "true";
+          const throwBlocked = () => {
+            throw new DOMException(BLOCKED_MESSAGE, "SecurityError");
+          };
+          const defineLockedMethod = (target, name, value) => {
+            if (!target || typeof value !== "function") return;
+            Object.defineProperty(target, name, {
+              value,
+              configurable: false,
+              enumerable: false,
+              writable: false
+            });
+          };
+          const canvasPrototype = HTMLCanvasElement.prototype;
+          const contextPrototype = CanvasRenderingContext2D.prototype;
+          const originalToDataURL = canvasPrototype.toDataURL;
+          const originalToBlob = canvasPrototype.toBlob;
+          const originalCaptureStream = canvasPrototype.captureStream;
+          const originalGetImageData = contextPrototype.getImageData;
+          const originalDrawImage = contextPrototype.drawImage;
+          const originalCreateImageBitmap = globalThis.createImageBitmap;
+
+          defineLockedMethod(canvasPrototype, "toDataURL", function protectedToDataURL(...args) {
+            if (isProtectedCanvas(this)) return throwBlocked();
+            return originalToDataURL.apply(this, args);
+          });
+          defineLockedMethod(canvasPrototype, "toBlob", function protectedToBlob(...args) {
+            if (isProtectedCanvas(this)) return throwBlocked();
+            return originalToBlob.apply(this, args);
+          });
+          if (typeof originalCaptureStream === "function") {
+            defineLockedMethod(canvasPrototype, "captureStream", function protectedCaptureStream(...args) {
+              if (isProtectedCanvas(this)) return throwBlocked();
+              return originalCaptureStream.apply(this, args);
+            });
+          }
+          defineLockedMethod(contextPrototype, "getImageData", function protectedGetImageData(...args) {
+            if (isProtectedCanvas(this.canvas)) return throwBlocked();
+            return originalGetImageData.apply(this, args);
+          });
+          defineLockedMethod(contextPrototype, "drawImage", function protectedDrawImage(image, ...args) {
+            if (isProtectedCanvas(image)) return throwBlocked();
+            return originalDrawImage.call(this, image, ...args);
+          });
+          if (typeof originalCreateImageBitmap === "function") {
+            Object.defineProperty(globalThis, "createImageBitmap", {
+              value: function protectedCreateImageBitmap(image, ...args) {
+                if (isProtectedCanvas(image)) {
+                  return Promise.reject(new DOMException(BLOCKED_MESSAGE, "SecurityError"));
+                }
+                return originalCreateImageBitmap.call(this, image, ...args);
+              },
+              configurable: false,
+              enumerable: false,
+              writable: false
+            });
+          }
+
+          const sourceOf = (value) =>
+            typeof value === "function" ? Function.prototype.toString.call(value) : undefined;
+          const baseline = {
+            canvasGetContext: sourceOf(canvasPrototype.getContext),
+            canvasToBlob: sourceOf(canvasPrototype.toBlob),
+            canvasToDataURL: sourceOf(canvasPrototype.toDataURL),
+            canvasCaptureStream: sourceOf(canvasPrototype.captureStream),
+            getImageData: sourceOf(contextPrototype.getImageData),
+            drawImage: sourceOf(contextPrototype.drawImage),
+            createImageBitmap: sourceOf(globalThis.createImageBitmap),
+            blob: sourceOf(globalThis.Blob),
+            wasmInstantiate: sourceOf(globalThis.WebAssembly && globalThis.WebAssembly.instantiate),
+            wasmInstantiateStreaming: sourceOf(globalThis.WebAssembly && globalThis.WebAssembly.instantiateStreaming)
+          };
+          Object.defineProperty(window, "__IMGX_RUNTIME_BASELINE__", {
+            value: Object.freeze(baseline),
+            configurable: false,
+            enumerable: false,
+            writable: false
+          });
+        })();
+      </script>
+    <% } %>
     <div class="site">
       <% if (!hasReaderPages) { %>
         <%- include("partials/header") %>
@@ -614,7 +739,7 @@
         <% const processingDonePages = Number.isFinite(processingDonePagesRaw) && processingDonePagesRaw >= 0 ? Math.floor(processingDonePagesRaw) : 0; %>
         <% const processingTotalPages = Number.isFinite(processingTotalPagesRaw) && processingTotalPagesRaw > 0 ? Math.floor(processingTotalPagesRaw) : 0; %>
         <% const processingPercent = processingTotalPages > 0 ? Math.min(100, Math.max(0, Math.floor((Math.min(processingDonePages, processingTotalPages) / processingTotalPages) * 100))) : 0; %>
-        <% const shouldShowReaderIntro = !isChapterInteractionLocked && (isChapterLocked || processingState === "processing" || !pageUrls || pageUrls.length === 0); %>
+        <% const shouldShowReaderIntro = !isChapterInteractionLocked && (isChapterLocked || processingState === "processing" || !hasReaderPages); %>
 
         <% if (shouldShowReaderIntro) { %>
           <section class="section container">
@@ -637,7 +762,7 @@
               <p class="reader-note" data-chapter-processing-summary>
                 Chương đang xử lý ảnh<% if (processingTotalPages > 0) { %> — <%= processingDonePages %>/<%= processingTotalPages %> (<%= processingPercent %>%)<% } %>. Vui lòng quay lại sau.
               </p>
-            <% } else if (!pageUrls || pageUrls.length === 0) { %>
+            <% } else if (!hasReaderPages) { %>
               <p class="reader-note">Trang đọc mẫu: hiển thị khung trang, chưa có ảnh scan.</p>
             <% } %>
           </section>
@@ -746,13 +871,13 @@
             JSON.stringify(Array.isArray(nextChapterPrefetchUrls) ? nextChapterPrefetchUrls : [])
           ); %>
           <% const totalChapterPages = Math.max(Number(chapter && chapter.pages ? chapter.pages : 0) || 0, 0); %>
-          <% const renderedPageTotal = Array.isArray(pageUrls) ? pageUrls.length : 0; %>
+          <% const renderedPageTotal = hasProtectedReaderPages ? protectedPages.length : (Array.isArray(pageUrls) ? pageUrls.length : 0); %>
           <% const readerPageTotal = renderedPageTotal > 0 ? renderedPageTotal : totalChapterPages; %>
           <% const chapterViewThreshold = Math.max(1, Math.floor(readerPageTotal / 2 + 1)); %>
           <% const readerInitiallySignedIn = typeof isInitiallySignedIn !== "undefined" && isInitiallySignedIn; %>
-          <div class="reader-shell__layout<%= pageUrls && pageUrls.length ? "" : " reader-shell__layout--single" %>">
+          <div class="reader-shell__layout<%= hasReaderPages ? "" : " reader-shell__layout--single" %>">
             <div class="reader-shell__content">
-          <% if (pageUrls && pageUrls.length) { %>
+          <% if (hasReaderPages) { %>
             <div class="reader-mobile-top" aria-label="Điều hướng đọc truyện trên điện thoại">
               <div class="reader-mobile-top__head reader-dock__head-top">
                 <div class="reader-dock__head">
@@ -863,6 +988,9 @@
             data-reader-view-track-token="<%= chapterViewTrackToken %>"
             data-reader-view-threshold="<%= chapterViewThreshold %>"
             data-reader-total-pages="<%= readerPageTotal %>"
+            data-reader-imgx-access-url="<%= hasProtectedReaderPages ? (readerPageAccessUrl || "") : "" %>"
+            data-reader-imgx-render-mode="<%= hasProtectedReaderPages ? normalizedReaderImgxRenderMode : "tiles" %>"
+            data-reader-imgx-initial-pages="<%= hasProtectedReaderPages ? encodeDataJson(initialImgxPageGrants) : "" %>"
           >
             <% if (processingState === "processing") { %>
               <div
@@ -887,22 +1015,49 @@
                   </div>
                 </div>
               </div>
-            <% } else if (pageUrls && pageUrls.length) { %>
-              <% const eagerPageCount = Math.min(3, pageUrls.length); %>
-              <% pageUrls.forEach((src, index) => { %>
+            <% } else if (hasReaderPages) { %>
+              <% const legacyPageEntries = Array.isArray(pageUrls) ? pageUrls.map((src, index) => ({ src, index })) : []; %>
+              <% const protectedPageEntries = hasProtectedReaderPages ? protectedPages : []; %>
+              <% const readerEntries = hasProtectedReaderPages ? protectedPageEntries : legacyPageEntries; %>
+              <% const eagerPageCount = Math.min(3, readerEntries.length); %>
+              <% readerEntries.forEach((entry, loopIndex) => { %>
+                <% const index = hasProtectedReaderPages ? Math.max(Number(entry.pageIndex) || 0, 0) : loopIndex; %>
+                <% const src = hasProtectedReaderPages ? "" : (entry.src || ""); %>
+                <% const protectedWidth = Math.max(Number(entry.width) || 960, 1); %>
+                <% const protectedHeight = Math.max(Number(entry.height) || 1440, 1); %>
                 <% const isEagerPage = index < eagerPageCount; %>
                 <div class="page-card">
                   <div class="page-frame">
-                    <img
-                      class="page-media page-media--lazy <%= isEagerPage ? "is-loaded" : "is-placeholder lazyload" %>"
-                      src="<%= isEagerPage ? src : lazyPlaceholderSrc %>"
-                      <% if (!isEagerPage) { %>data-src="<%= src %>"<% } %>
-                      data-page-index="<%= index %>"
-                      alt="Trang <%= index + 1 %>"
-                      loading="<%= isEagerPage ? "eager" : "lazy" %>"
-                      decoding="async"
-                      fetchpriority="<%= index === 0 ? "high" : isEagerPage ? "auto" : "low" %>"
-                    />
+                    <% if (hasProtectedReaderPages) { %>
+                      <img
+                        class="page-media page-media--lazy is-placeholder lazyload"
+                        src="<%= buildProtectedPagePlaceholderSrc(protectedWidth, protectedHeight) %>"
+                        data-page-index="<%= index %>"
+                        data-imgx-page-index="<%= index %>"
+                        data-imgx-access-url="<%= readerPageAccessUrl || "" %>"
+                        data-imgx-width="<%= protectedWidth %>"
+                        data-imgx-height="<%= protectedHeight %>"
+                        width="<%= protectedWidth %>"
+                        height="<%= protectedHeight %>"
+                        alt="Trang <%= index + 1 %>"
+                        loading="<%= isEagerPage ? "eager" : "lazy" %>"
+                        decoding="async"
+                        fetchpriority="<%= index === 0 ? "high" : isEagerPage ? "auto" : "low" %>"
+                        draggable="false"
+                        style="aspect-ratio: <%= protectedWidth %> / <%= protectedHeight %>;"
+                      />
+                    <% } else { %>
+                      <img
+                        class="page-media page-media--lazy <%= isEagerPage ? "is-loaded" : "is-placeholder lazyload" %>"
+                        src="<%= isEagerPage ? src : lazyPlaceholderSrc %>"
+                        <% if (!isEagerPage) { %>data-src="<%= src %>"<% } %>
+                        data-page-index="<%= index %>"
+                        alt="Trang <%= index + 1 %>"
+                        loading="<%= isEagerPage ? "eager" : "lazy" %>"
+                        decoding="async"
+                        fetchpriority="<%= index === 0 ? "high" : isEagerPage ? "auto" : "low" %>"
+                      />
+                    <% } %>
                   </div>
                 </div>
               <% }) %>
@@ -961,13 +1116,19 @@
               <% }) %>
             <% } %>
           </div>
-          <% if (pageUrls && pageUrls.length) { %>
+          <% if (hasReaderPages) { %>
             <div class="reader-horizontal-progress" data-reader-horizontal-progress aria-live="polite" aria-atomic="true">
               <span data-reader-page-current>1</span>/<span data-reader-page-total><%= readerPageTotal %></span>
             </div>
           <% } %>
 
-          <% if (pageUrls && pageUrls.length) { %>
+          <% if (hasProtectedReaderPages) { %>
+            <noscript>
+              <div class="reader-pages">
+                <p class="note">Chương được bảo vệ bằng IMGX. Vui lòng bật JavaScript để đọc.</p>
+              </div>
+            </noscript>
+          <% } else if (pageUrls && pageUrls.length) { %>
             <noscript>
               <style>
                 [data-reader-lazy-pages] {
@@ -991,7 +1152,7 @@
             </noscript>
           <% } %>
             </div>
-            <% if (pageUrls && pageUrls.length) { %>
+            <% if (hasReaderPages) { %>
             <% const dockCommentCountRaw = Number(commentCount); %>
             <% const dockCommentCount = Number.isFinite(dockCommentCountRaw) && dockCommentCountRaw > 0 ? Math.floor(dockCommentCountRaw) : 0; %>
             <% const dockCommentBadgeLabel = dockCommentCount > 19 ? "19+" : String(dockCommentCount); %>
@@ -1205,6 +1366,16 @@
                       <path d="M15 18l-6-6 6-6" />
                     </svg>
                   </button>
+                  <% const readerPageOptionIndexes = hasProtectedReaderPages
+                    ? protectedPages.map((entry, fallbackIndex) => {
+                        const rawPageIndex = Number(entry && entry.pageIndex);
+                        return Number.isFinite(rawPageIndex) && rawPageIndex >= 0
+                          ? Math.floor(rawPageIndex)
+                          : fallbackIndex;
+                      })
+                    : (Array.isArray(pageUrls) ? pageUrls.map((_src, pageIndex) => pageIndex) : []);
+                  %>
+                  <% const firstReaderPageOptionIndex = readerPageOptionIndexes.length ? readerPageOptionIndexes[0] : 0; %>
                   <div class="reader-dropdown reader-dropdown--down" data-reader-dropdown>
                     <button class="reader-dropdown-trigger" type="button" data-reader-toggle data-button-loading-skip aria-label="Chọn trang" title="Chọn trang">
                       <span class="reader-dropdown-trigger-icon" aria-hidden="true">
@@ -1224,9 +1395,9 @@
                         </svg>
                       </button>
                       <div class="reader-dropdown-list" data-reader-list>
-                        <% pageUrls.forEach((_src, pageIndex) => { %>
+                        <% readerPageOptionIndexes.forEach((pageIndex) => { %>
                           <button
-                            class="reader-dropdown-option <%= pageIndex === 0 ? "is-active" : "" %>"
+                            class="reader-dropdown-option <%= pageIndex === firstReaderPageOptionIndex ? "is-active" : "" %>"
                             type="button"
                             data-reader-option
                             data-reader-page-index="<%= pageIndex %>"

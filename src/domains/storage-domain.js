@@ -3,11 +3,21 @@ const {
   CHAPTER_PAGE_WEBP_QUALITY,
   createConvertChapterPageToWebp
 } = require("../utils/chapter-page-webp");
+const {
+  IMGX_VERSION
+} = require("../utils/imgx/constants");
+const {
+  createSessionKeyGrant,
+  decodeImgxForVerification,
+  encodeImgx,
+  imageIdFromStorageKey
+} = require("../utils/imgx/server");
 
 const createStorageDomain = (deps) => {
   const {
     CopyObjectCommand,
     DeleteObjectCommand,
+    GetObjectCommand,
     ListObjectVersionsCommand,
     ListObjectsV2Command,
     PutObjectCommand,
@@ -33,6 +43,237 @@ const runStorageTransaction = async (handler) => {
 const chapterPageMaxHeight = CHAPTER_PAGE_MAX_HEIGHT;
 const chapterPageWebpQuality = CHAPTER_PAGE_WEBP_QUALITY;
 const convertChapterPageToWebp = createConvertChapterPageToWebp({ sharp });
+const convertChapterPageToWebpWithMetadata =
+  typeof convertChapterPageToWebp.withMetadata === "function"
+    ? convertChapterPageToWebp.withMetadata
+    : async (inputBuffer, options = {}) => {
+        const buffer = await convertChapterPageToWebp(inputBuffer, options);
+        const metadata = buffer ? await sharp(buffer).metadata() : {};
+        return {
+          buffer,
+          width: Number(metadata && metadata.width) || 0,
+          height: Number(metadata && metadata.height) || 0
+        };
+      };
+
+const normalizeImgxMode = (value) => {
+  const normalized = (value || "").toString().trim().toLowerCase();
+  if (normalized === "imgx") return normalized;
+  return "legacy";
+};
+
+let lastInvalidImgxStorageExtWarning = "";
+const imgxStorageExtensions = Object.freeze(["js", "bin"]);
+
+const normalizeImgxStorageExt = (value) => {
+  const normalized = (value || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+/, "");
+  if (normalized === "js" || normalized === "bin") return normalized;
+  if (normalized && normalized !== lastInvalidImgxStorageExtWarning) {
+    lastInvalidImgxStorageExtWarning = normalized;
+    console.warn(`Invalid IMGX_STORAGE_EXT="${normalized}". Falling back to "js".`);
+  }
+  return "js";
+};
+
+const getImgxStorageExt = (value = process.env.IMGX_STORAGE_EXT) => normalizeImgxStorageExt(value);
+
+const isImgxStorageExt = (value) => {
+  const normalized = (value || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+/, "");
+  return imgxStorageExtensions.includes(normalized);
+};
+
+const getImgxCandidateExts = (preferred) => {
+  const first = normalizeImgxStorageExt(preferred || process.env.IMGX_STORAGE_EXT);
+  return [first, ...imgxStorageExtensions.filter((extension) => extension !== first)];
+};
+
+const getImgxStaleStorageExts = (activeExt) => {
+  const safeActiveExt = normalizeImgxStorageExt(activeExt);
+  return imgxStorageExtensions.filter((extension) => extension !== safeActiveExt);
+};
+
+const getImgxTransferTargetModeForExt = (extension) =>
+  normalizeImgxStorageExt(extension) === "bin" ? "imgx-bin" : "imgx-js";
+
+const normalizeImgxRenderMode = (value) => {
+  const normalized = (value || "").toString().trim().toLowerCase();
+  if (normalized === "single") return "single";
+  return "tiles";
+};
+
+const getImgxConfig = () => {
+  const enabled = parseEnvBoolean(process.env.IMGX_ENABLED, false);
+  const uploadMode = normalizeImgxMode(process.env.IMGX_UPLOAD_MODE || (enabled ? "imgx" : "legacy"));
+  const secret = (process.env.IMGX_SECRET || "").toString();
+  const sessionHmacSecret = (
+    process.env.IMGX_SESSION_HMAC_SECRET ||
+    process.env.IMGX_HMAC_SECRET ||
+    process.env.SESSION_SECRET ||
+    ""
+  ).toString();
+  const ttlMs = Math.max(1000, Math.floor(Number(process.env.IMGX_PAGE_ACCESS_TTL_MS) || 60000));
+  const accessWindowMax = Math.max(1, Math.min(20, Math.floor(Number(process.env.IMGX_PAGE_ACCESS_WINDOW_MAX) || 5)));
+  const initialPageGrantsText = (process.env.IMGX_INITIAL_PAGE_GRANTS || "").toString().trim();
+  const initialPageGrantsRaw = initialPageGrantsText ? Number(initialPageGrantsText) : NaN;
+  const initialPageGrants = Math.max(
+    0,
+    Math.min(
+      accessWindowMax,
+      5,
+      Math.floor(Number.isFinite(initialPageGrantsRaw) ? initialPageGrantsRaw : 3)
+    )
+  );
+  const renderMode = normalizeImgxRenderMode(process.env.IMGX_RENDER_MODE || "tiles");
+  const rateLimitWindowMs = Math.max(1000, Math.floor(Number(process.env.IMGX_PAGE_ACCESS_RATE_LIMIT_WINDOW_MS) || 60000));
+  const rateLimitMax = Math.max(accessWindowMax, Math.floor(Number(process.env.IMGX_PAGE_ACCESS_RATE_LIMIT_MAX) || 120));
+  const storageExt = getImgxStorageExt();
+  return {
+    enabled,
+    uploadMode,
+    storageExt,
+    secret,
+    sessionHmacSecret,
+    ttlMs,
+    accessWindowMax,
+    initialPageGrants,
+    renderMode,
+    rateLimitWindowMs,
+    rateLimitMax
+  };
+};
+
+const isImgxReady = (config = getImgxConfig()) =>
+  Boolean(config && config.secret && config.sessionHmacSecret);
+
+const isImgxUploadEnabled = (config = getImgxConfig()) =>
+  Boolean(config && config.enabled && isImgxReady(config) && config.uploadMode === "imgx");
+
+const getChapterImageProcessingApiConfig = () => {
+  const baseUrl = normalizeBaseUrl(
+    process.env.CHAPTER_IMAGE_PROCESSING_API_URL ||
+      process.env.CHAPTER_UPLOAD_API_URL ||
+      ""
+  );
+  const secret = (
+    process.env.CHAPTER_IMAGE_PROCESSING_SHARED_SECRET ||
+    process.env.CHAPTER_UPLOAD_SHARED_SECRET ||
+    process.env.SESSION_SECRET ||
+    ""
+  ).toString();
+  const required = parseEnvBoolean(
+    process.env.CHAPTER_IMAGE_PROCESSING_API_REQUIRED ||
+      process.env.IMAGE_PROCESSING_API_REQUIRED ||
+      false,
+    false
+  );
+  const timeoutMs = Math.max(
+    5000,
+    Math.min(300000, Math.floor(Number(process.env.CHAPTER_IMAGE_PROCESSING_API_TIMEOUT_MS) || 120000))
+  );
+  const proofTtlMs = Math.max(
+    60000,
+    Math.min(30 * 60 * 1000, Math.floor(Number(process.env.CHAPTER_IMAGE_PROCESSING_API_PROOF_TTL_MS) || 5 * 60 * 1000))
+  );
+  return {
+    baseUrl,
+    secret,
+    required,
+    timeoutMs,
+    proofTtlMs
+  };
+};
+
+const normalizeChapterTransferTargetMode = (value) => {
+  const normalized = (value || "").toString().trim().toLowerCase();
+  if (normalized === "imgx") return getImgxTransferTargetModeForExt(getImgxStorageExt());
+  if (normalized === "imgx-js" || normalized === "js") return "imgx-js";
+  if (normalized === "imgx-bin" || normalized === "bin") return "imgx-bin";
+  if (normalized === "legacy" || normalized === "webp") return "legacy";
+  return "";
+};
+
+const buildChapterImageProcessingApiProof = ({ sourceKey, destinationKey, targetMode, expiresAtText, secret }) => {
+  const safeSourceKey = normalizeB2FileKey(sourceKey);
+  const safeDestinationKey = normalizeB2FileKey(destinationKey);
+  const safeTargetMode = normalizeChapterTransferTargetMode(targetMode);
+  const safeExpiresAt = (expiresAtText == null ? "" : String(expiresAtText)).trim();
+  if (!secret || !safeSourceKey || !safeDestinationKey || !safeTargetMode || !/^\d{10,14}$/.test(safeExpiresAt)) {
+    return "";
+  }
+  const payload = `${safeSourceKey}.${safeDestinationKey}.${safeTargetMode}.${safeExpiresAt}`;
+  const signature = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  return `v1.${safeExpiresAt}.${signature}`;
+};
+
+const requestChapterImageProcessingApiTransfer = async ({ sourceStorageKey, destinationStorageKey, targetMode }) => {
+  const sourceKey = normalizeB2FileKey(sourceStorageKey);
+  const destinationKey = normalizeB2FileKey(destinationStorageKey);
+  const safeTargetMode = normalizeChapterTransferTargetMode(targetMode);
+  const apiConfig = getChapterImageProcessingApiConfig();
+  if (!apiConfig.baseUrl || !apiConfig.secret || !sourceKey || !destinationKey || !safeTargetMode) {
+    return null;
+  }
+
+  const expiresAtText = String(Date.now() + apiConfig.proofTtlMs);
+  const proof = buildChapterImageProcessingApiProof({
+    sourceKey,
+    destinationKey,
+    targetMode: safeTargetMode,
+    expiresAtText,
+    secret: apiConfig.secret
+  });
+  if (!proof) return null;
+
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), apiConfig.timeoutMs) : null;
+  try {
+    const response = await fetch(`${apiConfig.baseUrl}/v1/internal/chapter-pages/transfer`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Chapter-Transfer-Proof": proof
+      },
+      body: JSON.stringify({
+        sourceKey,
+        destinationKey,
+        targetMode: safeTargetMode
+      }),
+      signal: controller ? controller.signal : undefined
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body || body.ok !== true) {
+      const message = body && body.error ? String(body.error) : `HTTP ${response.status}`;
+      throw new Error(message);
+    }
+    return body.transfer || {
+      fileName: destinationKey,
+      storageKey: destinationKey,
+      targetMode: safeTargetMode
+    };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+};
+
+const runChapterImageProcessingApiTransfer = async (payload) => {
+  const apiConfig = getChapterImageProcessingApiConfig();
+  if (!apiConfig.baseUrl || !apiConfig.secret) return null;
+  try {
+    return await requestChapterImageProcessingApiTransfer(payload);
+  } catch (err) {
+    if (apiConfig.required) throw err;
+    console.warn("api_server chapter image processing failed, falling back to web process", err);
+    return null;
+  }
+};
 
 const imageFileExtensionPattern = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
 const defaultImageCacheControl = (
@@ -182,6 +423,41 @@ const b2UploadBuffer = async ({ fileName, buffer, contentType, cacheControl }) =
 
 const normalizeB2FileKey = (value) => (value || "").toString().trim().replace(/^\/+/, "");
 
+const streamToBuffer = async (body) => {
+  if (!body) return Buffer.alloc(0);
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof Uint8Array) return Buffer.from(body);
+  if (typeof body.transformToByteArray === "function") {
+    return Buffer.from(await body.transformToByteArray());
+  }
+  if (typeof body.arrayBuffer === "function") {
+    return Buffer.from(await body.arrayBuffer());
+  }
+
+  const chunks = [];
+  for await (const chunk of body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+};
+
+const b2DownloadBuffer = async (fileName) => {
+  const config = getB2Config();
+  const key = normalizeB2FileKey(fileName);
+  if (!isB2Ready(config) || !key) {
+    throw new Error("Không đọc được ảnh lưu trữ.");
+  }
+
+  const s3 = getStorageClient();
+  const data = await s3.send(
+    new GetObjectCommand({
+      Bucket: config.bucketId,
+      Key: key
+    })
+  );
+  return streamToBuffer(data && data.Body);
+};
+
 const buildB2DirPrefix = (value) => {
   const trimmed = normalizeB2FileKey(value).replace(/\/+$/, "");
   if (!trimmed) return "";
@@ -225,6 +501,44 @@ const parseChapterPageNumberFromFileName = (prefixDir, fileName, expectedPageFil
   const page = Number(match[1]);
   if (!Number.isFinite(page) || page <= 0) return null;
   return Math.floor(page);
+};
+
+const parseChapterPagePreviewNumberFromFileName = (prefixDir, fileName, expectedPageFilePrefix) => {
+  if (!prefixDir || !fileName) return null;
+  if (!fileName.startsWith(prefixDir)) return null;
+  const tail = fileName.slice(prefixDir.length);
+  const match = tail.match(/^(\d{1,6})(?:_([a-zA-Z]{5}))?\.preview\.webp$/i);
+  if (!match) return null;
+  const matchedPrefix = normalizeChapterPageFilePrefix(match[2]);
+  const expectedPrefix = normalizeChapterPageFilePrefix(expectedPageFilePrefix);
+  if (expectedPrefix) {
+    if (matchedPrefix !== expectedPrefix) return null;
+  } else if (matchedPrefix) {
+    return null;
+  }
+  const page = Number(match[1]);
+  if (!Number.isFinite(page) || page <= 0) return null;
+  return Math.floor(page);
+};
+
+const normalizeChapterPageExtensionSet = (extensions) => {
+  if (!Array.isArray(extensions) || !extensions.length) return null;
+  const set = new Set();
+  extensions.forEach((extension) => {
+    const normalized = (extension == null ? "" : String(extension))
+      .trim()
+      .toLowerCase()
+      .replace(/^\.+/, "");
+    if (normalized) set.add(normalized);
+  });
+  return set.size ? set : null;
+};
+
+const getChapterPageFileExtension = (fileName) => {
+  const tail = (fileName == null ? "" : String(fileName)).trim();
+  const dotIndex = tail.lastIndexOf(".");
+  if (dotIndex < 0 || dotIndex >= tail.length - 1) return "";
+  return tail.slice(dotIndex + 1).toLowerCase();
 };
 
 const isB2Ready = (config) => Boolean(config && config.bucketId && config.keyId && config.applicationKey);
@@ -537,7 +851,7 @@ const b2DeleteAllByPrefix = async (prefix) => {
   return deleted;
 };
 
-const b2DeleteChapterExtraPages = async ({ prefix, keepPages, pageFilePrefix }) => {
+const b2DeleteChapterExtraPages = async ({ prefix, keepPages, pageFilePrefix, extensions } = {}) => {
   const config = getB2Config();
   if (!isB2Ready(config)) {
     throw new Error("Thiếu cấu hình lưu trữ ảnh trong .env");
@@ -549,14 +863,60 @@ const b2DeleteChapterExtraPages = async ({ prefix, keepPages, pageFilePrefix }) 
   const keep = Math.max(0, Math.floor(Number(keepPages) || 0));
   const versions = await b2ListFileVersionsByPrefix(prefixDir);
   const normalizedFilePrefix = normalizeChapterPageFilePrefix(pageFilePrefix);
+  const extensionSet = normalizeChapterPageExtensionSet(extensions);
   const toDelete = versions.filter((version) => {
     const fileName = version && typeof version.fileName === "string" ? version.fileName : "";
+    if (extensionSet && !extensionSet.has(getChapterPageFileExtension(fileName))) return false;
     const page = parseChapterPageNumberFromFileName(prefixDir, fileName, normalizedFilePrefix);
     return page != null && page > keep;
   });
 
   return b2DeleteFileVersions(toDelete);
 };
+
+const b2DeleteChapterExtraPagePreviews = async ({ prefix, keepPages, pageFilePrefix }) => {
+  const config = getB2Config();
+  if (!isB2Ready(config)) {
+    throw new Error("Missing storage config.");
+  }
+
+  const prefixDir = buildB2DirPrefix(prefix);
+  if (!prefixDir) return 0;
+
+  const keep = Math.max(0, Math.floor(Number(keepPages) || 0));
+  const versions = await b2ListFileVersionsByPrefix(prefixDir);
+  const normalizedFilePrefix = normalizeChapterPageFilePrefix(pageFilePrefix);
+  const toDelete = versions.filter((version) => {
+    const fileName = version && typeof version.fileName === "string" ? version.fileName : "";
+    const page = parseChapterPagePreviewNumberFromFileName(prefixDir, fileName, normalizedFilePrefix);
+    return page != null && page > keep;
+  });
+
+  return b2DeleteFileVersions(toDelete);
+};
+
+const b2DeleteChapterImgxPageArtifacts = async ({ prefix, keepPages, pageFilePrefix, extensions } = {}) => {
+  const deletedBins = await b2DeleteChapterExtraPages({
+    prefix,
+    keepPages,
+    pageFilePrefix,
+    extensions: normalizeChapterPageExtensionSet(extensions) ? extensions : imgxStorageExtensions
+  });
+  const deletedPreviews = await b2DeleteChapterExtraPagePreviews({
+    prefix,
+    keepPages,
+    pageFilePrefix
+  });
+  return deletedBins + deletedPreviews;
+};
+
+const b2DeleteChapterLegacyPageArtifacts = async ({ prefix, keepPages = 0, pageFilePrefix } = {}) =>
+  b2DeleteChapterExtraPages({
+    prefix,
+    keepPages,
+    pageFilePrefix,
+    extensions: ["webp"]
+  });
 
 const b2ListFileNamesByPrefix = async (prefix) => {
   const config = getB2Config();
@@ -660,6 +1020,345 @@ const createChapterDraftToken = () => crypto.randomBytes(16).toString("hex");
 const isChapterDraftTokenValid = (token) => chapterDraftTokenPattern.test(token || "");
 
 const isChapterDraftPageIdValid = (value) => chapterDraftPageIdPattern.test(value || "");
+
+const isImgxStorageKey = (value) => /\.(?:bin|js)$/i.test(normalizeB2FileKey(value));
+
+const chapterPagePreviewMaxWidth = Math.max(
+  64,
+  Math.min(640, Math.floor(Number(process.env.CHAPTER_PAGE_PREVIEW_MAX_WIDTH) || 160))
+);
+const chapterPagePreviewMaxHeight = Math.max(
+  96,
+  Math.min(960, Math.floor(Number(process.env.CHAPTER_PAGE_PREVIEW_MAX_HEIGHT) || 240))
+);
+const chapterPagePreviewWebpQuality = Math.max(
+  30,
+  Math.min(82, Math.floor(Number(process.env.CHAPTER_PAGE_PREVIEW_WEBP_QUALITY) || 48))
+);
+
+const buildChapterPagePreviewStorageKey = (storageKey) => {
+  const safeKey = normalizeB2FileKey(storageKey);
+  if (!safeKey) return "";
+  if (/\.preview\.webp$/i.test(safeKey)) return safeKey;
+  const slashIndex = safeKey.lastIndexOf("/");
+  const dir = slashIndex >= 0 ? safeKey.slice(0, slashIndex + 1) : "";
+  const fileName = slashIndex >= 0 ? safeKey.slice(slashIndex + 1) : safeKey;
+  const stem = fileName.replace(/\.[^.]+$/, "").trim();
+  if (!stem) return "";
+  return `${dir}${stem}.preview.webp`;
+};
+
+const buildChapterPagePreviewUrl = (storageKey) => {
+  const safeKey = normalizeB2FileKey(storageKey);
+  const config = getB2Config();
+  if (!safeKey || !config.cdnBaseUrl) return "";
+  return `${config.cdnBaseUrl}/${safeKey}`;
+};
+
+const createChapterPagePreviewWebp = async (webpBuffer) => {
+  if (!webpBuffer || !webpBuffer.byteLength) return null;
+  const output = await sharp(webpBuffer)
+    .rotate()
+    .resize({
+      width: chapterPagePreviewMaxWidth,
+      height: chapterPagePreviewMaxHeight,
+      fit: "inside",
+      withoutEnlargement: true
+    })
+    .webp({ quality: chapterPagePreviewWebpQuality, effort: 4 })
+    .toBuffer({ resolveWithObject: true });
+  const info = output && output.info ? output.info : {};
+  const buffer = output && output.data ? output.data : null;
+  if (!buffer || !buffer.byteLength) return null;
+  return {
+    buffer,
+    width: Number(info.width) || 0,
+    height: Number(info.height) || 0
+  };
+};
+
+const uploadChapterPagePreviewWebp = async ({ webpBuffer, storageKey }) => {
+  const safeStorageKey = buildChapterPagePreviewStorageKey(storageKey);
+  if (!safeStorageKey) return null;
+  const preview = await createChapterPagePreviewWebp(webpBuffer);
+  if (!preview || !preview.buffer) return null;
+  await b2UploadBuffer({
+    fileName: safeStorageKey,
+    buffer: preview.buffer,
+    contentType: "image/webp",
+    cacheControl: defaultImageCacheControl
+  });
+  return {
+    storageKey: safeStorageKey,
+    fileName: safeStorageKey,
+    url: buildChapterPagePreviewUrl(safeStorageKey),
+    width: preview.width,
+    height: preview.height,
+    byteSize: preview.buffer.byteLength
+  };
+};
+
+const createInvalidChapterPageImageError = () => {
+  const err = new Error("Ảnh trang không hợp lệ.");
+  err.code = "IMGX_INVALID_IMAGE";
+  return err;
+};
+
+const convertChapterUploadBufferToWebpMetadata = async (inputBuffer, { isWebtoon } = {}) => {
+  let converted = null;
+  try {
+    converted = await convertChapterPageToWebpWithMetadata(inputBuffer, { isWebtoon: Boolean(isWebtoon) });
+  } catch (_err) {
+    throw createInvalidChapterPageImageError();
+  }
+
+  const webpBuffer = converted && converted.buffer ? converted.buffer : null;
+  if (!webpBuffer || !webpBuffer.byteLength) {
+    throw createInvalidChapterPageImageError();
+  }
+
+  return converted;
+};
+
+const encodeWebpForImgxStorage = ({ webpBuffer, width, height, storageKey, imgxConfig }) => {
+  const safeStorageKey = normalizeB2FileKey(storageKey);
+  if (!safeStorageKey) throw new Error("Đường dẫn ảnh IMGX không hợp lệ.");
+  const config = imgxConfig || getImgxConfig();
+  if (!isImgxUploadEnabled(config) && !isImgxReady(config)) {
+    throw new Error("IMGX chưa được cấu hình.");
+  }
+  return encodeImgx({
+    webp: webpBuffer,
+    width: Math.max(1, Math.floor(Number(width) || 0)),
+    height: Math.max(1, Math.floor(Number(height) || 0)),
+    imageId: imageIdFromStorageKey(safeStorageKey),
+    secret: config.secret
+  });
+};
+
+const decodeImgxStorageToWebp = async ({ storageKey, imgxConfig }) => {
+  const safeStorageKey = normalizeB2FileKey(storageKey);
+  if (!safeStorageKey) throw new Error("Đường dẫn ảnh IMGX không hợp lệ.");
+  const config = imgxConfig || getImgxConfig();
+  if (!isImgxReady(config)) throw new Error("IMGX chưa được cấu hình.");
+  const binary = await b2DownloadBuffer(safeStorageKey);
+  const decoded = decodeImgxForVerification(binary, imageIdFromStorageKey(safeStorageKey), config.secret);
+  return {
+    webpBuffer: Buffer.from(decoded.webp),
+    width: decoded.width,
+    height: decoded.height
+  };
+};
+
+const uploadWebpAsImgxStorage = async ({ webpBuffer, width, height, storageKey, previewStorageKey, imgxConfig }) => {
+  const safeStorageKey = normalizeB2FileKey(storageKey);
+  const binary = encodeWebpForImgxStorage({
+    webpBuffer,
+    width,
+    height,
+    storageKey: safeStorageKey,
+    imgxConfig
+  });
+  await b2UploadBuffer({
+    fileName: safeStorageKey,
+    buffer: binary,
+    contentType: "application/octet-stream",
+    cacheControl: defaultImageCacheControl
+  });
+  const preview = previewStorageKey
+    ? await uploadChapterPagePreviewWebp({
+        webpBuffer,
+        storageKey: previewStorageKey
+      })
+    : null;
+  return {
+    storageKey: safeStorageKey,
+    byteSize: binary.byteLength,
+    previewStorageKey: preview && preview.storageKey ? preview.storageKey : "",
+    previewFileName: preview && preview.fileName ? preview.fileName : "",
+    previewUrl: preview && preview.url ? preview.url : "",
+    previewByteSize: preview && preview.byteSize ? preview.byteSize : 0,
+    previewWidth: preview && preview.width ? preview.width : 0,
+    previewHeight: preview && preview.height ? preview.height : 0
+  };
+};
+
+const uploadProtectedChapterPageBuffer = async ({ inputBuffer, isWebtoon, storageKey, previewStorageKey, imgxConfig }) => {
+  const config = imgxConfig || getImgxConfig();
+  if (!isImgxUploadEnabled(config)) throw new Error("IMGX upload is not enabled.");
+  const converted = await convertChapterUploadBufferToWebpMetadata(inputBuffer, { isWebtoon });
+  return uploadWebpAsImgxStorage({
+    webpBuffer: converted.buffer,
+    width: converted.width,
+    height: converted.height,
+    storageKey,
+    previewStorageKey: previewStorageKey || buildChapterPagePreviewStorageKey(storageKey),
+    imgxConfig: config
+  });
+};
+
+const readSourcePageAsWebp = async ({ storageKey, imgxConfig }) => {
+  const safeStorageKey = normalizeB2FileKey(storageKey);
+  if (!safeStorageKey) throw new Error("Thiếu ảnh nguồn.");
+  if (isImgxStorageKey(safeStorageKey)) {
+    return decodeImgxStorageToWebp({ storageKey: safeStorageKey, imgxConfig });
+  }
+  const webpBuffer = await b2DownloadBuffer(safeStorageKey);
+  const metadata = webpBuffer ? await sharp(webpBuffer).metadata() : {};
+  return {
+    webpBuffer,
+    width: Number(metadata && metadata.width) || 1,
+    height: Number(metadata && metadata.height) || 1
+  };
+};
+
+const transcodeChapterPageToImgx = async ({ sourceStorageKey, destinationStorageKey, previewStorageKey, imgxConfig }) => {
+  const sourceKey = normalizeB2FileKey(sourceStorageKey);
+  const destinationKey = normalizeB2FileKey(destinationStorageKey);
+  if (!sourceKey || !destinationKey) throw new Error("Invalid IMGX chapter image path.");
+  if (sourceKey === destinationKey && isImgxStorageKey(sourceKey)) {
+    const previewKey =
+      previewStorageKey === undefined ? buildChapterPagePreviewStorageKey(destinationKey) : previewStorageKey;
+    if (!previewKey) return { storageKey: destinationKey, skipped: true };
+    const source = await readSourcePageAsWebp({ storageKey: sourceKey, imgxConfig });
+    const preview = await uploadChapterPagePreviewWebp({
+      webpBuffer: source.webpBuffer,
+      storageKey: previewKey
+    });
+    return {
+      storageKey: destinationKey,
+      skipped: true,
+      previewStorageKey: preview && preview.storageKey ? preview.storageKey : "",
+      previewFileName: preview && preview.fileName ? preview.fileName : "",
+      previewUrl: preview && preview.url ? preview.url : ""
+    };
+  }
+  const remoteTransfer = previewStorageKey === undefined
+    ? await runChapterImageProcessingApiTransfer({
+        sourceStorageKey: sourceKey,
+        destinationStorageKey: destinationKey,
+        targetMode: getImgxTransferTargetModeForExt(getChapterPageFileExtension(destinationKey))
+      })
+    : null;
+  if (remoteTransfer) return remoteTransfer;
+  const decoded = await readSourcePageAsWebp({ storageKey: sourceKey, imgxConfig });
+  return uploadWebpAsImgxStorage({
+    webpBuffer: decoded.webpBuffer,
+    width: decoded.width,
+    height: decoded.height,
+    storageKey: destinationKey,
+    previewStorageKey:
+      previewStorageKey === undefined ? buildChapterPagePreviewStorageKey(destinationKey) : previewStorageKey,
+    imgxConfig
+  });
+};
+
+const transcodeChapterPageToLegacyWebp = async ({ sourceStorageKey, destinationStorageKey, imgxConfig }) => {
+  const sourceKey = normalizeB2FileKey(sourceStorageKey);
+  const destinationKey = normalizeB2FileKey(destinationStorageKey);
+  if (!sourceKey || !destinationKey) throw new Error("Invalid legacy chapter image path.");
+  const remoteTransfer = await runChapterImageProcessingApiTransfer({
+    sourceStorageKey: sourceKey,
+    destinationStorageKey: destinationKey,
+    targetMode: "legacy"
+  });
+  if (remoteTransfer) return remoteTransfer;
+  if (!isImgxStorageKey(sourceKey)) {
+    return b2CopyFile({ sourceFileId: sourceKey, destinationFileName: destinationKey });
+  }
+
+  const decoded = await readSourcePageAsWebp({ storageKey: sourceKey, imgxConfig });
+  await b2UploadBuffer({
+    fileName: destinationKey,
+    buffer: decoded.webpBuffer,
+    contentType: "image/webp",
+    cacheControl: defaultImageCacheControl
+  });
+  return {
+    fileName: destinationKey,
+    fileId: destinationKey,
+    storageKey: destinationKey,
+    byteSize: decoded.webpBuffer ? decoded.webpBuffer.byteLength : 0
+  };
+};
+
+const storeProtectedChapterDraftPage = async ({ token, pageId, inputBuffer, isWebtoon, originalName }) => {
+  const safeToken = (token || "").toString().trim();
+  const safePageId = (pageId || "").toString().trim();
+  if (!isChapterDraftTokenValid(safeToken) || !isChapterDraftPageIdValid(safePageId)) {
+    throw new Error("Invalid draft page id.");
+  }
+  const draft = await getChapterDraft(safeToken);
+  const draftPrefix = normalizeJsonString(draft && draft.pages_prefix);
+  if (!draftPrefix) throw new Error("Invalid chapter draft.");
+
+  const imgxConfig = getImgxConfig();
+  if (!isImgxUploadEnabled(imgxConfig)) throw new Error("IMGX upload is not enabled.");
+
+  const converted = await convertChapterUploadBufferToWebpMetadata(inputBuffer, { isWebtoon });
+
+  const storageKey = `${draftPrefix}/${safePageId}.${getImgxStorageExt(imgxConfig.storageExt)}`;
+  const previewStorageKey = buildChapterPagePreviewStorageKey(storageKey);
+  const uploaded = await uploadWebpAsImgxStorage({
+    webpBuffer: converted.buffer,
+    width: converted.width,
+    height: converted.height,
+    storageKey,
+    previewStorageKey,
+    imgxConfig
+  });
+  await touchChapterDraft(safeToken);
+  return {
+    pageId: safePageId,
+    storageKey,
+    fileName: storageKey,
+    previewStorageKey: uploaded.previewStorageKey || previewStorageKey,
+    previewFileName: uploaded.previewFileName || previewStorageKey,
+    previewUrl: uploaded.previewUrl || buildChapterPagePreviewUrl(previewStorageKey),
+    previewByteSize: uploaded.previewByteSize || 0,
+    previewWidth: uploaded.previewWidth || 0,
+    previewHeight: uploaded.previewHeight || 0,
+    originalName: (originalName || "").toString().trim().slice(0, 240),
+    codecVersion: IMGX_VERSION
+  };
+};
+
+const deleteProtectedChapterDraftPage = async ({ token, pageId }) => {
+  const safeToken = (token || "").toString().trim();
+  const safePageId = (pageId || "").toString().trim();
+  if (!isChapterDraftTokenValid(safeToken) || !isChapterDraftPageIdValid(safePageId)) return 0;
+  const draft = await getChapterDraft(safeToken);
+  const draftPrefix = normalizeJsonString(draft && draft.pages_prefix);
+  if (!draftPrefix) return 0;
+  const protectedTargets = getImgxCandidateExts().map((extension) => `${draftPrefix}/${safePageId}.${extension}`);
+  const previewTargets = protectedTargets.map((target) => buildChapterPagePreviewStorageKey(target)).filter(Boolean);
+  const legacyTarget = `${draftPrefix}/${safePageId}.webp`;
+  let deleted = 0;
+  try {
+    const versions = [];
+    for (const target of Array.from(new Set([legacyTarget, ...protectedTargets, ...previewTargets]))) {
+      versions.push(...await b2ListFileVersionsByPrefix(target));
+    }
+    deleted = await b2DeleteFileVersions(versions);
+  } finally {
+    await touchChapterDraft(safeToken);
+  }
+  return deleted;
+};
+
+const createImgxPageGrant = ({ storageKey, sessionId, imgxConfig }) => {
+  const safeStorageKey = normalizeB2FileKey(storageKey);
+  const config = imgxConfig || getImgxConfig();
+  if (!isImgxReady(config)) throw new Error("IMGX chưa được cấu hình.");
+  return createSessionKeyGrant({
+    imageId: imageIdFromStorageKey(safeStorageKey),
+    storageKey: safeStorageKey,
+    sessionId: (sessionId || "").toString(),
+    imgxSecret: config.secret,
+    hmacSecret: config.sessionHmacSecret,
+    ttlMs: config.ttlMs
+  });
+};
 
 const buildChapterExistingPageId = (chapterId, pageNumber) => {
   const id = Number(chapterId);
@@ -1347,14 +2046,76 @@ const b2DeleteAllByPrefixIfUnreferenced = async (prefix, options = {}) => {
   return b2DeleteAllByPrefix(safePrefix);
 };
 
-const getLatestChapterPagesByNumber = async ({ prefix, pageFilePrefix }) => {
+const b2DeleteChapterImgxPageArtifactsIfUnreferenced = async ({
+  prefix,
+  keepPages = 0,
+  pageFilePrefix,
+  ignoreChapterIds = [],
+  reason = ""
+} = {}) => {
+  const safePrefix = normalizeB2DirKey(prefix);
+  if (!safePrefix) return 0;
+
+  const references = await findActiveChapterReferencesForStoragePrefix(safePrefix, { ignoreChapterIds });
+  if (references.length) {
+    console.warn("Skip IMGX page artifact cleanup because an active chapter still references the prefix", {
+      prefix: safePrefix,
+      reason: reason ? String(reason) : "",
+      activeChapterIds: references
+        .map((row) => Number(row && row.id))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .slice(0, 10)
+    });
+    return 0;
+  }
+
+  return b2DeleteChapterImgxPageArtifacts({
+    prefix: safePrefix,
+    keepPages,
+    pageFilePrefix
+  });
+};
+
+const b2DeleteChapterLegacyPageArtifactsIfUnreferenced = async ({
+  prefix,
+  keepPages = 0,
+  pageFilePrefix,
+  ignoreChapterIds = [],
+  reason = ""
+} = {}) => {
+  const safePrefix = normalizeB2DirKey(prefix);
+  if (!safePrefix) return 0;
+
+  const references = await findActiveChapterReferencesForStoragePrefix(safePrefix, { ignoreChapterIds });
+  if (references.length) {
+    console.warn("Skip legacy page artifact cleanup because an active chapter still references the prefix", {
+      prefix: safePrefix,
+      reason: reason ? String(reason) : "",
+      activeChapterIds: references
+        .map((row) => Number(row && row.id))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .slice(0, 10)
+    });
+    return 0;
+  }
+
+  return b2DeleteChapterLegacyPageArtifacts({
+    prefix: safePrefix,
+    keepPages,
+    pageFilePrefix
+  });
+};
+
+const getLatestChapterPagesByNumber = async ({ prefix, pageFilePrefix, requiredExtension = "" }) => {
   const prefixDir = buildB2DirPrefix(prefix);
   if (!prefixDir) return new Map();
 
   const files = await b2ListFileNamesByPrefix(prefixDir);
   const latestByPage = new Map();
+  const safeRequiredExtension = normalizeJsonString(requiredExtension).toLowerCase().replace(/^\./, "");
   files.forEach((file) => {
     const fileName = file && typeof file.fileName === "string" ? file.fileName : "";
+    if (safeRequiredExtension && getChapterPageFileExtension(fileName) !== safeRequiredExtension) return;
     const page = parseChapterPageNumberFromFileName(prefixDir, fileName, pageFilePrefix);
     if (page == null) return;
 
@@ -1372,9 +2133,18 @@ const getLatestChapterPagesByNumber = async ({ prefix, pageFilePrefix }) => {
   return latestByPage;
 };
 
-const finalizeChapterProcessingSuccess = async ({ chapterId, pageCount, finalPrefix, completedAt }) => {
+const finalizeChapterProcessingSuccess = async ({
+  chapterId,
+  pageCount,
+  finalPrefix,
+  completedAt,
+  pagesExt = "webp",
+  pageDeliveryMode = "legacy"
+}) => {
   const doneAt = Number.isFinite(Number(completedAt)) && Number(completedAt) > 0 ? Number(completedAt) : Date.now();
   const doneDate = new Date(doneAt).toISOString();
+  const safePagesExt = (pagesExt || "webp").toString().trim().toLowerCase() || "webp";
+  const safeDeliveryMode = (pageDeliveryMode || (isImgxStorageExt(safePagesExt) ? "imgx" : "legacy")).toString().trim().toLowerCase();
   await dbRun(
     `
     UPDATE chapters
@@ -1382,6 +2152,7 @@ const finalizeChapterProcessingSuccess = async ({ chapterId, pageCount, finalPre
       pages = ?,
       pages_prefix = ?,
       pages_ext = ?,
+      page_delivery_mode = ?,
       pages_updated_at = ?,
       date = ?,
       processing_state = NULL,
@@ -1393,7 +2164,7 @@ const finalizeChapterProcessingSuccess = async ({ chapterId, pageCount, finalPre
       processing_updated_at = ?
     WHERE id = ?
   `,
-    [pageCount, finalPrefix, "webp", doneAt, doneDate, doneAt, chapterId]
+    [pageCount, finalPrefix, safePagesExt, safeDeliveryMode, doneAt, doneDate, doneAt, chapterId]
   );
 };
 
@@ -1416,7 +2187,11 @@ const tryReconcileStaleChapterProcessing = async ({ chapterRow, pageIds, pageFil
 
   let latestByPage = new Map();
   try {
-    latestByPage = await getLatestChapterPagesByNumber({ prefix: finalPrefix, pageFilePrefix });
+    latestByPage = await getLatestChapterPagesByNumber({
+      prefix: finalPrefix,
+      pageFilePrefix,
+      requiredExtension: "webp"
+    });
   } catch (_err) {
     return false;
   }
@@ -1433,7 +2208,13 @@ const tryReconcileStaleChapterProcessing = async ({ chapterRow, pageIds, pageFil
   });
 
   try {
-    await b2DeleteChapterExtraPages({ prefix: finalPrefix, keepPages: expectedCount, pageFilePrefix });
+    await b2DeleteChapterExtraPages({
+      prefix: finalPrefix,
+      keepPages: expectedCount,
+      pageFilePrefix,
+      extensions: ["webp"]
+    });
+    await b2DeleteChapterImgxPageArtifacts({ prefix: finalPrefix, keepPages: 0, pageFilePrefix });
   } catch (err) {
     console.warn("Chapter extra page cleanup failed during reconcile", err);
   }
@@ -1494,6 +2275,8 @@ const runChapterProcessingJob = async (chapterId) => {
       number,
       pages,
       pages_prefix,
+      pages_ext,
+      page_delivery_mode,
       pages_file_prefix,
       processing_state,
       processing_draft_token,
@@ -1616,20 +2399,27 @@ const runChapterProcessingJob = async (chapterId) => {
   }
   const pageFilePrefix = normalizeChapterPageFilePrefix(chapterRow.pages_file_prefix);
   const padLength = Math.max(3, Math.min(6, String(pageIds.length).length));
+  const imgxConfig = getImgxConfig();
+  // Upload target follows the current env. Existing .bin chapters stay readable,
+  // but saving edited pages while IMGX upload is disabled must finalize as legacy WebP.
+  const shouldUseImgxProcessing = isImgxUploadEnabled(imgxConfig);
+  const imgxPagesExt = getImgxStorageExt(imgxConfig.storageExt);
 
-  try {
-    const reconciled = await tryReconcileStaleChapterProcessing({
-      chapterRow,
-      pageIds,
-      pageFilePrefix,
-      draftPrefix,
-      token
-    });
-    if (reconciled) {
-      return;
+  if (!shouldUseImgxProcessing) {
+    try {
+      const reconciled = await tryReconcileStaleChapterProcessing({
+        chapterRow,
+        pageIds,
+        pageFilePrefix,
+        draftPrefix,
+        token
+      });
+      if (reconciled) {
+        return;
+      }
+    } catch (err) {
+      console.warn("Chapter stale reconciliation failed", err);
     }
-  } catch (err) {
-    console.warn("Chapter stale reconciliation failed", err);
   }
 
   let available = [];
@@ -1697,15 +2487,22 @@ const runChapterProcessingJob = async (chapterId) => {
           throw new Error("Không đọc được ảnh chương hiện tại để sắp xếp lại.");
         }
 
-        const snapshotFileName = `${snapshotPrefix}/${pageId}.webp`;
-        const copied = await b2CopyFile({
-          sourceFileId,
-          destinationFileName: snapshotFileName
-        });
+        const snapshotFileName = `${snapshotPrefix}/${pageId}.${shouldUseImgxProcessing ? imgxPagesExt : "webp"}`;
+        const copied = shouldUseImgxProcessing
+          ? await transcodeChapterPageToImgx({
+              sourceStorageKey: sourceFileId,
+              destinationStorageKey: snapshotFileName,
+              imgxConfig
+            })
+          : await transcodeChapterPageToLegacyWebp({
+              sourceStorageKey: sourceFileId,
+              destinationStorageKey: snapshotFileName,
+              imgxConfig
+            });
 
         existingSourceById.set(pageId, {
-          fileName: copied.fileName,
-          fileId: copied.fileId,
+          fileName: copied.fileName || copied.storageKey || snapshotFileName,
+          fileId: copied.fileId || copied.storageKey || snapshotFileName,
           uploadTimestamp: Date.now()
         });
       }
@@ -1740,8 +2537,12 @@ const runChapterProcessingJob = async (chapterId) => {
       }
 
       const pageId = pageIds[index];
-      const draftName = `${draftPrefix}/${pageId}.webp`;
-      const draftSource = availableMap.get(draftName);
+      const draftImgxNames = getImgxCandidateExts(imgxPagesExt).map((extension) => `${draftPrefix}/${pageId}.${extension}`);
+      const draftLegacyName = `${draftPrefix}/${pageId}.webp`;
+      const draftSourceCandidates = shouldUseImgxProcessing
+        ? [...draftImgxNames, draftLegacyName]
+        : [draftLegacyName, ...draftImgxNames];
+      const draftSource = draftSourceCandidates.map((name) => availableMap.get(name)).find(Boolean);
       let sourceFileId = draftSource && draftSource.fileId ? String(draftSource.fileId) : "";
       if (!sourceFileId) {
         const existingSource = existingSourceById.get(pageId);
@@ -1756,14 +2557,26 @@ const runChapterProcessingJob = async (chapterId) => {
       const pageFileName = buildChapterPageFileName({
         pageNumber: index + 1,
         padLength,
-        extension: "webp",
+        extension: shouldUseImgxProcessing ? imgxPagesExt : "webp",
         pageFilePrefix
       });
       if (!pageFileName) {
         throw new Error("Tên ảnh trang không hợp lệ.");
       }
       const destinationName = `${finalPrefix}/${pageFileName}`;
-      await b2CopyFile({ sourceFileId, destinationFileName: destinationName });
+      if (shouldUseImgxProcessing) {
+        await transcodeChapterPageToImgx({
+          sourceStorageKey: sourceFileId,
+          destinationStorageKey: destinationName,
+          imgxConfig
+        });
+      } else {
+        await transcodeChapterPageToLegacyWebp({
+          sourceStorageKey: sourceFileId,
+          destinationStorageKey: destinationName,
+          imgxConfig
+        });
+      }
       donePages = index + 1;
       await updateChapterProcessing({
         chapterId: chapterRow.id,
@@ -1790,7 +2603,9 @@ const runChapterProcessingJob = async (chapterId) => {
       chapterId: chapterRow.id,
       pageCount: pageIds.length,
       finalPrefix,
-      completedAt: doneAt
+      completedAt: doneAt,
+      pagesExt: shouldUseImgxProcessing ? imgxPagesExt : "webp",
+      pageDeliveryMode: shouldUseImgxProcessing ? "imgx" : "legacy"
     });
   } catch (_err) {
     await updateChapterProcessing({
@@ -1802,7 +2617,35 @@ const runChapterProcessingJob = async (chapterId) => {
   }
   // Cleanup any leftover pages from previous uploads/edits.
   try {
-    await b2DeleteChapterExtraPages({ prefix: finalPrefix, keepPages: pageIds.length, pageFilePrefix });
+    if (shouldUseImgxProcessing) {
+      await b2DeleteChapterImgxPageArtifacts({
+        prefix: finalPrefix,
+        keepPages: pageIds.length,
+        pageFilePrefix,
+        extensions: [imgxPagesExt]
+      });
+      await b2DeleteChapterExtraPages({
+        prefix: finalPrefix,
+        keepPages: 0,
+        pageFilePrefix,
+        extensions: getImgxStaleStorageExts(imgxPagesExt)
+      });
+      await b2DeleteChapterLegacyPageArtifactsIfUnreferenced({
+        prefix: finalPrefix,
+        keepPages: 0,
+        pageFilePrefix,
+        reason: "chapter-processing-final-legacy-prefix",
+        ignoreChapterIds: [chapterRow.id]
+      });
+    } else {
+      await b2DeleteChapterExtraPages({
+        prefix: finalPrefix,
+        keepPages: pageIds.length,
+        pageFilePrefix,
+        extensions: ["webp"]
+      });
+      await b2DeleteChapterImgxPageArtifacts({ prefix: finalPrefix, keepPages: 0, pageFilePrefix });
+    }
   } catch (err) {
     console.warn("Chapter extra page cleanup failed", err);
   }
@@ -1810,10 +2653,27 @@ const runChapterProcessingJob = async (chapterId) => {
   const previousPrefix = normalizeJsonString(chapterRow.pages_prefix);
   if (previousPrefix && previousPrefix !== finalPrefix) {
     try {
-      await b2DeleteAllByPrefixIfUnreferenced(previousPrefix, {
-        reason: "chapter-processing-old-prefix",
-        ignoreChapterIds: [chapterRow.id]
-      });
+      if (shouldUseImgxProcessing) {
+        await b2DeleteChapterImgxPageArtifactsIfUnreferenced({
+          prefix: previousPrefix,
+          keepPages: 0,
+          pageFilePrefix,
+          reason: "chapter-processing-old-imgx-prefix",
+          ignoreChapterIds: [chapterRow.id]
+        });
+        await b2DeleteChapterLegacyPageArtifactsIfUnreferenced({
+          prefix: previousPrefix,
+          keepPages: 0,
+          pageFilePrefix,
+          reason: "chapter-processing-old-legacy-prefix",
+          ignoreChapterIds: [chapterRow.id]
+        });
+      } else {
+        await b2DeleteAllByPrefixIfUnreferenced(previousPrefix, {
+          reason: "chapter-processing-old-prefix",
+          ignoreChapterIds: [chapterRow.id]
+        });
+      }
     } catch (err) {
       console.warn("Failed to delete old chapter prefix", err);
     }
@@ -2018,13 +2878,21 @@ const reconcileStaleChapterProcessingById = async (chapterId) => {
     b2CopyFile,
     b2DeleteAllByPrefix,
     b2DeleteAllByPrefixIfUnreferenced,
+    b2DeleteChapterImgxPageArtifacts,
+    b2DeleteChapterImgxPageArtifactsIfUnreferenced,
+    b2DeleteChapterLegacyPageArtifacts,
+    b2DeleteChapterLegacyPageArtifactsIfUnreferenced,
     b2DeleteChapterExtraPages,
+    b2DeleteChapterExtraPagePreviews,
     b2DeleteFileVersions,
+    b2DownloadBuffer,
     b2ListFileNamesByPrefix,
     b2ListFileVersionsByPrefix,
     b2UploadBuffer,
     buildB2DirPrefix,
     buildChapterPageFileName,
+    buildChapterPagePreviewStorageKey,
+    buildChapterPagePreviewUrl,
     buildChapterDraftPrefix,
     buildChapterExistingPageId,
     chapterDraftCleanupIntervalMs,
@@ -2039,26 +2907,41 @@ const reconcileStaleChapterProcessingById = async (chapterId) => {
     cleanupChapterDrafts,
     clearChapterProcessing,
     convertChapterPageToWebp,
+    convertChapterPageToWebpWithMetadata,
     createAdminJob,
     createAdminJobId,
     createChapterDraft,
     createChapterDraftToken,
+    createChapterPagePreviewWebp,
+    createImgxPageGrant,
     deleteChapterAndCleanupStorage,
     deleteChapterDraftRow,
+    deleteProtectedChapterDraftPage,
     deleteMangaAndCleanupStorage,
     encodeS3CopySource,
     enqueueChapterProcessing,
     getB2Config,
     getChapterDraft,
+    getImgxConfig,
+    getImgxCandidateExts,
+    getImgxStaleStorageExts,
+    getImgxStorageExt,
     getStorageClient,
     isB2Ready,
     isChapterDraftPageIdValid,
     isChapterDraftTokenValid,
+    isImgxReady,
+    isImgxStorageExt,
+    isImgxUploadEnabled,
+    storeProtectedChapterDraftPage,
+    transcodeChapterPageToImgx,
     isStorageVersionListingUnsupported,
     normalizeAdminJobError,
+    normalizeImgxStorageExt,
     normalizeB2FileKey,
     normalizeJsonString,
     parseChapterPageNumberFromFileName,
+    parseChapterPagePreviewNumberFromFileName,
     parseJsonArrayOfStrings,
     pruneAdminJobs,
     reconcileStaleChapterProcessingById,
@@ -2072,6 +2955,7 @@ const reconcileStaleChapterProcessingById = async (chapterId) => {
     storageClientCache,
     touchChapterDraft,
     updateChapterProcessing,
+    uploadProtectedChapterPageBuffer,
   };
 };
 

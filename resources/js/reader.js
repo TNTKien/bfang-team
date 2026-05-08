@@ -1850,8 +1850,107 @@ quickCommentsButtons.forEach((quickComments) => {
     return Math.round(numeric);
   };
 
+  const isImgxImage = (img) =>
+    Boolean(img && img.dataset && img.dataset.imgxPageIndex != null);
+
+  const getImgxDimension = (img, key, fallbackValue = 0) => {
+    const datasetValue = Number(img && img.dataset ? img.dataset[key] : NaN);
+    if (Number.isFinite(datasetValue) && datasetValue > 0) return Math.round(datasetValue);
+    return getPositiveDimension(fallbackValue);
+  };
+
+  const getMediaNaturalDimensions = (img) => {
+    if (isImgxImage(img)) {
+      return {
+        width: getImgxDimension(img, "imgxWidth", img && img.naturalWidth),
+        height: getImgxDimension(img, "imgxHeight", img && img.naturalHeight)
+      };
+    }
+    return {
+      width: getPositiveDimension(img && img.naturalWidth),
+      height: getPositiveDimension(img && img.naturalHeight)
+    };
+  };
+
+  const getImgxShell = (img) =>
+    isImgxImage(img) && img && img.closest ? img.closest(".page-protected-shell") : null;
+
+  const getImgxLayer = (img) => {
+    const shell = getImgxShell(img);
+    return shell ? shell.querySelector("[data-imgx-canvas-layer]") : null;
+  };
+
+  const syncImgxShellClasses = (img, state) => {
+    const shell = getImgxShell(img);
+    if (!shell) return;
+    shell.classList.toggle("is-placeholder", state === "placeholder" || state === "loading");
+    shell.classList.toggle("is-loaded", state === "loaded");
+    shell.classList.toggle("is-error", state === "error");
+  };
+
+  const ensureImgxShell = (img) => {
+    if (!isImgxImage(img) || !(img instanceof HTMLElement)) return null;
+
+    const dimensions = getMediaNaturalDimensions(img);
+    const width = dimensions.width || 960;
+    const height = dimensions.height || 1440;
+    img.dataset.imgxWidth = String(width);
+    img.dataset.imgxHeight = String(height);
+    img.setAttribute("draggable", "false");
+
+    let shell = getImgxShell(img);
+    if (!shell) {
+      const frame = getPageFrame(img);
+      if (!frame) return null;
+
+      shell = document.createElement("div");
+      shell.className = "page-media page-protected-shell is-placeholder";
+      shell.setAttribute("role", "img");
+      shell.setAttribute("aria-label", img.getAttribute("alt") || "");
+      shell.dataset.pageIndex = img.dataset.pageIndex || "";
+
+      const layer = document.createElement("div");
+      layer.className = "page-protected-canvas-layer";
+      layer.setAttribute("aria-hidden", "true");
+      layer.setAttribute("data-imgx-canvas-layer", "true");
+
+      const shield = document.createElement("div");
+      shield.className = "page-protected-copy-shield";
+      shield.setAttribute("aria-hidden", "true");
+      shield.setAttribute("data-imgx-copy-shield", "true");
+
+      shell.addEventListener("click", () => {
+        if (getLazyState(img) !== "error") return;
+        img.dataset.lazyRetryCount = "0";
+        retryLazyImage(img);
+      });
+
+      frame.insertBefore(shell, img);
+      shell.appendChild(img);
+      shell.appendChild(layer);
+      shell.appendChild(shield);
+    }
+
+    shell.style.setProperty("--imgx-protected-width", `${width}px`);
+    shell.style.setProperty("--imgx-protected-aspect", `${width} / ${height}`);
+    shell.style.aspectRatio = `${width} / ${height}`;
+    return shell;
+  };
+
   const clearReaderImageSize = (img) => {
     if (!img || !(img instanceof HTMLElement)) return;
+    const shell = getImgxShell(img);
+    if (shell instanceof HTMLElement) {
+      shell.style.width = "";
+      shell.style.height = "";
+      shell.style.maxWidth = "";
+      shell.style.maxHeight = "";
+      img.style.width = "100%";
+      img.style.height = "auto";
+      img.style.maxWidth = "100%";
+      img.style.maxHeight = "";
+      return;
+    }
     img.style.width = "";
     img.style.height = "";
     img.style.maxWidth = "";
@@ -1872,8 +1971,9 @@ quickCommentsButtons.forEach((quickComments) => {
       return;
     }
 
-    const naturalWidth = getPositiveDimension(img.naturalWidth);
-    const naturalHeight = getPositiveDimension(img.naturalHeight);
+    const naturalDimensions = getMediaNaturalDimensions(img);
+    const naturalWidth = naturalDimensions.width;
+    const naturalHeight = naturalDimensions.height;
     if (!naturalWidth || !naturalHeight) {
       clearReaderImageSize(img);
       return;
@@ -1894,10 +1994,17 @@ quickCommentsButtons.forEach((quickComments) => {
     targetWidth = Math.max(1, Math.min(targetWidth, naturalWidth));
     targetHeight = Math.max(1, Math.min(targetHeight, naturalHeight));
 
-    img.style.width = `${targetWidth}px`;
-    img.style.height = `${targetHeight}px`;
-    img.style.maxWidth = "100%";
-    img.style.maxHeight = "100%";
+    const target = getImgxShell(img) || img;
+    target.style.width = `${targetWidth}px`;
+    target.style.height = `${targetHeight}px`;
+    target.style.maxWidth = "100%";
+    target.style.maxHeight = "100%";
+    if (target !== img) {
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.maxWidth = "100%";
+      img.style.maxHeight = "100%";
+    }
   };
 
   const applyReaderModeImageSizing = () => {
@@ -1920,9 +2027,11 @@ quickCommentsButtons.forEach((quickComments) => {
       return;
     }
 
-    const naturalWidth = getPositiveDimension(img.naturalWidth);
-    const naturalHeight = getPositiveDimension(img.naturalHeight);
-    const measuredRect = img.getBoundingClientRect();
+    const naturalDimensions = getMediaNaturalDimensions(img);
+    const naturalWidth = naturalDimensions.width;
+    const naturalHeight = naturalDimensions.height;
+    const measuredElement = getImgxShell(img) || img;
+    const measuredRect = measuredElement.getBoundingClientRect();
     const measuredWidth = getPositiveDimension(measuredRect.width);
     const measuredHeight = getPositiveDimension(measuredRect.height);
 
@@ -1942,8 +2051,13 @@ quickCommentsButtons.forEach((quickComments) => {
     pagesRoot.style.setProperty("--reader-page-desktop-max-viewport", desktopViewportCap);
   };
 
-  const getDeferredSrc = (img) =>
-    (img && img.dataset && img.dataset.src ? String(img.dataset.src).trim() : "");
+  const getDeferredSrc = (img) => {
+    if (!img || !img.dataset) return "";
+    const src = img.dataset.src ? String(img.dataset.src).trim() : "";
+    if (src) return src;
+    if (isImgxImage(img)) return `imgx:${String(img.dataset.imgxPageIndex).trim()}`;
+    return "";
+  };
 
   const lazyImages = orderedImages.filter((img) => Boolean(getDeferredSrc(img)));
   const tinyPlaceholder = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
@@ -2146,6 +2260,7 @@ quickCommentsButtons.forEach((quickComments) => {
     img.dataset.lazyState = "loaded";
     img.classList.remove("is-placeholder", "is-error", "lazyerror", "lazyload", "lazyloaded");
     img.classList.add("is-loaded");
+    syncImgxShellClasses(img, "loaded");
   };
 
   const markError = (img) => {
@@ -2153,6 +2268,14 @@ quickCommentsButtons.forEach((quickComments) => {
     img.dataset.lazyState = "error";
     img.classList.remove("is-loaded", "is-placeholder", "lazyloaded", "lazyload");
     img.classList.add("is-error");
+    if (isImgxImage(img)) {
+      delete img.dataset.imgxRendered;
+      const layer = getImgxLayer(img);
+      if (layer) {
+        layer.replaceChildren();
+      }
+    }
+    syncImgxShellClasses(img, "error");
   };
 
   const getRetryCount = (img) => {
@@ -2191,6 +2314,10 @@ quickCommentsButtons.forEach((quickComments) => {
   };
 
   const isCurrentSrcExpected = (img) => {
+    if (isImgxImage(img)) {
+      const current = (img && (img.currentSrc || img.src) ? String(img.currentSrc || img.src).trim() : "");
+      return img && img.dataset && img.dataset.imgxRendered === "1" && Boolean(current);
+    }
     const expected =
       (img && img.dataset && (img.dataset.src || img.dataset.lazyOriginalSrc)
         ? String(img.dataset.src || img.dataset.lazyOriginalSrc).trim()
@@ -2203,11 +2330,829 @@ quickCommentsButtons.forEach((quickComments) => {
     return normalizeComparableUrl(current) === normalizeComparableUrl(expected);
   };
 
+  const imgxAccessUrl = (pagesRoot.dataset.readerImgxAccessUrl || "").toString().trim();
+  const normalizeImgxRenderMode = (value) =>
+    (value || "").toString().trim().toLowerCase() === "single" ? "single" : "tiles";
+  const imgxRenderMode = normalizeImgxRenderMode(pagesRoot.dataset.readerImgxRenderMode);
+  const imgxAccessWindowSize = 5;
+  const imgxAccessPromiseByIndex = new Map();
+  const IMGX_WASM_DECODER_URL = `/${["wasm", "q7v9k2m1.js"].join("/")}`;
+  const IMGX_WASM_DECODE_EXPORT = String.fromCharCode(97, 48);
+  const IMGX_TILE_SIZE = 256;
+  const IMGX_DECODE_CACHE_MAX_PAGES = saveData ? 4 : 12;
+  const IMGX_DECODE_CACHE_MAX_BYTES = saveData ? 8 * 1024 * 1024 : 36 * 1024 * 1024;
+  const IMGX_BITMAP_CACHE_MAX_PAGES = saveData ? 4 : 6;
+  const IMGX_BITMAP_CACHE_MAX_PIXELS = saveData ? 12 * 1024 * 1024 : 42 * 1024 * 1024;
+  const IMGX_PREDECODE_ROOT_MARGIN = "1500px";
+  const IMGX_PRERENDER_ROOT_MARGIN = "300px";
+  const isImgxChapter = () => Boolean(imgxAccessUrl);
+  let imgxWasmDecoderPromise = null;
+  const imgxDecodedPageCache = new Map();
+  const imgxDecodedPagePromiseByKey = new Map();
+  const imgxBitmapPageCache = new Map();
+  const imgxBitmapPagePromiseByKey = new Map();
+  let imgxDecodedPageCacheBytes = 0;
+  let imgxBitmapPageCachePixels = 0;
+  const parseImgxInitialPages = () => {
+    const raw = (pagesRoot.dataset.readerImgxInitialPages || "").toString().trim();
+    if (!raw) return [];
+    try {
+      const decoded = decodeURIComponent(raw);
+      const parsed = JSON.parse(decoded);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_err) {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (_fallbackErr) {
+        return [];
+      }
+    }
+  };
+
+  parseImgxInitialPages().forEach((entry) => {
+    const pageIndex = Math.floor(Number(entry && entry.pageIndex));
+    const downloadUrl = (entry && entry.downloadUrl ? String(entry.downloadUrl) : "").trim();
+    const grant = entry && entry.grant && typeof entry.grant === "object" ? entry.grant : null;
+    const hasGrantDecodeMaterial = Boolean(grant && (grant.wrappedDecodeKey || grant.decodeKey));
+    if (
+      !isImgxChapter()
+      || !Number.isFinite(pageIndex)
+      || pageIndex < 0
+      || pageIndex >= totalPages
+      || !downloadUrl
+      || !grant
+      || !hasGrantDecodeMaterial
+      || imgxAccessPromiseByIndex.has(pageIndex)
+    ) {
+      return;
+    }
+    imgxAccessPromiseByIndex.set(
+      pageIndex,
+      Promise.resolve({
+        ...entry,
+        pageIndex,
+        pageNumber: pageIndex + 1,
+        downloadUrl,
+        grant
+      })
+    );
+  });
+
+  const base64UrlToBytes = (value) => {
+    const raw = (value || "").toString().replace(/-/g, "+").replace(/_/g, "/");
+    const padded = raw.padEnd(Math.ceil(raw.length / 4) * 4, "=");
+    const binary = window.atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  };
+
+  const seedFromImgxKey = (key) => {
+    if (!key || key.byteLength < 4) throw new Error("IMGX key invalid");
+    const view = new DataView(key.buffer, key.byteOffset, key.byteLength);
+    return view.getUint32(0, false) || 0x9e3779b9;
+  };
+
+  const nextImgxXorShift32 = (value) => {
+    let x = value >>> 0;
+    x ^= (x << 13) >>> 0;
+    x ^= x >>> 17;
+    x ^= (x << 5) >>> 0;
+    return x >>> 0;
+  };
+
+  const normalizeImgxStorageKey = (value) => (value || "").toString().trim().replace(/^\/+/, "");
+
+  const imgxTextEncoder = typeof window.TextEncoder === "function" ? new window.TextEncoder() : null;
+
+  const stringToImgxUtf8Bytes = (value) => {
+    const text = (value || "").toString();
+    if (imgxTextEncoder) return imgxTextEncoder.encode(text);
+    const bytes = [];
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if (code < 0x80) {
+        bytes.push(code);
+      } else if (code < 0x800) {
+        bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+      } else {
+        bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+      }
+    }
+    return new Uint8Array(bytes);
+  };
+
+  const fnv1aImgx32 = (bytes) => {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < bytes.byteLength; index += 1) {
+      hash ^= bytes[index];
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash || 0x9e3779b9;
+  };
+
+  const createImgxGrantKeyWrapMaterial = (grant, storageKey) => [
+    "IMGX-GRANT-WRAP-v1",
+    grant && grant.version,
+    grant && grant.algorithm,
+    grant && grant.imageId,
+    grant && grant.issuedAt,
+    grant && grant.expiresAt,
+    grant && grant.nonce,
+    grant && grant.keyNonce,
+    grant && grant.signature,
+    normalizeImgxStorageKey(storageKey)
+  ].map((part) => (part == null ? "" : String(part))).join(".");
+
+  const createImgxGrantKeyMask = (material, byteLength = 32) => {
+    const safeLength = Math.max(0, Math.floor(Number(byteLength) || 0));
+    const mask = new Uint8Array(safeLength);
+    let seed = fnv1aImgx32(stringToImgxUtf8Bytes(material));
+    for (let index = 0; index < safeLength; index += 1) {
+      if (index % 4 === 0) {
+        seed = nextImgxXorShift32((seed + index + 0x9e3779b9) >>> 0);
+      }
+      mask[index] = (seed >>> ((index % 4) * 8)) & 0xff;
+    }
+    return mask;
+  };
+
+  const unwrapImgxGrantDecodeKey = (grant, storageKey) => {
+    if (grant && grant.wrappedDecodeKey) {
+      const wrapped = base64UrlToBytes(grant.wrappedDecodeKey);
+      if (wrapped.byteLength !== 32) throw new Error("IMGX wrapped grant invalid");
+      const mask = createImgxGrantKeyMask(createImgxGrantKeyWrapMaterial(grant, storageKey), wrapped.byteLength);
+      for (let index = 0; index < wrapped.byteLength; index += 1) {
+        wrapped[index] ^= mask[index];
+      }
+      wipeImgxBuffer(mask);
+      return wrapped;
+    }
+    return base64UrlToBytes(grant && grant.decodeKey);
+  };
+
+  const swapImgxByte = (bytes, left, right) => {
+    if (left === right) return;
+    const tmp = bytes[left];
+    bytes[left] = bytes[right];
+    bytes[right] = tmp;
+  };
+
+  const unshuffleImgxBytesInPlace = (bytes, key) => {
+    const swaps = new Uint32Array(bytes.byteLength);
+    let seed = seedFromImgxKey(key);
+    for (let index = bytes.byteLength - 1; index > 0; index -= 1) {
+      seed = nextImgxXorShift32(seed);
+      swaps[index] = seed % (index + 1);
+    }
+    for (let index = 1; index < bytes.byteLength; index += 1) {
+      swapImgxByte(bytes, index, swaps[index]);
+    }
+  };
+
+  const xorImgxBytesInPlace = (bytes, key) => {
+    if (!key || !key.byteLength) throw new Error("IMGX key missing");
+    for (let index = 0; index < bytes.byteLength; index += 1) {
+      bytes[index] ^= key[index % key.byteLength];
+    }
+  };
+
+  const wipeImgxBuffer = (bytes) => {
+    if (!bytes || typeof bytes.fill !== "function") return;
+    bytes.fill(0);
+  };
+
+  const validateImgxBinary = (binary) => {
+    if (binary.byteLength <= 13) throw new Error("IMGX payload empty");
+    if (binary[0] !== 0x49 || binary[1] !== 0x4d || binary[2] !== 0x47 || binary[3] !== 0x58) {
+      throw new Error("IMGX magic invalid");
+    }
+    if (binary[4] !== 2) throw new Error("IMGX version invalid");
+  };
+
+  const cloneImgxBytes = (bytes) => {
+    const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || 0);
+    const clone = new Uint8Array(source.byteLength);
+    clone.set(source);
+    return clone;
+  };
+
+  const getImgxDownloadVersion = (downloadUrl) => {
+    const raw = (downloadUrl || "").toString().trim();
+    if (!raw) return "";
+    try {
+      const parsed = new URL(raw, window.location.href);
+      return parsed.searchParams.get("t") || parsed.search || raw;
+    } catch (_error) {
+      const match = raw.match(/[?&]t=([^&]+)/);
+      return match ? match[1] : raw;
+    }
+  };
+
+  const buildImgxDecodedPageCacheKey = (page) => {
+    if (!page || typeof page !== "object") return "";
+    const storageKey = normalizeImgxStorageKey(page.storageKey || "");
+    const downloadVersion = getImgxDownloadVersion(page.downloadUrl || "");
+    const keyHash = page.grant && page.grant.keyHash ? String(page.grant.keyHash) : "";
+    const fallbackUrl = (page.downloadUrl || "").toString().trim();
+    const identity = storageKey || fallbackUrl;
+    if (!identity) return "";
+    return [identity, downloadVersion, keyHash].join("|");
+  };
+
+  const evictImgxDecodedCacheEntry = (cacheKey) => {
+    const entry = imgxDecodedPageCache.get(cacheKey);
+    if (!entry) return;
+    imgxDecodedPageCacheBytes = Math.max(0, imgxDecodedPageCacheBytes - Math.max(0, Number(entry.bytes) || 0));
+    wipeImgxBuffer(entry.webp);
+    imgxDecodedPageCache.delete(cacheKey);
+  };
+
+  const trimImgxDecodedPageCache = () => {
+    while (
+      imgxDecodedPageCache.size > IMGX_DECODE_CACHE_MAX_PAGES
+      || (imgxDecodedPageCacheBytes > IMGX_DECODE_CACHE_MAX_BYTES && imgxDecodedPageCache.size > 1)
+    ) {
+      const oldestKey = imgxDecodedPageCache.keys().next().value;
+      if (!oldestKey) break;
+      evictImgxDecodedCacheEntry(oldestKey);
+    }
+  };
+
+  const putCachedImgxDecodedPage = ({ page, webpBytes, decoder }) => {
+    const cacheKey = buildImgxDecodedPageCacheKey(page);
+    if (!cacheKey || !webpBytes || !webpBytes.byteLength) return "";
+
+    const bytes = webpBytes.byteLength;
+    if (imgxDecodedPageCache.has(cacheKey)) {
+      evictImgxDecodedCacheEntry(cacheKey);
+    }
+
+    imgxDecodedPageCache.set(cacheKey, {
+      bytes,
+      decoder: decoder || "unknown",
+      webp: cloneImgxBytes(webpBytes)
+    });
+    imgxDecodedPageCacheBytes += bytes;
+    trimImgxDecodedPageCache();
+    return cacheKey;
+  };
+
+  const getCachedImgxDecodedPageByKey = ({ page, cacheKey }) => {
+    if (!cacheKey || !imgxDecodedPageCache.has(cacheKey)) return null;
+    const entry = imgxDecodedPageCache.get(cacheKey);
+    imgxDecodedPageCache.delete(cacheKey);
+    imgxDecodedPageCache.set(cacheKey, entry);
+    return {
+      page,
+      webp: cloneImgxBytes(entry.webp),
+      decoder: entry.decoder || "memory-cache",
+      cacheHit: true
+    };
+  };
+
+  const closeImgxBitmap = (bitmap) => {
+    if (!bitmap || typeof bitmap.close !== "function") return;
+    try {
+      bitmap.close();
+    } catch (_err) {
+      // Ignore stale ImageBitmap close failures.
+    }
+  };
+
+  const estimateImgxBitmapPixels = (bitmap) => {
+    const width = Number(bitmap && bitmap.width);
+    const height = Number(bitmap && bitmap.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return 0;
+    return Math.max(1, Math.floor(width) * Math.floor(height));
+  };
+
+  const evictImgxBitmapCacheEntry = (cacheKey) => {
+    const entry = imgxBitmapPageCache.get(cacheKey);
+    if (!entry) return;
+    imgxBitmapPageCachePixels = Math.max(0, imgxBitmapPageCachePixels - Math.max(0, Number(entry.pixels) || 0));
+    closeImgxBitmap(entry.bitmap);
+    imgxBitmapPageCache.delete(cacheKey);
+  };
+
+  const trimImgxBitmapPageCache = () => {
+    while (
+      imgxBitmapPageCache.size > IMGX_BITMAP_CACHE_MAX_PAGES
+      || (imgxBitmapPageCachePixels > IMGX_BITMAP_CACHE_MAX_PIXELS && imgxBitmapPageCache.size > 1)
+    ) {
+      const oldestKey = imgxBitmapPageCache.keys().next().value;
+      if (!oldestKey) break;
+      evictImgxBitmapCacheEntry(oldestKey);
+    }
+  };
+
+  const putCachedImgxBitmapPage = ({ page, bitmap, decoder }) => {
+    const cacheKey = buildImgxDecodedPageCacheKey(page);
+    if (!cacheKey || !bitmap) return "";
+
+    if (imgxBitmapPageCache.has(cacheKey)) {
+      evictImgxBitmapCacheEntry(cacheKey);
+    }
+
+    const pixels = estimateImgxBitmapPixels(bitmap);
+    imgxBitmapPageCache.set(cacheKey, {
+      bitmap,
+      decoder: decoder || "unknown",
+      pixels
+    });
+    imgxBitmapPageCachePixels += pixels;
+    trimImgxBitmapPageCache();
+    return cacheKey;
+  };
+
+  const getCachedImgxBitmapPageByKey = ({ page, cacheKey }) => {
+    if (!cacheKey || !imgxBitmapPageCache.has(cacheKey)) return null;
+    const entry = imgxBitmapPageCache.get(cacheKey);
+    imgxBitmapPageCache.delete(cacheKey);
+    imgxBitmapPageCache.set(cacheKey, entry);
+    return {
+      page,
+      bitmap: entry.bitmap,
+      decoder: entry.decoder || "bitmap-memory-cache",
+      bitmapCacheHit: true
+    };
+  };
+
+  const clearImgxBitmapPageCache = () => {
+    Array.from(imgxBitmapPageCache.keys()).forEach((cacheKey) => {
+      evictImgxBitmapCacheEntry(cacheKey);
+    });
+    imgxBitmapPagePromiseByKey.clear();
+  };
+
+  const captureImgxRuntimeBaseline = () => {
+    const canvasPrototype = HTMLCanvasElement.prototype;
+    const contextPrototype = CanvasRenderingContext2D.prototype;
+    const sourceOf = (value) =>
+      typeof value === "function" ? Function.prototype.toString.call(value) : undefined;
+    return {
+      canvasGetContext: sourceOf(canvasPrototype.getContext),
+      canvasToBlob: sourceOf(canvasPrototype.toBlob),
+      canvasToDataURL: sourceOf(canvasPrototype.toDataURL),
+      canvasCaptureStream: sourceOf(canvasPrototype.captureStream),
+      getImageData: sourceOf(contextPrototype.getImageData),
+      drawImage: sourceOf(contextPrototype.drawImage),
+      createImageBitmap: sourceOf(window.createImageBitmap),
+      blob: sourceOf(window.Blob),
+      wasmInstantiate: sourceOf(window.WebAssembly && window.WebAssembly.instantiate),
+      wasmInstantiateStreaming: sourceOf(window.WebAssembly && window.WebAssembly.instantiateStreaming)
+    };
+  };
+
+  const assertImgxRuntimeGuard = () => {
+    if (!isImgxChapter()) return;
+    const baseline = window.__IMGX_RUNTIME_BASELINE__;
+    if (!baseline) {
+      throw new Error("IMGX runtime guard baseline missing");
+    }
+    const current = captureImgxRuntimeBaseline();
+    const labels = {
+      canvasGetContext: "HTMLCanvasElement.getContext",
+      canvasToBlob: "HTMLCanvasElement.toBlob",
+      canvasToDataURL: "HTMLCanvasElement.toDataURL",
+      canvasCaptureStream: "HTMLCanvasElement.captureStream",
+      getImageData: "CanvasRenderingContext2D.getImageData",
+      drawImage: "CanvasRenderingContext2D.drawImage",
+      createImageBitmap: "createImageBitmap",
+      blob: "Blob",
+      wasmInstantiate: "WebAssembly.instantiate",
+      wasmInstantiateStreaming: "WebAssembly.instantiateStreaming"
+    };
+    const tampered = Object.keys(labels)
+      .filter((key) => baseline[key] && baseline[key] !== current[key])
+      .map((key) => labels[key]);
+    if (tampered.length) {
+      throw new Error(`IMGX viewer blocked because protected browser APIs were modified: ${tampered.join(", ")}`);
+    }
+  };
+
+  const loadImgxWasmDecoder = () => {
+    if (!imgxWasmDecoderPromise) {
+      imgxWasmDecoderPromise = import(/* @vite-ignore */ IMGX_WASM_DECODER_URL)
+        .then(async (module) => {
+          if (module && typeof module.default === "function") {
+            await module.default();
+          }
+          const decodeWithKey = module && module[IMGX_WASM_DECODE_EXPORT];
+          if (typeof decodeWithKey !== "function") {
+            throw new Error("IMGX WASM decoder missing protected export");
+          }
+          return { decodeWithKey };
+        })
+        .catch((error) => {
+          imgxWasmDecoderPromise = null;
+          throw error;
+        });
+    }
+    return imgxWasmDecoderPromise;
+  };
+
+  if (isImgxChapter() && !saveData) {
+    loadImgxWasmDecoder().catch(() => null);
+  }
+
+  const decodeImgxToWebpBytesFallback = (binary, decodeKey) => {
+    validateImgxBinary(binary);
+    const payload = binary.slice(13);
+    unshuffleImgxBytesInPlace(payload, decodeKey);
+    xorImgxBytesInPlace(payload, decodeKey);
+    return payload;
+  };
+
+  const decodeImgxToWebpBytes = async (arrayBuffer, grant, storageKey) => {
+    const binary = new Uint8Array(arrayBuffer);
+    validateImgxBinary(binary);
+    const decodeKey = unwrapImgxGrantDecodeKey(grant, storageKey);
+    if (decodeKey.byteLength !== 32) throw new Error("IMGX grant invalid");
+
+    try {
+      assertImgxRuntimeGuard();
+      const wasmModule = await loadImgxWasmDecoder();
+      const decoded = wasmModule.decodeWithKey(binary, decodeKey);
+      return {
+        webp: new Uint8Array(decoded),
+        decoder: "wasm"
+      };
+    } catch (error) {
+      console.warn("IMGX WASM decoder unavailable; using JS fallback", error);
+      return {
+        webp: decodeImgxToWebpBytesFallback(binary, decodeKey),
+        decoder: "js-fallback"
+      };
+    } finally {
+      wipeImgxBuffer(binary);
+      wipeImgxBuffer(decodeKey);
+    }
+  };
+
+  const ensureImgxDecodedPageCached = (page) => {
+    const cacheKey = buildImgxDecodedPageCacheKey(page);
+    if (!cacheKey) return Promise.resolve("");
+    if (imgxDecodedPageCache.has(cacheKey)) return Promise.resolve(cacheKey);
+    if (imgxDecodedPagePromiseByKey.has(cacheKey)) return imgxDecodedPagePromiseByKey.get(cacheKey);
+
+    const decodePromise = fetch(page.downloadUrl, { credentials: "same-origin", cache: "force-cache" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("IMGX binary fetch failed");
+        const binary = await response.arrayBuffer();
+        const decoded = await decodeImgxToWebpBytes(binary, page.grant, page.storageKey);
+        try {
+          return putCachedImgxDecodedPage({
+            page,
+            webpBytes: decoded.webp,
+            decoder: decoded.decoder
+          }) || cacheKey;
+        } finally {
+          wipeImgxBuffer(decoded.webp);
+        }
+      })
+      .finally(() => {
+        imgxDecodedPagePromiseByKey.delete(cacheKey);
+      });
+
+    imgxDecodedPagePromiseByKey.set(cacheKey, decodePromise);
+    return decodePromise;
+  };
+
+  const getDecodedImgxPage = async (page) => {
+    const cacheKey = buildImgxDecodedPageCacheKey(page);
+    const cached = getCachedImgxDecodedPageByKey({ page, cacheKey });
+    if (cached) return cached;
+
+    const resolvedCacheKey = await ensureImgxDecodedPageCached(page);
+    const decoded = getCachedImgxDecodedPageByKey({
+      page,
+      cacheKey: resolvedCacheKey || cacheKey
+    });
+    if (decoded) return decoded;
+
+    throw new Error("IMGX decoded page cache miss");
+  };
+
+  const createImgxBitmapFromWebpBytes = async (webpBytes) => {
+    const blobBytes = new Uint8Array(webpBytes.byteLength);
+    blobBytes.set(webpBytes);
+    const blob = new Blob([blobBytes.buffer], { type: "image/webp" });
+    wipeImgxBuffer(blobBytes);
+    return window.createImageBitmap(blob);
+  };
+
+  const ensureImgxBitmapPageCached = (page) => {
+    const cacheKey = buildImgxDecodedPageCacheKey(page);
+    if (!cacheKey) return Promise.resolve("");
+    if (imgxBitmapPageCache.has(cacheKey)) return Promise.resolve(cacheKey);
+    if (imgxBitmapPagePromiseByKey.has(cacheKey)) return imgxBitmapPagePromiseByKey.get(cacheKey);
+
+    const bitmapPromise = getDecodedImgxPage(page)
+      .then(async (decoded) => {
+        let bitmap = null;
+        try {
+          bitmap = await createImgxBitmapFromWebpBytes(decoded.webp);
+          const storedKey = putCachedImgxBitmapPage({
+            page,
+            bitmap,
+            decoder: decoded.decoder
+          });
+          bitmap = null;
+          return storedKey || cacheKey;
+        } finally {
+          wipeImgxBuffer(decoded.webp);
+          closeImgxBitmap(bitmap);
+        }
+      })
+      .finally(() => {
+        imgxBitmapPagePromiseByKey.delete(cacheKey);
+      });
+
+    imgxBitmapPagePromiseByKey.set(cacheKey, bitmapPromise);
+    return bitmapPromise;
+  };
+
+  const getImgxBitmapPage = async (page) => {
+    const cacheKey = buildImgxDecodedPageCacheKey(page);
+    const cached = getCachedImgxBitmapPageByKey({ page, cacheKey });
+    if (cached) return cached;
+
+    const resolvedCacheKey = await ensureImgxBitmapPageCached(page);
+    const bitmapPage = getCachedImgxBitmapPageByKey({
+      page,
+      cacheKey: resolvedCacheKey || cacheKey
+    });
+    if (bitmapPage) return bitmapPage;
+
+    throw new Error("IMGX bitmap page cache miss");
+  };
+
+  const createImgxTileRects = (width, height, tileSize = IMGX_TILE_SIZE) => {
+    const rects = [];
+    let index = 0;
+    for (let y = 0; y < height; y += tileSize) {
+      for (let x = 0; x < width; x += tileSize) {
+        rects.push({
+          index,
+          x,
+          y,
+          width: Math.min(tileSize, width - x),
+          height: Math.min(tileSize, height - y)
+        });
+        index += 1;
+      }
+    }
+    return rects;
+  };
+
+  const resetImgxRender = (img) => {
+    if (!isImgxImage(img)) return;
+    delete img.dataset.imgxRendered;
+    const layer = getImgxLayer(img);
+    if (layer) {
+      layer.replaceChildren();
+    }
+    syncImgxShellClasses(img, "placeholder");
+  };
+
+  const prepareImgxRenderSurface = ({ img, page }) => {
+    const pageWidth = Math.max(1, getImgxDimension(img, "imgxWidth", page && page.width));
+    const pageHeight = Math.max(1, getImgxDimension(img, "imgxHeight", page && page.height));
+    img.dataset.imgxWidth = String(pageWidth);
+    img.dataset.imgxHeight = String(pageHeight);
+
+    const shell = ensureImgxShell(img);
+    if (!shell) throw new Error("IMGX protected shell unavailable");
+    const layer = getImgxLayer(img);
+    if (!layer) throw new Error("IMGX canvas layer unavailable");
+
+    assertImgxRuntimeGuard();
+    return { shell, layer, pageWidth, pageHeight };
+  };
+
+  const syncImgxBitmapDimensions = ({ img, shell, bitmap, pageWidth, pageHeight }) => {
+    if (!bitmap || !shell) return;
+    if (bitmap.width !== pageWidth || bitmap.height !== pageHeight) {
+      img.dataset.imgxWidth = String(bitmap.width);
+      img.dataset.imgxHeight = String(bitmap.height);
+      shell.style.setProperty("--imgx-protected-width", `${bitmap.width}px`);
+      shell.style.setProperty("--imgx-protected-aspect", `${bitmap.width} / ${bitmap.height}`);
+      shell.style.aspectRatio = `${bitmap.width} / ${bitmap.height}`;
+    }
+  };
+
+  const createImgxProtectedCanvas = ({ width, height }) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.floor(Number(width) || 1));
+    canvas.height = Math.max(1, Math.floor(Number(height) || 1));
+    canvas.style.position = "absolute";
+    canvas.style.pointerEvents = "none";
+    canvas.style.userSelect = "none";
+    canvas.setAttribute("aria-hidden", "true");
+    canvas.setAttribute("data-imgx-protected-canvas", "true");
+    return canvas;
+  };
+
+  const renderImgxSingleCanvas = async ({ img, bitmap, page }) => {
+    const { shell, layer, pageWidth, pageHeight } = prepareImgxRenderSurface({ img, page });
+    syncImgxBitmapDimensions({ img, shell, bitmap, pageWidth, pageHeight });
+
+    const canvas = createImgxProtectedCanvas({ width: bitmap.width, height: bitmap.height });
+    canvas.style.inset = "0";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.setAttribute("data-imgx-canvas", "single");
+
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) {
+      throw new Error("Canvas 2D context unavailable");
+    }
+    context.drawImage(bitmap, 0, 0);
+
+    layer.replaceChildren(canvas);
+    img.dataset.imgxRendered = "1";
+    return 1;
+  };
+
+  const renderImgxCanvasTiles = async ({ img, bitmap, page }) => {
+    const { shell, layer, pageWidth, pageHeight } = prepareImgxRenderSurface({ img, page });
+    syncImgxBitmapDimensions({ img, shell, bitmap, pageWidth, pageHeight });
+
+    const width = bitmap.width;
+    const height = bitmap.height;
+    const rects = createImgxTileRects(width, height);
+    const fragment = document.createDocumentFragment();
+    layer.replaceChildren();
+
+    rects.forEach((rect) => {
+      const canvas = createImgxProtectedCanvas({ width: rect.width, height: rect.height });
+      canvas.style.left = `${(rect.x / width) * 100}%`;
+      canvas.style.top = `${(rect.y / height) * 100}%`;
+      canvas.style.width = `${(rect.width / width) * 100}%`;
+      canvas.style.height = `${(rect.height / height) * 100}%`;
+      canvas.setAttribute("data-imgx-tile", String(rect.index));
+
+      const context = canvas.getContext("2d", { alpha: true });
+      if (!context) {
+        throw new Error("Canvas 2D context unavailable");
+      }
+      context.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+      fragment.appendChild(canvas);
+    });
+
+    layer.appendChild(fragment);
+    img.dataset.imgxRendered = "1";
+    return rects.length;
+  };
+
+  const renderImgxBitmap = ({ img, bitmap, page }) => {
+    if (imgxRenderMode === "single") {
+      return renderImgxSingleCanvas({ img, bitmap, page });
+    }
+    return renderImgxCanvasTiles({ img, bitmap, page });
+  };
+
+  const getImgxPageIndex = (img) => {
+    const raw = Number(img && img.dataset ? img.dataset.imgxPageIndex : NaN);
+    return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : -1;
+  };
+
+  const requestImgxPageAccess = (pageIndex) => {
+    if (imgxAccessPromiseByIndex.has(pageIndex)) {
+      return imgxAccessPromiseByIndex.get(pageIndex);
+    }
+    const url = imgxAccessUrl || "";
+    const pageIndexes = [];
+    for (
+      let index = pageIndex;
+      index < Math.min(totalPages, pageIndex + imgxAccessWindowSize);
+      index += 1
+    ) {
+      if (!imgxAccessPromiseByIndex.has(index)) {
+        pageIndexes.push(index);
+      }
+    }
+    if (!pageIndexes.length) {
+      return imgxAccessPromiseByIndex.get(pageIndex) || Promise.reject(new Error("IMGX page grant missing"));
+    }
+
+    const fetchPageAccessWindow = (indexes, allowSingleRetry = true) =>
+      fetch(url, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ pageIndexes: indexes })
+      }).then(async (response) => {
+        const payload = await response.json().catch(() => null);
+        if (
+          !response.ok &&
+          allowSingleRetry &&
+          indexes.length > 1 &&
+          payload &&
+          /too many/i.test(String(payload.error || ""))
+        ) {
+          return fetchPageAccessWindow([pageIndex], false);
+        }
+        if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.pages)) {
+          throw new Error((payload && payload.error) || "IMGX access failed");
+        }
+        return payload.pages;
+      });
+
+    const batchPromise = fetchPageAccessWindow(pageIndexes);
+    pageIndexes.forEach((index) => {
+      const promise = batchPromise
+        .then((pages) => {
+          const page = pages.find((entry) => Number(entry && entry.pageIndex) === index);
+          if (!page || !page.downloadUrl || !page.grant) {
+            throw new Error("IMGX page grant missing");
+          }
+          return page;
+        })
+        .catch((error) => {
+          imgxAccessPromiseByIndex.delete(index);
+          throw error;
+        });
+      promise.catch(() => {});
+      imgxAccessPromiseByIndex.set(index, promise);
+    });
+
+    return imgxAccessPromiseByIndex.get(pageIndex);
+  };
+
+  const predecodeImgxImage = (img) => {
+    const pageIndex = getImgxPageIndex(img);
+    if (pageIndex < 0 || !imgxAccessUrl) return Promise.resolve("");
+    return requestImgxPageAccess(pageIndex)
+      .then((page) => ensureImgxDecodedPageCached(page))
+      .catch(() => "");
+  };
+
+  const prerenderImgxImage = (img) => {
+    if (!isImgxImage(img)) return;
+    const state = getLazyState(img);
+    if (state === "loaded" || state === "loading") return;
+    requestUnveil(img);
+  };
+
+  const requestImgxUnveil = (img) => {
+    const pageIndex = getImgxPageIndex(img);
+    if (pageIndex < 0) {
+      markError(img);
+      return;
+    }
+    if (!imgxAccessUrl) {
+      markError(img);
+      return;
+    }
+
+    img.dataset.lazyState = "loading";
+    img.classList.remove("is-error", "lazyerror", "lazyload");
+    img.classList.add("is-placeholder");
+    resetImgxRender(img);
+    ensureImgxShell(img);
+    syncImgxShellClasses(img, "loading");
+    img.loading = "eager";
+    img.decoding = "async";
+    scheduleLazyWatchdog(img);
+
+    requestImgxPageAccess(pageIndex)
+      .then((page) => getImgxBitmapPage(page))
+      .then(async ({ page, bitmap }) => {
+        if (!img.isConnected) return;
+        await renderImgxBitmap({
+          img,
+          bitmap,
+          page
+        });
+        if (!img.isConnected) return;
+        onImageLoaded(img);
+        markVisiblePageByImage(img);
+      })
+      .catch((error) => {
+        console.warn("IMGX page decode failed", error);
+        if (!img.isConnected) return;
+        retryLazyImage(img);
+      });
+  };
+
   const requestUnveil = (img) => {
     if (!img) return;
 
     const state = getLazyState(img);
     if (state === "loaded" || state === "loading") return;
+
+    if (isImgxImage(img)) {
+      requestImgxUnveil(img);
+      return;
+    }
 
     const src = getDeferredSrc(img);
     if (!src) return;
@@ -2974,6 +3919,7 @@ quickCommentsButtons.forEach((quickComments) => {
     img.dataset.lazyState = "idle";
     img.classList.remove("is-error", "lazyerror", "lazyloaded");
     img.classList.add("is-placeholder");
+    resetImgxRender(img);
 
     const originalSrc =
       (img.dataset.lazyOriginalSrc || img.dataset.src || "").toString().trim();
@@ -2982,9 +3928,14 @@ quickCommentsButtons.forEach((quickComments) => {
       img.dataset.src = withRetryQuery(originalSrc, `${Date.now()}-${nextRetry}`);
     }
 
-    img.src = "";
-    if (placeholderSrc) {
-      img.src = placeholderSrc;
+    if (isImgxImage(img)) {
+      ensureImgxShell(img);
+      syncImgxShellClasses(img, "placeholder");
+    } else {
+      img.src = "";
+      if (placeholderSrc) {
+        img.src = placeholderSrc;
+      }
     }
 
     const retryDelay = immediate ? 40 : retryDelayMs * nextRetry;
@@ -3015,6 +3966,9 @@ quickCommentsButtons.forEach((quickComments) => {
     if (originalSrc) {
       img.dataset.lazyOriginalSrc = originalSrc;
       img.classList.remove("lazyload");
+      if (isImgxImage(img)) {
+        ensureImgxShell(img);
+      }
     } else {
       if (getLazyState(img) === "loaded") {
         markLoaded(img);
@@ -3047,7 +4001,7 @@ quickCommentsButtons.forEach((quickComments) => {
       retryLazyImage(img);
     });
 
-    if (img.complete && (img.naturalWidth || img.getBoundingClientRect().width)) {
+    if (!isImgxImage(img) && img.complete && (img.naturalWidth || img.getBoundingClientRect().width)) {
       ensureImageVisible(img);
       markVisiblePageByImage(img);
     }
@@ -3076,6 +4030,53 @@ quickCommentsButtons.forEach((quickComments) => {
     });
   }
 
+  const setupImgxProgressiveObservers = () => {
+    if (!isImgxChapter() || typeof IntersectionObserver !== "function") return;
+    const imgxImages = orderedImages.filter((img) => isImgxImage(img));
+    if (!imgxImages.length) return;
+
+    const predecodeObserver = new IntersectionObserver(
+      (entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry || !entry.isIntersecting) return;
+          const img = entry.target;
+          if (!isImgxImage(img)) return;
+          observer.unobserve(img);
+          predecodeImgxImage(img);
+        });
+      },
+      {
+        root: null,
+        rootMargin: IMGX_PREDECODE_ROOT_MARGIN,
+        threshold: 0.01
+      }
+    );
+
+    const prerenderObserver = new IntersectionObserver(
+      (entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry || !entry.isIntersecting) return;
+          const img = entry.target;
+          if (!isImgxImage(img)) return;
+          observer.unobserve(img);
+          prerenderImgxImage(img);
+        });
+      },
+      {
+        root: null,
+        rootMargin: IMGX_PRERENDER_ROOT_MARGIN,
+        threshold: 0.01
+      }
+    );
+
+    imgxImages.forEach((img) => {
+      predecodeObserver.observe(img);
+      prerenderObserver.observe(img);
+    });
+  };
+
+  setupImgxProgressiveObservers();
+
   scheduleDurationTracking();
   updatePageIndicators(activePageIndex);
 
@@ -3086,22 +4087,39 @@ quickCommentsButtons.forEach((quickComments) => {
     applyReaderModeImageSizing();
   };
 
+  const primeInitialImgxPages = () => {
+    if (!isImgxChapter()) return;
+    orderedImages.slice(0, Math.min(3, orderedImages.length)).forEach((img) => {
+      enqueueLookAheadImage(img);
+    });
+    drainLookAheadQueue();
+  };
+
+  primeInitialImgxPages();
   syncActiveWindow();
   primeInitialImages();
   setReaderMode(readerMode, { persist: false, behavior: "auto" });
-  window.requestAnimationFrame(primeInitialImages);
+  window.requestAnimationFrame(() => {
+    primeInitialImgxPages();
+    primeInitialImages();
+  });
   window.addEventListener("load", primeInitialImages, { once: true });
   window.addEventListener("pageshow", () => {
+    primeInitialImgxPages();
     primeInitialImages();
     rescueStalledLoadingImages();
     scheduleLookAheadDrain(80);
     scheduleActiveWindowSync();
   });
-  window.addEventListener("pagehide", () => {
+  window.addEventListener("pagehide", (event) => {
     stopHorizontalScrollAnimation();
     lazyImages.forEach((img) => {
       clearLazyWatchdog(img);
+      resetImgxRender(img);
     });
+    if (!event || event.persisted !== true) {
+      clearImgxBitmapPageCache();
+    }
   });
   window.addEventListener(
     "scroll",

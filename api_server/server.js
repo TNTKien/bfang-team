@@ -8,9 +8,12 @@ const multer = require("multer");
 const { Pool } = require("pg");
 const sharp = require("sharp");
 const { createConvertChapterPageToWebp } = require("./utils/chapter-page-webp");
+const { IMGX_VERSION } = require("./utils/imgx/constants");
+const { decodeImgxForVerification, encodeImgx, imageIdFromStorageKey } = require("./utils/imgx/server");
 const {
   CopyObjectCommand,
   DeleteObjectsCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
@@ -59,6 +62,43 @@ const MEDIA_UPLOAD_PROOF_PATTERN = /^v1\.(\d{10,14})\.([a-f0-9]{64})$/;
 const MEDIA_UPLOAD_KIND_PATTERN = /^(user_avatar|team_avatar|team_cover|manga_cover)$/;
 const MEDIA_UPLOAD_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*\.webp$/i;
 const MEDIA_UPLOAD_MAX_SIZE_BYTES = 6 * 1024 * 1024;
+const IMGX_ENABLED = toBooleanFlag(process.env.IMGX_ENABLED, false);
+const IMGX_UPLOAD_MODE = (process.env.IMGX_UPLOAD_MODE || (IMGX_ENABLED ? "imgx" : "legacy"))
+  .toString()
+  .trim()
+  .toLowerCase();
+const IMGX_SECRET = (process.env.IMGX_SECRET || "").toString();
+const IMGX_SESSION_HMAC_SECRET = (
+  process.env.IMGX_SESSION_HMAC_SECRET ||
+  process.env.IMGX_HMAC_SECRET ||
+  process.env.SESSION_SECRET ||
+  ""
+).toString();
+const IMGX_STORAGE_EXTENSIONS = Object.freeze(["js", "bin"]);
+function normalizeImgxStorageExt(value) {
+  const normalized = (value == null ? "" : String(value))
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+/, "");
+  if (normalized === "js" || normalized === "bin") return normalized;
+  if (normalized) {
+    console.warn(`[api_server] Invalid IMGX_STORAGE_EXT="${normalized}". Falling back to "js".`);
+  }
+  return "js";
+}
+const IMGX_STORAGE_EXT = normalizeImgxStorageExt(process.env.IMGX_STORAGE_EXT);
+const CHAPTER_PAGE_PREVIEW_MAX_WIDTH = Math.max(
+  64,
+  Math.min(640, Math.floor(Number(process.env.CHAPTER_PAGE_PREVIEW_MAX_WIDTH) || 160))
+);
+const CHAPTER_PAGE_PREVIEW_MAX_HEIGHT = Math.max(
+  96,
+  Math.min(960, Math.floor(Number(process.env.CHAPTER_PAGE_PREVIEW_MAX_HEIGHT) || 240))
+);
+const CHAPTER_PAGE_PREVIEW_WEBP_QUALITY = Math.max(
+  30,
+  Math.min(82, Math.floor(Number(process.env.CHAPTER_PAGE_PREVIEW_WEBP_QUALITY) || 48))
+);
 const MANGA_COVER_VARIANTS = Object.freeze([
   { key: "standard", suffix: "", width: 358, height: 477, quality: 95 },
   { key: "medium", suffix: "-md", width: 262, height: 349, quality: 95 },
@@ -88,6 +128,10 @@ if (!MEDIA_UPLOAD_SHARED_SECRET) {
   console.warn("[api_server] MEDIA_UPLOAD_SHARED_SECRET is empty. Internal media upload endpoints are disabled.");
 }
 
+if (IMGX_ENABLED && IMGX_UPLOAD_MODE === "imgx" && (!IMGX_SECRET || !IMGX_SESSION_HMAC_SECRET)) {
+  console.warn("[api_server] IMGX upload mode is enabled but IMGX_SECRET/IMGX_SESSION_HMAC_SECRET is missing.");
+}
+
 if (!S3_MEDIA_BUCKET) {
   console.warn("[api_server] S3_MEDIA_BUCKET is empty. Internal media upload endpoints are disabled.");
 }
@@ -111,6 +155,18 @@ const app = express();
 app.disable("x-powered-by");
 
 const convertChapterPageToWebp = createConvertChapterPageToWebp({ sharp });
+const convertChapterPageToWebpWithMetadata =
+  typeof convertChapterPageToWebp.withMetadata === "function"
+    ? convertChapterPageToWebp.withMetadata
+    : async (inputBuffer, options = {}) => {
+        const buffer = await convertChapterPageToWebp(inputBuffer, options);
+        const metadata = buffer ? await sharp(buffer).metadata() : {};
+        return {
+          buffer,
+          width: Number(metadata && metadata.width) || 0,
+          height: Number(metadata && metadata.height) || 0
+        };
+      };
 
 function normalizeOrigin(value) {
   const raw = (value == null ? "" : String(value)).trim();
@@ -440,9 +496,17 @@ function parseMangaIdFromChapterStoragePrefix(prefix) {
   return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0;
 }
 
-async function findActiveChapterReferencesForStoragePrefix(prefix) {
+const normalizeIgnoredChapterIds = (values) =>
+  new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => Math.floor(Number(value) || 0))
+      .filter((value) => value > 0)
+  );
+
+async function findActiveChapterReferencesForStoragePrefix(prefix, { ignoreChapterIds = [] } = {}) {
   const safePrefix = normalizeS3Key(prefix);
   if (!safePrefix) return [];
+  const ignoredIds = normalizeIgnoredChapterIds(ignoreChapterIds);
   const mangaId = parseMangaIdFromChapterStoragePrefix(safePrefix);
   const rows = mangaId > 0
     ? await dbAll(
@@ -465,6 +529,8 @@ async function findActiveChapterReferencesForStoragePrefix(prefix) {
       );
 
   return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const rowId = Math.floor(Number(row && row.id) || 0);
+    if (rowId > 0 && ignoredIds.has(rowId)) return false;
     const storedPrefix = normalizeS3Key(row && row.pages_prefix);
     if (storedPrefix && storedPrefix === safePrefix) return true;
     const numberText = formatChapterNumberValue(row && row.number);
@@ -610,6 +676,11 @@ function readChapterDraftProof(req) {
   return String(req.get("x-chapter-draft-proof") || "").trim();
 }
 
+function readChapterTransferProof(req) {
+  if (!req || typeof req.get !== "function") return "";
+  return String(req.get("x-chapter-transfer-proof") || "").trim();
+}
+
 function buildChapterDraftProofSignature(token, expiresAtText) {
   const safeToken = (token == null ? "" : String(token)).trim();
   const safeExpiresAt = (expiresAtText == null ? "" : String(expiresAtText)).trim();
@@ -661,6 +732,91 @@ function verifyChapterDraftProof({ token, proof }) {
   }
 
   return { ok: true, expiresAt };
+}
+
+function normalizeChapterTransferTargetMode(value) {
+  const normalized = (value == null ? "" : String(value)).trim().toLowerCase();
+  if (normalized === "imgx") return IMGX_STORAGE_EXT === "bin" ? "imgx-bin" : "imgx-js";
+  if (normalized === "imgx-js" || normalized === "js") return "imgx-js";
+  if (normalized === "imgx-bin" || normalized === "bin") return "imgx-bin";
+  if (normalized === "legacy" || normalized === "webp") return "legacy";
+  return "";
+}
+
+function isChapterStorageKey(value) {
+  const safeKey = normalizeS3Key(value);
+  const safePrefix = normalizeS3Key(S3_CHAPTER_PREFIX || "chapters") || "chapters";
+  return Boolean(safeKey && safePrefix && safeKey.startsWith(`${safePrefix}/`));
+}
+
+function buildChapterTransferProofSignature({ sourceKey, destinationKey, targetMode, expiresAtText }) {
+  const safeSourceKey = normalizeS3Key(sourceKey);
+  const safeDestinationKey = normalizeS3Key(destinationKey);
+  const safeTargetMode = normalizeChapterTransferTargetMode(targetMode);
+  const safeExpiresAt = (expiresAtText == null ? "" : String(expiresAtText)).trim();
+  if (
+    !CHAPTER_UPLOAD_SHARED_SECRET ||
+    !isChapterStorageKey(safeSourceKey) ||
+    !isChapterStorageKey(safeDestinationKey) ||
+    !safeTargetMode ||
+    !/^\d{10,14}$/.test(safeExpiresAt)
+  ) {
+    return "";
+  }
+  const payload = `${safeSourceKey}.${safeDestinationKey}.${safeTargetMode}.${safeExpiresAt}`;
+  return crypto.createHmac("sha256", CHAPTER_UPLOAD_SHARED_SECRET).update(payload).digest("hex");
+}
+
+function verifyChapterTransferProof({ proof, sourceKey, destinationKey, targetMode }) {
+  const safeSourceKey = normalizeS3Key(sourceKey);
+  const safeDestinationKey = normalizeS3Key(destinationKey);
+  const safeTargetMode = normalizeChapterTransferTargetMode(targetMode);
+  if (!isChapterStorageKey(safeSourceKey) || !isChapterStorageKey(safeDestinationKey) || !safeTargetMode) {
+    return { ok: false, statusCode: 400, error: "Invalid chapter transfer payload" };
+  }
+  if (!CHAPTER_UPLOAD_SHARED_SECRET) {
+    return { ok: false, statusCode: 503, error: "Chapter transfer secret is not configured" };
+  }
+
+  const rawProof = (proof == null ? "" : String(proof)).trim();
+  const matched = CHAPTER_DRAFT_PROOF_PATTERN.exec(rawProof);
+  if (!matched) {
+    return { ok: false, statusCode: 401, error: "Chapter transfer proof is invalid" };
+  }
+
+  const expiresAtText = matched[1];
+  const providedSignature = matched[2].toLowerCase();
+  const expiresAt = Number(expiresAtText);
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0 || Date.now() > expiresAt) {
+    return { ok: false, statusCode: 401, error: "Chapter transfer proof has expired" };
+  }
+
+  const expectedSignature = buildChapterTransferProofSignature({
+    sourceKey: safeSourceKey,
+    destinationKey: safeDestinationKey,
+    targetMode: safeTargetMode,
+    expiresAtText
+  });
+  if (!expectedSignature) {
+    return { ok: false, statusCode: 401, error: "Chapter transfer proof is invalid" };
+  }
+
+  const expectedBuffer = Buffer.from(expectedSignature, "hex");
+  const providedBuffer = Buffer.from(providedSignature, "hex");
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return { ok: false, statusCode: 401, error: "Chapter transfer proof is invalid" };
+  }
+  if (!crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+    return { ok: false, statusCode: 401, error: "Chapter transfer proof is invalid" };
+  }
+
+  return {
+    ok: true,
+    sourceKey: safeSourceKey,
+    destinationKey: safeDestinationKey,
+    targetMode: safeTargetMode,
+    expiresAt
+  };
 }
 
 function readMediaUploadProof(req) {
@@ -783,6 +939,63 @@ function isLikelyWebpBuffer(value) {
   if (riffTag !== "RIFF" || webpTag !== "WEBP") return false;
   if (chunkTag !== "VP8 " && chunkTag !== "VP8L" && chunkTag !== "VP8X") return false;
   return true;
+}
+
+function isImgxUploadEnabled() {
+  return Boolean(IMGX_ENABLED && IMGX_UPLOAD_MODE === "imgx" && IMGX_SECRET && IMGX_SESSION_HMAC_SECRET);
+}
+
+function buildChapterPagePreviewStorageKey(storageKey) {
+  const safeKey = normalizeS3Key(storageKey);
+  if (!safeKey) return "";
+  if (/\.preview\.webp$/i.test(safeKey)) return safeKey;
+  const slashIndex = safeKey.lastIndexOf("/");
+  const dir = slashIndex >= 0 ? safeKey.slice(0, slashIndex + 1) : "";
+  const fileName = slashIndex >= 0 ? safeKey.slice(slashIndex + 1) : safeKey;
+  const stem = fileName.replace(/\.[^.]+$/, "").trim();
+  if (!stem) return "";
+  return `${dir}${stem}.preview.webp`;
+}
+
+function buildChapterPagePreviewUrl(storageKey) {
+  const safeKey = normalizeS3Key(storageKey);
+  if (!safeKey || !CHAPTER_CDN_BASE_URL) return "";
+  return `${CHAPTER_CDN_BASE_URL}/${safeKey}`;
+}
+
+async function createChapterPagePreviewWebp(webpBuffer) {
+  if (!webpBuffer || !webpBuffer.byteLength) return null;
+  const output = await sharp(webpBuffer)
+    .rotate()
+    .resize({
+      width: CHAPTER_PAGE_PREVIEW_MAX_WIDTH,
+      height: CHAPTER_PAGE_PREVIEW_MAX_HEIGHT,
+      fit: "inside",
+      withoutEnlargement: true
+    })
+    .webp({ quality: CHAPTER_PAGE_PREVIEW_WEBP_QUALITY, effort: 4 })
+    .toBuffer({ resolveWithObject: true });
+  const info = output && output.info ? output.info : {};
+  const buffer = output && output.data ? output.data : null;
+  if (!buffer || !buffer.byteLength) return null;
+  return {
+    buffer,
+    width: Number(info.width) || 0,
+    height: Number(info.height) || 0
+  };
+}
+
+function encodeWebpForImgxStorage({ webpBuffer, width, height, storageKey }) {
+  const safeStorageKey = normalizeS3Key(storageKey);
+  if (!safeStorageKey) throw new Error("Invalid IMGX storage key");
+  if (!isImgxUploadEnabled()) throw new Error("IMGX upload is not enabled");
+  return encodeImgx({
+    webp: webpBuffer,
+    width: Math.max(1, Math.floor(Number(width) || 0)),
+    height: Math.max(1, Math.floor(Number(height) || 0)),
+    imageId: imageIdFromStorageKey(safeStorageKey),
+    secret: IMGX_SECRET
+  });
 }
 
 async function isMangaTaggedWebtoon(mangaId) {
@@ -1236,10 +1449,10 @@ async function deleteAllByPrefix(prefix) {
   return deleteObjectsByKeys(keys);
 }
 
-async function deleteAllByPrefixIfUnreferenced(prefix, { reason = "" } = {}) {
+async function deleteAllByPrefixIfUnreferenced(prefix, { reason = "", ignoreChapterIds = [] } = {}) {
   const safePrefix = normalizeS3Key(prefix);
   if (!safePrefix) return 0;
-  const references = await findActiveChapterReferencesForStoragePrefix(safePrefix);
+  const references = await findActiveChapterReferencesForStoragePrefix(safePrefix, { ignoreChapterIds });
   if (references.length) {
     console.warn("[api_server] skip storage prefix delete because an active chapter still references it", {
       prefix: safePrefix,
@@ -1254,7 +1467,7 @@ async function deleteAllByPrefixIfUnreferenced(prefix, { reason = "" } = {}) {
   return deleteAllByPrefix(safePrefix);
 }
 
-async function putWebpObject({ bucket, key, buffer }) {
+async function putObjectBuffer({ bucket, key, buffer, contentType }) {
   const safeBucket = (bucket || "").toString().trim();
   const safeKey = normalizeS3Key(key);
   if (!safeBucket || !safeKey) {
@@ -1265,9 +1478,13 @@ async function putWebpObject({ bucket, key, buffer }) {
       Bucket: safeBucket,
       Key: safeKey,
       Body: buffer,
-      ContentType: "image/webp"
+      ContentType: contentType || "application/octet-stream"
     })
   );
+}
+
+async function putWebpObject({ bucket, key, buffer }) {
+  await putObjectBuffer({ bucket, key, buffer, contentType: "image/webp" });
 }
 
 async function putWebpPage({ key, buffer }) {
@@ -1276,6 +1493,153 @@ async function putWebpPage({ key, buffer }) {
     throw new Error("Invalid object key");
   }
   await putWebpObject({ bucket: S3_BUCKET, key: safeKey, buffer });
+}
+
+async function putImgxPage({ key, webpBuffer, width, height }) {
+  const safeKey = normalizeS3Key(key);
+  if (!safeKey) {
+    throw new Error("Invalid object key");
+  }
+  const binary = encodeWebpForImgxStorage({
+    webpBuffer,
+    width,
+    height,
+    storageKey: safeKey
+  });
+  await putObjectBuffer({
+    bucket: S3_BUCKET,
+    key: safeKey,
+    buffer: binary,
+    contentType: "application/octet-stream"
+  });
+  return {
+    fileName: safeKey,
+    storageKey: safeKey,
+    byteSize: binary.byteLength
+  };
+}
+
+async function putChapterPagePreview({ sourceWebpBuffer, sourceKey }) {
+  const previewKey = buildChapterPagePreviewStorageKey(sourceKey);
+  if (!previewKey) return null;
+  const preview = await createChapterPagePreviewWebp(sourceWebpBuffer);
+  if (!preview || !preview.buffer) return null;
+  await putWebpPage({ key: previewKey, buffer: preview.buffer });
+  return {
+    fileName: previewKey,
+    storageKey: previewKey,
+    url: buildChapterPagePreviewUrl(previewKey),
+    width: preview.width,
+    height: preview.height,
+    byteSize: preview.buffer.byteLength
+  };
+}
+
+async function streamToBuffer(stream) {
+  if (!stream) return Buffer.alloc(0);
+  if (typeof stream.transformToByteArray === "function") {
+    return Buffer.from(await stream.transformToByteArray());
+  }
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function getS3ObjectBuffer(key) {
+  const safeKey = normalizeS3Key(key);
+  if (!safeKey) {
+    throw new Error("Invalid object key");
+  }
+  const output = await s3.send(
+    new GetObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: safeKey
+    })
+  );
+  return streamToBuffer(output && output.Body);
+}
+
+function isImgxStorageKey(value) {
+  return /\.(?:bin|js)$/i.test(normalizeS3Key(value));
+}
+
+function isImgxDecodeReady() {
+  return Boolean(IMGX_SECRET);
+}
+
+async function readChapterObjectAsWebp({ key }) {
+  const safeKey = normalizeS3Key(key);
+  if (!safeKey) {
+    throw new Error("Invalid source key");
+  }
+  const buffer = await getS3ObjectBuffer(safeKey);
+  if (isImgxStorageKey(safeKey)) {
+    if (!isImgxDecodeReady()) throw new Error("IMGX secret is not configured");
+    const decoded = decodeImgxForVerification(buffer, imageIdFromStorageKey(safeKey), IMGX_SECRET);
+    return {
+      webpBuffer: Buffer.from(decoded.webp),
+      width: Number(decoded.width) || 1,
+      height: Number(decoded.height) || 1
+    };
+  }
+  const metadata = buffer ? await sharp(buffer).metadata() : {};
+  return {
+    webpBuffer: buffer,
+    width: Number(metadata && metadata.width) || 1,
+    height: Number(metadata && metadata.height) || 1
+  };
+}
+
+async function transferChapterPageObject({ sourceKey, destinationKey, targetMode }) {
+  const safeSource = normalizeS3Key(sourceKey);
+  const safeDestination = normalizeS3Key(destinationKey);
+  const safeTargetMode = normalizeChapterTransferTargetMode(targetMode);
+  if (!safeSource || !safeDestination || !safeTargetMode) {
+    throw new Error("Invalid chapter transfer payload");
+  }
+
+  if (safeTargetMode === "legacy" && !isImgxStorageKey(safeSource)) {
+    await copyS3Object({ sourceKey: safeSource, destinationKey: safeDestination });
+    return {
+      storageKey: safeDestination,
+      fileName: safeDestination,
+      targetMode: safeTargetMode,
+      copied: true
+    };
+  }
+
+  const source = await readChapterObjectAsWebp({ key: safeSource });
+  if (safeTargetMode === "legacy") {
+    await putWebpPage({ key: safeDestination, buffer: source.webpBuffer });
+    return {
+      storageKey: safeDestination,
+      fileName: safeDestination,
+      targetMode: safeTargetMode,
+      byteSize: source.webpBuffer ? source.webpBuffer.byteLength : 0
+    };
+  }
+
+  if (!isImgxUploadEnabled()) {
+    throw new Error("IMGX upload is not enabled");
+  }
+  const stored = await putImgxPage({
+    key: safeDestination,
+    webpBuffer: source.webpBuffer,
+    width: source.width,
+    height: source.height
+  });
+  const preview = await putChapterPagePreview({
+    sourceWebpBuffer: source.webpBuffer,
+    sourceKey: safeDestination
+  });
+  return {
+    ...stored,
+    targetMode: safeTargetMode,
+    previewFileName: preview && preview.fileName ? preview.fileName : "",
+    previewUrl: preview && preview.url ? preview.url : ""
+  };
 }
 
 async function headS3Object(key) {
@@ -1604,6 +1968,37 @@ app.post("/v1/internal/media/upload", (req, res) => {
   });
 });
 
+app.post("/v1/internal/chapter-pages/transfer", async (req, res) => {
+  try {
+    const sourceKey = req.body && req.body.sourceKey ? String(req.body.sourceKey) : "";
+    const destinationKey = req.body && req.body.destinationKey ? String(req.body.destinationKey) : "";
+    const targetMode = req.body && req.body.targetMode ? String(req.body.targetMode) : "";
+    const proofCheck = verifyChapterTransferProof({
+      proof: readChapterTransferProof(req),
+      sourceKey,
+      destinationKey,
+      targetMode
+    });
+    if (!proofCheck.ok) {
+      return jsonError(res, proofCheck.statusCode || 401, proofCheck.error || "Chapter transfer proof is invalid");
+    }
+
+    const result = await runWithRetry(
+      () =>
+        transferChapterPageObject({
+          sourceKey: proofCheck.sourceKey,
+          destinationKey: proofCheck.destinationKey,
+          targetMode: proofCheck.targetMode
+        }),
+      2
+    );
+    return res.json({ ok: true, transfer: result });
+  } catch (err) {
+    console.error("[api_server] /v1/internal/chapter-pages/transfer failed", err);
+    return jsonError(res, 500, "Failed to transfer chapter page");
+  }
+});
+
 app.get("/v1/bootstrap", requireApiKey, async (req, res) => {
   try {
     const memberships = await listApprovedMemberships(req.actor.userId);
@@ -1775,12 +2170,13 @@ app.post(
 
       const isWebtoonManga = await isMangaTaggedWebtoon(draftMangaId);
 
-      let webpBuffer = null;
+      let converted = null;
       try {
-        webpBuffer = await convertChapterPageToWebp(req.file.buffer, { isWebtoon: isWebtoonManga });
+        converted = await convertChapterPageToWebpWithMetadata(req.file.buffer, { isWebtoon: isWebtoonManga });
       } catch (_err) {
         return jsonError(res, 400, "Invalid image file");
       }
+      const webpBuffer = converted && converted.buffer ? converted.buffer : null;
       if (!isLikelyWebpBuffer(webpBuffer)) {
         return jsonError(res, 400, "Failed to convert image to WebP");
       }
@@ -1790,7 +2186,8 @@ app.post(
         return jsonError(res, 500, "Draft prefix is invalid");
       }
 
-      const fileName = normalizeS3Key(`${pagesPrefix}/${pageId}.webp`);
+      const protectedUpload = isImgxUploadEnabled();
+      const fileName = normalizeS3Key(`${pagesPrefix}/${pageId}.${protectedUpload ? IMGX_STORAGE_EXT : "webp"}`);
       if (!fileName) {
         return jsonError(res, 500, "Draft file key is invalid");
       }
@@ -1800,10 +2197,39 @@ app.post(
         return jsonError(res, 404, "Draft not found or expired");
       }
 
+      if (protectedUpload) {
+        const stored = await runWithRetry(
+          () =>
+            putImgxPage({
+              key: fileName,
+              webpBuffer,
+              width: converted.width,
+              height: converted.height
+            }),
+          2
+        );
+        const preview = await runWithRetry(
+          () => putChapterPagePreview({ sourceWebpBuffer: webpBuffer, sourceKey: fileName }),
+          2
+        );
+        const previewUrl = preview && preview.url ? preview.url : "";
+        return res.json({
+          ok: true,
+          id: pageId,
+          fileName: stored.fileName || fileName,
+          storageKey: stored.storageKey || fileName,
+          previewFileName: preview && preview.fileName ? preview.fileName : "",
+          previewUrl,
+          url: previewUrl,
+          protected: true,
+          codecVersion: IMGX_VERSION
+        });
+      }
+
       await runWithRetry(() => putWebpPage({ key: fileName, buffer: webpBuffer }), 2);
 
       const url = CHAPTER_CDN_BASE_URL ? `${CHAPTER_CDN_BASE_URL}/${fileName}` : "";
-      return res.json({ ok: true, id: pageId, fileName, url });
+      return res.json({ ok: true, id: pageId, fileName, url, protected: false });
     } catch (err) {
       console.error("[api_server] /v1/chapter-drafts/:token/pages/upload failed", err);
       return jsonError(res, 500, "Failed to upload draft page");
@@ -1838,8 +2264,10 @@ app.post("/v1/chapter-drafts/:token/pages/delete", async (req, res) => {
       return jsonError(res, 500, "Draft prefix is invalid");
     }
 
-    const fileName = normalizeS3Key(`${pagesPrefix}/${pageId}.webp`);
-    if (!fileName) {
+    const legacyName = normalizeS3Key(`${pagesPrefix}/${pageId}.webp`);
+    const imgxNames = IMGX_STORAGE_EXTENSIONS.map((extension) => normalizeS3Key(`${pagesPrefix}/${pageId}.${extension}`));
+    const previewNames = imgxNames.map((key) => buildChapterPagePreviewStorageKey(key)).filter(Boolean);
+    if (!legacyName || imgxNames.some((key) => !key)) {
       return jsonError(res, 500, "Draft file key is invalid");
     }
 
@@ -1848,7 +2276,10 @@ app.post("/v1/chapter-drafts/:token/pages/delete", async (req, res) => {
       return jsonError(res, 404, "Draft not found or expired");
     }
 
-    const deleted = await runWithRetry(() => deleteObjectsByKeys([fileName]), 1);
+    const deleted = await runWithRetry(
+      () => deleteObjectsByKeys(Array.from(new Set([legacyName, ...imgxNames, ...previewNames]))),
+      1
+    );
     return res.json({ ok: true, deleted });
   } catch (err) {
     console.error("[api_server] /v1/chapter-drafts/:token/pages/delete failed", err);
@@ -2135,6 +2566,7 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
               group_name = $4,
               pages_prefix = $5,
               pages_ext = 'webp',
+              page_delivery_mode = 'legacy',
               pages_file_prefix = $6,
               pages_updated_at = $7,
               is_oneshot = $8,
@@ -2170,6 +2602,7 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
               group_name,
               pages_prefix,
               pages_ext,
+              page_delivery_mode,
               pages_file_prefix,
               pages_updated_at,
               is_oneshot,
@@ -2179,7 +2612,7 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
               processing_pages_json,
               processing_updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'webp', $8, $9, $10, NULL, NULL, NULL, NULL, NULL)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'webp', 'legacy', $8, $9, $10, NULL, NULL, NULL, NULL, NULL)
             RETURNING id
           `,
           [
@@ -2235,7 +2668,8 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
 
     if (session.existingPrefix && session.existingPrefix !== session.targetPrefix) {
       deleteAllByPrefixIfUnreferenced(session.existingPrefix, {
-        reason: "api-upload-existing-prefix-cleanup"
+        reason: "api-upload-existing-prefix-cleanup",
+        ignoreChapterIds: [result.chapterId || session.existingChapterId]
       }).catch(() => null);
     }
 
@@ -2253,6 +2687,7 @@ app.post("/v1/uploads/:sessionId/complete", requireApiKey, async (req, res) => {
         pages: result.pages,
         pagesPrefix: result.pagesPrefix,
         pagesExt: "webp",
+        pageDeliveryMode: "legacy",
         pagesFilePrefix: result.pagesFilePrefix || "",
         pageFilePrefix: result.pagesFilePrefix || ""
       }

@@ -39,6 +39,7 @@ const registerSiteRoutes = (app, deps) => {
     clearAllAuthSessionState,
     clearUserAuthSession,
     createMentionNotificationsForComment,
+    createImgxPageGrant,
     crypto,
     dbAll,
     dbGet,
@@ -56,6 +57,7 @@ const registerSiteRoutes = (app, deps) => {
     formatTimeAgo,
     fs,
     getB2Config,
+    getImgxConfig,
     getGenreStats,
     getSqlRedisCacheVersion,
     getUserApiKeyMeta,
@@ -70,6 +72,7 @@ const registerSiteRoutes = (app, deps) => {
     isForumPageAvailable,
     isOauthProviderEnabled,
     isServerSessionVersionMismatch,
+    isImgxReady,
     isUploadedAvatarUrl,
     adultContentControlEnabled,
     listAuthIdentityRowsForUser,
@@ -251,6 +254,8 @@ const registerSiteRoutes = (app, deps) => {
     return `${reasonLabel} • ${compactNote.slice(0, 217)}...`;
   };
   const chapterUnlockAttemptMap = new Map();
+  const imgxPageAccessRateMap = new Map();
+  const IMGX_PAGE_ACCESS_RATE_MAP_MAX_SIZE = 12000;
   const CHAPTER_VIEW_TOKEN_SECRET =
     (process.env.CHAPTER_VIEW_SECRET || process.env.SESSION_SECRET || `${SEO_SITE_NAME}-chapter-view`)
       .toString()
@@ -1379,6 +1384,101 @@ const registerSiteRoutes = (app, deps) => {
     const pageName = String(Math.floor(safePageNumber)).padStart(safePadLength, "0");
     const normalizedFilePrefix = normalizeChapterPageFilePrefix(pageFilePrefix);
     return normalizedFilePrefix ? `${pageName}_${normalizedFilePrefix}.${extension}` : `${pageName}.${extension}`;
+  };
+
+  const normalizeChapterDeliveryMode = (chapterRow) => {
+    const mode = (chapterRow && chapterRow.page_delivery_mode ? String(chapterRow.page_delivery_mode) : "")
+      .trim()
+      .toLowerCase();
+    const ext = (chapterRow && chapterRow.pages_ext ? String(chapterRow.pages_ext) : "")
+      .trim()
+      .toLowerCase();
+    if (mode === "imgx" || ext === "bin" || ext === "js") return "imgx";
+    return "legacy";
+  };
+
+  const isImgxChapterRow = (chapterRow) => normalizeChapterDeliveryMode(chapterRow) === "imgx";
+
+  const buildChapterImgxPageStorageKey = ({ chapterRow, pageIndex }) => {
+    if (!chapterRow || !chapterRow.pages_prefix) return "";
+    const pageCount = Math.max(Number(chapterRow.pages) || 0, 0);
+    const index = Number(pageIndex);
+    if (!Number.isFinite(index) || index < 0 || index >= pageCount) return "";
+    const pageNumber = Math.floor(index) + 1;
+    const pagesExt = (chapterRow.pages_ext || "").toString().trim().toLowerCase();
+    const pageFileName = buildChapterPageAssetFileName({
+      pageNumber,
+      padLength: Math.max(3, String(pageCount).length),
+      pagesExt: pagesExt === "js" || pagesExt === "bin" ? pagesExt : "bin",
+      pageFilePrefix: chapterRow.pages_file_prefix
+    });
+    if (!pageFileName) return "";
+    return `${String(chapterRow.pages_prefix).trim()}/${pageFileName}`;
+  };
+
+  const buildImgxPageAccessPayload = ({ chapterRow, pageIndexes, cdnBaseUrl, sessionId, imgxConfig }) => {
+    const baseUrl = (cdnBaseUrl || "").toString().trim().replace(/\/+$/, "");
+    if (!baseUrl || !Array.isArray(pageIndexes) || typeof createImgxPageGrant !== "function") return [];
+
+    return pageIndexes.map((pageIndexValue) => {
+      const pageIndex = Math.floor(Number(pageIndexValue));
+      if (!Number.isFinite(pageIndex) || pageIndex < 0) return null;
+      const storageKey = buildChapterImgxPageStorageKey({ chapterRow, pageIndex });
+      if (!storageKey) return null;
+      return {
+        pageIndex,
+        pageNumber: pageIndex + 1,
+        storageKey,
+        downloadUrl: cacheBust(`${baseUrl}/${storageKey}`, chapterRow.pages_updated_at),
+        grant: createImgxPageGrant({ storageKey, sessionId, imgxConfig })
+      };
+    }).filter(Boolean);
+  };
+
+  const getRequestSessionKey = (req) =>
+    (req && (req.sessionID || (req.session && req.session.id)) ? String(req.sessionID || req.session.id) : "");
+
+  const getRequestIpKey = (req) =>
+    (req && (req.ip || (req.connection && req.connection.remoteAddress))
+      ? String(req.ip || req.connection.remoteAddress)
+      : "");
+
+  const checkImgxPageAccessRateLimit = ({ req, chapterId, pageCount }) => {
+    const config = getImgxConfig ? getImgxConfig() : {};
+    const now = Date.now();
+    const windowMs = Math.max(1000, Math.floor(Number(config && config.rateLimitWindowMs) || 60000));
+    const maxHits = Math.max(1, Math.floor(Number(config && config.rateLimitMax) || 120));
+    const hitCount = Math.max(1, Math.floor(Number(pageCount) || 1));
+    const key = [
+      getRequestSessionKey(req),
+      getRequestIpKey(req),
+      Math.max(0, Math.floor(Number(chapterId) || 0))
+    ].join("|");
+
+    imgxPageAccessRateMap.forEach((entry, entryKey) => {
+      if (!entry || now - Number(entry.windowStart || 0) > windowMs * 2) {
+        imgxPageAccessRateMap.delete(entryKey);
+      }
+    });
+
+    let entry = imgxPageAccessRateMap.get(key);
+    if (!entry || now - Number(entry.windowStart || 0) > windowMs) {
+      entry = { windowStart: now, count: 0 };
+    }
+    entry.count = Math.max(0, Math.floor(Number(entry.count) || 0)) + hitCount;
+    imgxPageAccessRateMap.set(key, entry);
+
+    if (imgxPageAccessRateMap.size > IMGX_PAGE_ACCESS_RATE_MAP_MAX_SIZE) {
+      const overflow = imgxPageAccessRateMap.size - IMGX_PAGE_ACCESS_RATE_MAP_MAX_SIZE;
+      Array.from(imgxPageAccessRateMap.keys()).slice(0, overflow).forEach((entryKey) => {
+        imgxPageAccessRateMap.delete(entryKey);
+      });
+    }
+
+    return {
+      ok: entry.count <= maxHits,
+      retryAfterMs: Math.max(1000, windowMs - (now - entry.windowStart))
+    };
   };
 
   const buildChapterViewTrackToken = ({ chapterId, startedAt, nonce }) => {
@@ -14457,6 +14557,7 @@ const registerSiteRoutes = (app, deps) => {
           c.pages_prefix,
           c.pages_file_prefix,
           c.pages_ext,
+          c.page_delivery_mode,
           c.pages_updated_at,
           c.processing_state,
           c.processing_error,
@@ -14575,8 +14676,11 @@ const registerSiteRoutes = (app, deps) => {
         ? Math.min(100, Math.max(0, Math.floor((Math.min(processingDonePages, processingTotalPages) / processingTotalPages) * 100)))
         : 0;
       const isProcessing = processingState === "processing";
+      if (canAccessChapterContent && !isProcessing && isImgxChapterRow(chapterRow)) {
+        return res.redirect(302, `/manga/${encodeURIComponent(mangaRow.slug)}/chapters/${encodeURIComponent(String(chapterRow.number))}`);
+      }
       const canRenderPages = Boolean(
-        canAccessChapterContent && !isProcessing && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
+        canAccessChapterContent && !isProcessing && !isImgxChapterRow(chapterRow) && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
       );
       const padLength = Math.max(3, String(pageCount).length);
       const pageUrls = canRenderPages
@@ -14853,6 +14957,7 @@ const registerSiteRoutes = (app, deps) => {
             c.pages_prefix,
             c.pages_file_prefix,
             c.pages_ext,
+            c.page_delivery_mode,
             c.pages_updated_at,
             c.processing_state,
             c.processing_error,
@@ -15023,8 +15128,12 @@ const registerSiteRoutes = (app, deps) => {
         ? Math.min(100, Math.max(0, Math.floor((Math.min(processingDonePages, processingTotalPages) / processingTotalPages) * 100)))
         : 0;
       const isProcessing = processingState === "processing";
+      const isProtectedImgxChapter = isImgxChapterRow(chapterRow);
+      const canRenderProtectedPages = Boolean(
+        canAccessChapterContent && !isProcessing && isProtectedImgxChapter && isImgxReady && isImgxReady()
+      );
       const canRenderPages = Boolean(
-        canAccessChapterContent && !isProcessing && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
+        canAccessChapterContent && !isProcessing && !isProtectedImgxChapter && cdnBaseUrl && chapterRow.pages_prefix && chapterRow.pages_ext
       );
       const padLength = Math.max(3, String(pageCount).length);
       const pageUrls = canRenderPages
@@ -15040,7 +15149,45 @@ const registerSiteRoutes = (app, deps) => {
           return cacheBust(rawUrl, chapterRow.pages_updated_at);
         }).filter(Boolean)
         : [];
-
+      const protectedPageDescriptors = canRenderProtectedPages
+        ? pages.map((page) => ({
+            pageIndex: page - 1,
+            pageNumber: page,
+            width: 960,
+            height: 1440
+          }))
+        : [];
+      const readerPageAccessUrl = canRenderProtectedPages
+        ? `/manga/${encodeURIComponent(mangaRow.slug)}/chapters/${encodeURIComponent(String(chapterRow.number))}/page-access`
+        : "";
+      const readerImgxConfig = getImgxConfig ? getImgxConfig() : {};
+      const readerImgxRenderMode =
+        readerImgxConfig && readerImgxConfig.renderMode === "single" ? "single" : "tiles";
+      const initialImgxPages = (() => {
+        if (!canRenderProtectedPages || !cdnBaseUrl) return [];
+        const imgxConfig = readerImgxConfig || {};
+        if (!isImgxReady || !isImgxReady(imgxConfig)) return [];
+        const configuredInitialCount = Number(imgxConfig && imgxConfig.initialPageGrants);
+        const accessWindowMax = Math.max(1, Math.min(20, Math.floor(Number(imgxConfig && imgxConfig.accessWindowMax) || 5)));
+        const initialGrantCount = Math.max(
+          0,
+          Math.min(
+            pageCount,
+            accessWindowMax,
+            5,
+            Math.floor(Number.isFinite(configuredInitialCount) ? configuredInitialCount : 3)
+          )
+        );
+        if (!initialGrantCount) return [];
+        const sessionId = getRequestSessionKey(req) || getRequestIpKey(req);
+        return buildImgxPageAccessPayload({
+          chapterRow,
+          pageIndexes: Array.from({ length: initialGrantCount }, (_, index) => index),
+          cdnBaseUrl,
+          sessionId,
+          imgxConfig
+        });
+      })();
       let nextChapterPrefetchUrls = [];
       if (canAccessChapterContent && nextChapter && cdnBaseUrl) {
         const nextChapterNumber = Number(nextChapter.number);
@@ -15052,6 +15199,7 @@ const registerSiteRoutes = (app, deps) => {
               pages_prefix,
               pages_file_prefix,
               pages_ext,
+              page_delivery_mode,
               pages_updated_at,
               processing_state,
               interaction_boost_enabled,
@@ -15072,6 +15220,7 @@ const registerSiteRoutes = (app, deps) => {
             nextProcessingState !== "processing" &&
             !toBooleanFlag(nextChapterRow.interaction_boost_enabled) &&
             !chapterHasPasswordProtection(nextChapterRow) &&
+            !isImgxChapterRow(nextChapterRow) &&
             nextChapterRow.pages_prefix &&
             nextChapterRow.pages_ext
           );
@@ -15211,6 +15360,10 @@ const registerSiteRoutes = (app, deps) => {
         chapterList,
         pages,
         pageUrls,
+        protectedPageDescriptors,
+        readerPageAccessUrl,
+        readerImgxRenderMode,
+        initialImgxPages,
         nextChapterPrefetchUrls,
         comments: commentData.comments,
         commentCount: commentData.count,
@@ -15238,6 +15391,156 @@ const registerSiteRoutes = (app, deps) => {
           ogType: "article",
           jsonLd: chapterSchemas
         })
+      });
+    })
+  );
+
+  app.post(
+    "/manga/:slug/chapters/:number/page-access",
+    asyncHandler(async (req, res) => {
+      res.set("Cache-Control", "no-store");
+
+      const chapterNumber = Number(req.params.number);
+      if (!Number.isFinite(chapterNumber)) {
+        return res.status(400).json({ ok: false, error: "Invalid chapter." });
+      }
+
+      const mangaResolution = await resolveMangaRowByRouteSlug(req.params.slug);
+      const mangaRow = mangaResolution.mangaRow;
+      if (!mangaRow || isMangaBlockedForRequest(req, mangaRow)) {
+        return res.status(404).json({ ok: false, error: "Chapter not found." });
+      }
+
+      const chapterRow = await dbGet(
+        `
+        SELECT
+          c.id,
+          c.manga_id,
+          c.number,
+          c.pages,
+          c.pages_prefix,
+          c.pages_file_prefix,
+          c.pages_ext,
+          c.page_delivery_mode,
+          c.pages_updated_at,
+          c.password_hash,
+          c.password_salt,
+          c.password_updated_at,
+          COALESCE(c.interaction_boost_enabled, false) as interaction_boost_enabled,
+          COALESCE(c.is_oneshot, false) as is_oneshot
+        FROM chapters c
+        WHERE c.manga_id = ? AND c.number = ? AND COALESCE(c.is_deleted, false) = false
+      `,
+        [mangaRow.id, chapterNumber]
+      );
+      if (!chapterRow || !isImgxChapterRow(chapterRow)) {
+        return res.status(404).json({ ok: false, error: "Protected chapter not found." });
+      }
+
+      const imgxConfig = getImgxConfig ? getImgxConfig() : {};
+      if (!isImgxReady || !isImgxReady(imgxConfig) || typeof createImgxPageGrant !== "function") {
+        return res.status(503).json({ ok: false, error: "Protected reader is not configured." });
+      }
+
+      const chapterLockAccess = await resolveChapterLockBypassAccess({
+        req,
+        mangaId: mangaRow.id
+      });
+      const canBypassChapterLocks = Boolean(chapterLockAccess.canBypassLockedChapter);
+      const chapterIsLocked = chapterHasPasswordProtection(chapterRow);
+      const chapterUnlocked = isChapterUnlockedForSession({
+        req,
+        chapterRow,
+        nowMs: Date.now()
+      });
+      if (chapterIsLocked && !chapterUnlocked && !canBypassChapterLocks) {
+        return res.status(403).json({ ok: false, error: "Chapter is locked." });
+      }
+
+      if (!canBypassChapterLocks && toBooleanFlag(chapterRow && chapterRow.interaction_boost_enabled)) {
+        const prevChapter = await dbGet(
+          "SELECT number, COALESCE(is_oneshot, false) as is_oneshot FROM chapters WHERE manga_id = ? AND number < ? AND COALESCE(is_deleted, false) = false ORDER BY number DESC LIMIT 1",
+          [mangaRow.id, chapterNumber]
+        );
+        if (prevChapter) {
+          const authUserId = chapterLockAccess.authUserId;
+          const previousChapterNumber = Number(prevChapter.number);
+          const previousChapterIsOneshot = toBooleanFlag(prevChapter && prevChapter.is_oneshot);
+          const previousChapterCommentCountRow = !authUserId
+            ? { count: 0 }
+            : previousChapterIsOneshot
+              ? await dbGet(
+                  "SELECT COUNT(*) as count FROM comments WHERE manga_id = ? AND status = 'visible' AND chapter_number IS NULL AND author_user_id = ?",
+                  [mangaRow.id, authUserId]
+                )
+              : await dbGet(
+                  "SELECT COUNT(*) as count FROM comments WHERE manga_id = ? AND status = 'visible' AND chapter_number = ? AND author_user_id = ?",
+                  [mangaRow.id, previousChapterNumber, authUserId]
+                );
+          const previousChapterCommentCount = previousChapterCommentCountRow
+            ? Number(previousChapterCommentCountRow.count) || 0
+            : 0;
+          if (previousChapterCommentCount <= 0) {
+            return res.status(403).json({ ok: false, error: "Chapter requires previous interaction." });
+          }
+        }
+      }
+
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const rawIndexes = Array.isArray(body.pageIndexes)
+        ? body.pageIndexes
+        : Array.isArray(body.pages)
+          ? body.pages
+          : [];
+      const maxWindow = Math.max(1, Math.min(20, Math.floor(Number(imgxConfig.accessWindowMax) || 5)));
+      const pageCount = Math.max(Number(chapterRow.pages) || 0, 0);
+      const pageIndexes = Array.from(
+        new Set(
+          rawIndexes
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value))
+            .map((value) => Math.floor(value))
+            .filter((value) => value >= 0 && value < pageCount)
+        )
+      ).slice(0, maxWindow + 1);
+
+      if (!pageIndexes.length) {
+        return res.status(400).json({ ok: false, error: "No pages requested." });
+      }
+      if (pageIndexes.length > maxWindow) {
+        return res.status(400).json({ ok: false, error: "Too many pages requested.", maxWindow });
+      }
+
+      const rate = checkImgxPageAccessRateLimit({
+        req,
+        chapterId: chapterRow.id,
+        pageCount: pageIndexes.length
+      });
+      if (!rate.ok) {
+        res.set("Retry-After", String(Math.max(1, Math.ceil(rate.retryAfterMs / 1000))));
+        return res.status(429).json({ ok: false, error: "Rate limited.", retryAfterMs: rate.retryAfterMs });
+      }
+
+      const cdnBaseUrl = getB2Config().cdnBaseUrl;
+      if (!cdnBaseUrl) {
+        return res.status(503).json({ ok: false, error: "CDN is not configured." });
+      }
+
+      const sessionId = getRequestSessionKey(req) || getRequestIpKey(req);
+      const pagesPayload = buildImgxPageAccessPayload({
+        chapterRow,
+        pageIndexes,
+        cdnBaseUrl,
+        sessionId,
+        imgxConfig
+      });
+
+      return res.json({
+        ok: true,
+        chapterId: chapterRow.id,
+        ttlMs: imgxConfig.ttlMs,
+        maxWindow,
+        pages: pagesPayload
       });
     })
   );

@@ -22,6 +22,12 @@
     <% const resolvedStylesheetHref = stylesheetHref.startsWith("/") ? assetUrl(stylesheetHref) : stylesheetHref; %>
     <link rel="stylesheet" href="<%= resolvedStylesheetHref %>" />
   <% }) %>
+  <% modulePreloads.forEach((scriptHref) => { %>
+    <link rel="modulepreload" href="<%= scriptHref %>" crossorigin />
+  <% }) %>
+  <% preloadFetches.forEach((fetchHref) => { %>
+    <link rel="preload" as="fetch" href="<%= fetchHref %>" crossorigin />
+  <% }) %>
   <script nonce="<%= cspNonce || "" %>">
     (() => {
       const links = Array.from(document.querySelectorAll("link[data-head-async-style]"));

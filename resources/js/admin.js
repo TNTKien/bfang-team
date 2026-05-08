@@ -7322,6 +7322,35 @@
     activeXhrs.clear();
   };
 
+  const revokeLocalObjectUrl = (url) => {
+    const value = (url || "").toString();
+    if (!value.startsWith("blob:")) return;
+    URL.revokeObjectURL(value);
+  };
+
+  const attachImageFallback = (image, fallbackUrl) => {
+    const fallback = (fallbackUrl || "").toString().trim();
+    if (!image || !fallback) return;
+    image.dataset.fallbackUrl = fallback;
+    image.addEventListener("error", () => {
+      const nextFallback = (image.dataset.fallbackUrl || "").toString().trim();
+      if (!nextFallback) return;
+      if ((image.getAttribute("src") || "").toString() === nextFallback) return;
+      image.dataset.fallbackUrl = "";
+      image.src = nextFallback;
+    });
+  };
+
+  const applyRemotePreview = (item, data) => {
+    if (!item || !item.imgEl || !data) return;
+    const previewUrl = (data.previewUrl || data.url || "").toString().trim();
+    if (!previewUrl) return;
+    item.previewUrl = previewUrl;
+    item.imgEl.src = previewUrl;
+    revokeLocalObjectUrl(item.objectUrl);
+    item.objectUrl = "";
+  };
+
   const updateHiddenPages = () => {
     draftPagesInput.value = JSON.stringify(items.map((item) => item.id));
   };
@@ -7453,7 +7482,7 @@
 
     const item = items[index];
     if (item.objectUrl) {
-      URL.revokeObjectURL(item.objectUrl);
+      revokeLocalObjectUrl(item.objectUrl);
     }
     if (item.el && item.el.parentNode) {
       item.el.parentNode.removeChild(item.el);
@@ -7477,7 +7506,7 @@
     items.forEach((item) => {
       if (!item) return;
       if (item.objectUrl) {
-        URL.revokeObjectURL(item.objectUrl);
+        revokeLocalObjectUrl(item.objectUrl);
       }
       if (item.state === "done") {
         deleteRemote(item.id);
@@ -7570,7 +7599,7 @@
   const replaceItemFile = (item, file) => {
     if (!item || !file) return;
     if (item.objectUrl) {
-      URL.revokeObjectURL(item.objectUrl);
+      revokeLocalObjectUrl(item.objectUrl);
     }
 
     item.file = file;
@@ -7747,10 +7776,11 @@
           inFlight.set(item.id, pct * item.bytes);
           updateOverall();
         })
-          .then(() => {
+          .then((data) => {
             completedBytes += item.bytes;
             doneCount += 1;
             inFlight.delete(item.id);
+            applyRemotePreview(item, data);
             setItemState(item, "done");
           })
           .catch((err) => {
@@ -7973,6 +8003,7 @@
     picked.forEach((entry) => {
       const id = entry && typeof entry.id === "string" ? entry.id.trim() : "";
       const url = entry && typeof entry.url === "string" ? entry.url.trim() : "";
+      const fallbackUrl = entry && typeof entry.fallbackUrl === "string" ? entry.fallbackUrl.trim() : "";
       if (!id || !url) return;
       if (seen.has(id)) return;
       seen.add(id);
@@ -8002,6 +8033,7 @@
       const img = document.createElement("img");
       img.className = "upload-tile__img";
       img.src = url;
+      attachImageFallback(img, fallbackUrl);
       img.alt = "Ảnh trang";
       img.loading = "lazy";
       img.draggable = false;

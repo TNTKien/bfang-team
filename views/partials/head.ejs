@@ -57,6 +57,8 @@
   <% const safeHeadExtraStylesheets = typeof headExtraStylesheets !== "undefined" ? headExtraStylesheets : null; %>
   <% const safeHeadPreconnectOrigins = typeof headPreconnectOrigins !== "undefined" ? headPreconnectOrigins : null; %>
   <% const safeHeadPreloadImages = typeof headPreloadImages !== "undefined" ? headPreloadImages : null; %>
+  <% const safeHeadModulePreloads = typeof headModulePreloads !== "undefined" ? headModulePreloads : null; %>
+  <% const safeHeadPreloadFetches = typeof headPreloadFetches !== "undefined" ? headPreloadFetches : null; %>
   <% const headScriptOverrides = safeHeadScripts && typeof safeHeadScripts === "object" ? safeHeadScripts : {}; %>
   <% const headStyleOverrides = safeHeadStyles && typeof safeHeadStyles === "object" ? safeHeadStyles : {}; %>
   <% const headScriptDefaults = {
@@ -120,6 +122,12 @@
   <% const preloadImagesRaw = Array.isArray(safeHeadPreloadImages) ? safeHeadPreloadImages : []; %>
   <% const preloadImages = []; %>
   <% const preloadSeen = new Set(); %>
+  <% const modulePreloadsRaw = Array.isArray(safeHeadModulePreloads) ? safeHeadModulePreloads : []; %>
+  <% const modulePreloads = []; %>
+  <% const modulePreloadSeen = new Set(); %>
+  <% const preloadFetchesRaw = Array.isArray(safeHeadPreloadFetches) ? safeHeadPreloadFetches : []; %>
+  <% const preloadFetches = []; %>
+  <% const preloadFetchSeen = new Set(); %>
   <% const extraStylesheetsRaw = Array.isArray(safeHeadExtraStylesheets) ? safeHeadExtraStylesheets : []; %>
   <% const extraStylesheets = []; %>
   <% const extraStylesheetSeen = new Set(); %>
@@ -145,6 +153,20 @@
     if (!isValid || preloadSeen.has(imageHref)) return;
     preloadSeen.add(imageHref);
     preloadImages.push(imageHref);
+  }); %>
+  <% modulePreloadsRaw.forEach((scriptValue) => {
+    const scriptHref = (scriptValue || "").toString().trim();
+    const isValid = scriptHref.startsWith("/") || /^https?:\/\//i.test(scriptHref);
+    if (!isValid || modulePreloadSeen.has(scriptHref)) return;
+    modulePreloadSeen.add(scriptHref);
+    modulePreloads.push(scriptHref);
+  }); %>
+  <% preloadFetchesRaw.forEach((fetchValue) => {
+    const fetchHref = (fetchValue || "").toString().trim();
+    const isValid = fetchHref.startsWith("/") || /^https?:\/\//i.test(fetchHref);
+    if (!isValid || preloadFetchSeen.has(fetchHref)) return;
+    preloadFetchSeen.add(fetchHref);
+    preloadFetches.push(fetchHref);
   }); %>
   <% extraStylesheetsRaw.forEach((stylesheetValue) => {
     const stylesheetHref = (stylesheetValue || "").toString().trim();
@@ -191,6 +213,8 @@
     extraStylesheets,
     assetUrl,
     preloadImages,
+    modulePreloads,
+    preloadFetches,
     cspNonce
   }) %>
   <% if (isAdultContentControlEnabled) { %>

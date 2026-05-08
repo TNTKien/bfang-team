@@ -788,6 +788,24 @@ const sendLlmsTextFile = (fileName, options = {}) => (req, res, next) => {
 app.get("/llms.txt", sendLlmsTextFile("llms.txt", { alternatePath: "/llms-full.txt" }));
 app.get("/llms-full.txt", sendLlmsTextFile("llms-full.txt", { alternatePath: "/llms.txt" }));
 
+const wasmAssetFileNamePattern = /^[a-z0-9._-]+\.wasm$/i;
+app.get("/wasm/:fileName", (req, res, next) => {
+  const fileName = (req.params.fileName || "").toString().trim();
+  if (!wasmAssetFileNamePattern.test(fileName)) return next();
+
+  const wasmPath = path.join(publicDir, "wasm", fileName);
+  res.type("application/wasm");
+  res.set(
+    "Cache-Control",
+    isProductionApp ? "public, max-age=31536000, immutable" : "no-cache"
+  );
+  return res.sendFile(wasmPath, (error) => {
+    if (!error) return;
+    if (error.code === "ENOENT") return next();
+    return next(error);
+  });
+});
+
 app.use(express.static(publicDir));
 
 app.get("/uploads/covers/:fileName", async (req, res, next) => {

@@ -12,11 +12,16 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     b2DeleteAllByPrefix,
     b2DeleteAllByPrefixIfUnreferenced,
     b2DeleteChapterExtraPages,
+    b2DeleteChapterExtraPagePreviews,
+    b2DeleteChapterImgxPageArtifactsIfUnreferenced,
+    b2DeleteChapterLegacyPageArtifactsIfUnreferenced,
     b2DeleteFileVersions,
     b2ListFileVersionsByPrefix,
     b2UploadBuffer,
     buildAutoBadgeCode,
     buildChapterPageFileName,
+    buildChapterPagePreviewStorageKey,
+    buildChapterPagePreviewUrl,
     buildChapterExistingPageId,
     buildChapterTimestampIso,
     buildMangaSlug,
@@ -34,6 +39,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     dbAll,
     dbGet,
     dbRun,
+    deleteProtectedChapterDraftPage,
     deleteChapterAndCleanupStorage,
     deleteCommentCascade,
     deleteCoverTemp,
@@ -53,6 +59,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     getForbiddenWords,
     getGenreStats,
     getGenresStringByIds,
+    getImgxStorageExt,
     getMemberBadgeId,
     getOneshotGenreId,
     getPublicOriginFromRequest,
@@ -64,6 +71,7 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     isB2Ready,
     isChapterDraftPageIdValid,
     isChapterDraftTokenValid,
+    isImgxUploadEnabled,
     isPasswordAdminEnabled,
     isTruthyInput,
     listQuery,
@@ -118,10 +126,12 @@ const registerAdminAndEngagementRoutes = (app, deps) => {
     uploadChapterPage,
     uploadChapterPages,
     uploadCover,
+    uploadProtectedChapterPageBuffer,
     uploadHomepageBanner,
     sendPushNotificationToUser,
     softDeleteChapter,
     softDeleteManga,
+    storeProtectedChapterDraftPage,
     wantsJson,
     withTransaction,
     writeNotificationStreamEvent,
@@ -131,6 +141,25 @@ const deleteChapterPrefixIfUnreferenced =
   typeof b2DeleteAllByPrefixIfUnreferenced === "function"
     ? b2DeleteAllByPrefixIfUnreferenced
     : b2DeleteAllByPrefix;
+
+const deleteLegacyChapterPagesIfUnreferenced = async ({ prefix, pageFilePrefix, chapterId, reason }) => {
+  if (typeof b2DeleteChapterLegacyPageArtifactsIfUnreferenced !== "function") return 0;
+  return b2DeleteChapterLegacyPageArtifactsIfUnreferenced({
+    prefix,
+    keepPages: 0,
+    pageFilePrefix,
+    reason,
+    ignoreChapterIds: [chapterId]
+  });
+};
+
+const getConfiguredImgxStorageExt = () =>
+  typeof getImgxStorageExt === "function" ? getImgxStorageExt() : "js";
+
+const getStaleImgxStorageExts = (activeExt) => {
+  const safeActiveExt = (activeExt || "").toString().trim().toLowerCase() === "bin" ? "bin" : "js";
+  return safeActiveExt === "bin" ? ["js"] : ["bin"];
+};
 
 const homepageBannerSlots = Array.isArray(HOMEPAGE_BANNER_SLOTS) && HOMEPAGE_BANNER_SLOTS.length
   ? HOMEPAGE_BANNER_SLOTS.slice(0, 3)
@@ -145,6 +174,12 @@ const clearBufferedUploadFile = (file) => {
   if (Object.prototype.hasOwnProperty.call(file, "buffer")) {
     file.buffer = null;
   }
+};
+
+const isInvalidChapterPageUploadError = (err) => {
+  if (err && err.code === "IMGX_INVALID_IMAGE") return true;
+  const rawMessage = (err && err.message ? String(err.message) : "").toLowerCase();
+  return rawMessage.includes("không hợp lệ") || rawMessage.includes("invalid");
 };
 
 const getHomepageBannerUploadFile = (req, slot) => {
@@ -4359,6 +4394,7 @@ app.get(
         ? `${Math.round(draftTtlMinutes / 60)} giờ`
         : `${draftTtlMinutes} phút`;
     const chapterUploadApiProof = buildChapterUploadApiProof(draft ? draft.token : "");
+    const useLocalProtectedUpload = !chapterUploadApiBaseUrl || !chapterUploadApiProof;
 
     const chapterInitialGroupName = (mangaRow.group_name || (teamManageScope ? teamManageScope.teamName : team.name) || "").toString();
     const groupTeamSelections = await buildGroupTeamSelectionsForForm({
@@ -4388,7 +4424,7 @@ app.get(
       draftToken: draft ? draft.token : "",
       draftTtlMinutes,
       draftTtlLabel,
-      chapterUploadApiBaseUrl,
+      chapterUploadApiBaseUrl: useLocalProtectedUpload ? "" : chapterUploadApiBaseUrl,
       chapterUploadApiProof,
       canToggleInteractionBoostOnCreate,
       chapterPasswordMinLength: CHAPTER_PASSWORD_MIN_LENGTH,
@@ -4480,6 +4516,38 @@ app.post(
     const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: draft.manga_id });
     let sourceBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
     let webpBuffer = null;
+    if (typeof storeProtectedChapterDraftPage === "function" && isImgxUploadEnabled()) {
+      try {
+        const stored = await storeProtectedChapterDraftPage({
+          token,
+          pageId,
+          inputBuffer: sourceBuffer,
+          isWebtoon: isWebtoonManga,
+          originalName: req.file.originalname || ""
+        });
+        if (wantsJson(req)) {
+          return res.json({
+            ok: true,
+            id: pageId,
+            fileName: stored.fileName || stored.storageKey,
+            previewFileName: stored.previewFileName || stored.previewStorageKey || "",
+            previewUrl: stored.previewUrl || "",
+            url: stored.previewUrl || "",
+            protected: true
+          });
+        }
+        return res.send("OK");
+      } catch (err) {
+        console.warn("Protected draft page upload failed", err);
+        const isInvalidImage = isInvalidChapterPageUploadError(err);
+        return res
+          .status(isInvalidImage ? 400 : 500)
+          .send(isInvalidImage ? "Ảnh trang không hợp lệ." : "Upload ảnh thất bại.");
+      } finally {
+        sourceBuffer = null;
+        clearBufferedUploadFile(req.file);
+      }
+    }
     clearBufferedUploadFile(req.file);
     try {
       webpBuffer = await convertChapterUploadBufferToWebp({
@@ -4567,11 +4635,19 @@ app.post(
       return res.status(500).json({ ok: false, error: "Draft chương không hợp lệ." });
     }
 
-    const target = `${prefix}/${pageId}.webp`;
     let deleted = 0;
+    if (typeof deleteProtectedChapterDraftPage === "function") {
+      try {
+        deleted += await deleteProtectedChapterDraftPage({ token, pageId });
+      } catch (err) {
+        console.warn("Protected draft page delete failed", err);
+      }
+    }
+
+    const target = `${prefix}/${pageId}.webp`;
     try {
       const versions = await b2ListFileVersionsByPrefix(target);
-      deleted = await b2DeleteFileVersions(versions);
+      deleted += await b2DeleteFileVersions(versions);
     } catch (err) {
       console.warn("Draft page delete failed", err);
       return res.status(500).json({ ok: false, error: "Xóa ảnh thất bại." });
@@ -4929,6 +5005,7 @@ app.get(
         c.pages_prefix,
         c.pages_file_prefix,
         c.pages_ext,
+        c.page_delivery_mode,
         c.pages_updated_at,
         c.is_oneshot,
         COALESCE(c.interaction_boost_enabled, false) as interaction_boost_enabled,
@@ -4973,9 +5050,14 @@ app.get(
         ? `${Math.round(draftTtlMinutes / 60)} giờ`
         : `${draftTtlMinutes} phút`;
     const chapterUploadApiProof = buildChapterUploadApiProof(draft ? draft.token : "");
+    const useLocalProtectedUpload = !chapterUploadApiBaseUrl || !chapterUploadApiProof;
 
     const pagesPrefix = (chapterRow.pages_prefix || "").toString().trim();
     const pagesExt = (chapterRow.pages_ext || "").toString().trim() || "webp";
+    const isProtectedChapterPages =
+      (chapterRow.page_delivery_mode || "").toString().trim().toLowerCase() === "imgx" ||
+      pagesExt.toLowerCase() === "bin" ||
+      pagesExt.toLowerCase() === "js";
     const pagesUpdatedAt = Number(chapterRow.pages_updated_at) || 0;
     const pageCount = Math.max(Number(chapterRow.pages) || 0, 0);
     const padLength = Math.max(3, String(pageCount).length);
@@ -5016,7 +5098,7 @@ app.get(
     const existingPageIds = [];
     const existingPages = [];
     const initialPages = [];
-    if (pageCount > 0 && pagesPrefix && config.cdnBaseUrl) {
+    if (pageCount > 0 && pagesPrefix && (config.cdnBaseUrl || isProtectedChapterPages)) {
       for (let page = 1; page <= pageCount; page += 1) {
         const id = buildChapterExistingPageId(chapterRow.id, page);
         const pageName = buildChapterPageFileName({
@@ -5027,10 +5109,22 @@ app.get(
         });
         if (!pageName) continue;
         const rawUrl = `${config.cdnBaseUrl}/${pagesPrefix}/${pageName}`;
-        const url = cacheBust(rawUrl, pagesUpdatedAt || Date.now());
+        const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="180" height="260"><rect width="100%" height="100%" fill="#111827"/><text x="50%" y="48%" fill="#e5e7eb" font-family="Arial" font-size="18" font-weight="700" text-anchor="middle">IMGX</text><text x="50%" y="58%" fill="#9ca3af" font-family="Arial" font-size="14" text-anchor="middle">Trang ${page}</text></svg>`;
+        const placeholderUrl = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(placeholderSvg)}`;
+        const previewKey =
+          isProtectedChapterPages && typeof buildChapterPagePreviewStorageKey === "function"
+            ? buildChapterPagePreviewStorageKey(`${pagesPrefix}/${pageName}`)
+            : "";
+        const previewUrl =
+          isProtectedChapterPages && previewKey && typeof buildChapterPagePreviewUrl === "function"
+            ? buildChapterPagePreviewUrl(previewKey)
+            : "";
+        const url = isProtectedChapterPages
+          ? (previewUrl ? cacheBust(previewUrl, pagesUpdatedAt || Date.now()) : placeholderUrl)
+          : cacheBust(rawUrl, pagesUpdatedAt || Date.now());
         existingPageIds.push(id);
         existingPages.push({ id, page });
-        initialPages.push({ id, page, url });
+        initialPages.push({ id, page, url, fallbackUrl: isProtectedChapterPages ? placeholderUrl : "" });
       }
     }
 
@@ -5046,7 +5140,7 @@ app.get(
       draftToken: draft ? draft.token : "",
       draftTtlMinutes,
       draftTtlLabel,
-      chapterUploadApiBaseUrl,
+      chapterUploadApiBaseUrl: useLocalProtectedUpload ? "" : chapterUploadApiBaseUrl,
       chapterUploadApiProof,
       isWebtoonManga,
       initialPages,
@@ -5381,14 +5475,18 @@ app.post(
       return res.status(400).send("Chưa chọn ảnh trang.");
     }
 
+    const uploadedPageCount = files.length;
+
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
     files.sort((a, b) => collator.compare(a.originalname || "", b.originalname || ""));
 
     const prefix = `${config.chapterPrefix}/manga-${chapterRow.manga_id}/ch-${chapterRow.number}`;
-    const padLength = Math.max(3, String(files.length).length);
+    const padLength = Math.max(3, String(uploadedPageCount).length);
     const updatedAt = Date.now();
     const chapterDate = new Date(updatedAt).toISOString();
     const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: chapterRow.manga_id });
+    const useImgxDirectUpload = typeof uploadProtectedChapterPageBuffer === "function" && isImgxUploadEnabled();
+    const imgxStorageExt = getConfiguredImgxStorageExt();
 
     try {
       for (let index = 0; index < files.length; index += 1) {
@@ -5397,37 +5495,54 @@ app.post(
         let sourceBuffer = Buffer.isBuffer(file && file.buffer) ? file.buffer : null;
         let webpBuffer = null;
         clearBufferedUploadFile(file);
-        try {
-          webpBuffer = await convertChapterUploadBufferToWebp({
-            inputBuffer: sourceBuffer,
-            isWebtoon: isWebtoonManga
-          });
-        } catch (_err) {
-          return res.status(400).send("Ảnh trang không hợp lệ.");
-        } finally {
-          sourceBuffer = null;
-          clearBufferedUploadFile(file);
+        if (!useImgxDirectUpload) {
+          try {
+            webpBuffer = await convertChapterUploadBufferToWebp({
+              inputBuffer: sourceBuffer,
+              isWebtoon: isWebtoonManga
+            });
+          } catch (_err) {
+            return res.status(400).send("Ảnh trang không hợp lệ.");
+          }
         }
 
         const pageName = buildChapterPageFileName({
           pageNumber,
           padLength,
-          extension: "webp",
+          extension: useImgxDirectUpload ? imgxStorageExt : "webp",
           pageFilePrefix: chapterRow.pages_file_prefix
         });
         if (!pageName) {
           return res.status(400).send("Tên trang không hợp lệ.");
         }
         const fileName = `${prefix}/${pageName}`;
-        await b2UploadBuffer({
-          fileName,
-          buffer: webpBuffer,
-          contentType: "image/webp"
-        });
+        const previewFileName =
+          useImgxDirectUpload && typeof buildChapterPagePreviewStorageKey === "function"
+            ? buildChapterPagePreviewStorageKey(fileName)
+            : "";
+        if (useImgxDirectUpload) {
+          await uploadProtectedChapterPageBuffer({
+            inputBuffer: sourceBuffer,
+            isWebtoon: isWebtoonManga,
+            storageKey: fileName,
+            previewStorageKey: previewFileName
+          });
+        } else {
+          await b2UploadBuffer({
+            fileName,
+            buffer: webpBuffer,
+            contentType: "image/webp"
+          });
+        }
+        sourceBuffer = null;
         webpBuffer = null;
+        clearBufferedUploadFile(file);
       }
     } catch (err) {
       console.warn("Chapter pages upload failed", err);
+      if (isInvalidChapterPageUploadError(err)) {
+        return res.status(400).send("\u1ea2nh trang kh\u00f4ng h\u1ee3p l\u1ec7.");
+      }
       return res.status(500).send("Upload ảnh thất bại.");
     } finally {
       files.forEach(clearBufferedUploadFile);
@@ -5443,6 +5558,7 @@ app.post(
         pages = ?,
         pages_prefix = ?,
         pages_ext = ?,
+        page_delivery_mode = ?,
         pages_updated_at = ?,
         date = ?,
         processing_state = NULL,
@@ -5454,13 +5570,51 @@ app.post(
         processing_updated_at = ?
       WHERE id = ?
     `,
-      [files.length, prefix, "webp", updatedAt, chapterDate, updatedAt, chapterRow.id]
+      [
+        uploadedPageCount,
+        prefix,
+        useImgxDirectUpload ? imgxStorageExt : "webp",
+        useImgxDirectUpload ? "imgx" : "legacy",
+        updatedAt,
+        chapterDate,
+        updatedAt,
+        chapterRow.id
+      ]
     );
 
     const oldPrefix = (chapterRow.pages_prefix || "").trim();
     if (oldPrefix) {
       try {
-        if (oldPrefix !== prefix) {
+        if (useImgxDirectUpload) {
+          if (oldPrefix !== prefix && typeof b2DeleteChapterImgxPageArtifactsIfUnreferenced === "function") {
+            await b2DeleteChapterImgxPageArtifactsIfUnreferenced({
+              prefix: oldPrefix,
+              keepPages: 0,
+              pageFilePrefix: chapterRow.pages_file_prefix,
+              reason: "admin-chapter-pages-old-imgx-prefix",
+              ignoreChapterIds: [chapterRow.id]
+            });
+            await deleteLegacyChapterPagesIfUnreferenced({
+              prefix: oldPrefix,
+              pageFilePrefix: chapterRow.pages_file_prefix,
+              chapterId: chapterRow.id,
+              reason: "admin-chapter-pages-old-legacy-prefix"
+            });
+          } else {
+            await b2DeleteChapterExtraPages({
+              prefix,
+              keepPages: uploadedPageCount,
+              pageFilePrefix: chapterRow.pages_file_prefix,
+              extensions: [imgxStorageExt]
+            });
+            await b2DeleteChapterExtraPages({
+              prefix,
+              keepPages: 0,
+              pageFilePrefix: chapterRow.pages_file_prefix,
+              extensions: getStaleImgxStorageExts(imgxStorageExt)
+            });
+          }
+        } else if (oldPrefix !== prefix) {
           await deleteChapterPrefixIfUnreferenced(oldPrefix, {
             reason: "admin-chapter-pages-old-prefix",
             ignoreChapterIds: [chapterRow.id]
@@ -5468,12 +5622,66 @@ app.post(
         } else {
           await b2DeleteChapterExtraPages({
             prefix,
-            keepPages: files.length,
-            pageFilePrefix: chapterRow.pages_file_prefix
+            keepPages: uploadedPageCount,
+            pageFilePrefix: chapterRow.pages_file_prefix,
+            extensions: ["webp"]
           });
         }
       } catch (err) {
         console.warn("Chapter page cleanup failed", err);
+      }
+    }
+    if (useImgxDirectUpload) {
+      try {
+        await deleteLegacyChapterPagesIfUnreferenced({
+          prefix,
+          pageFilePrefix: chapterRow.pages_file_prefix,
+          chapterId: chapterRow.id,
+          reason: "admin-chapter-pages-target-legacy-prefix"
+        });
+      } catch (err) {
+        console.warn("Chapter legacy page cleanup failed", err);
+      }
+    } else if (typeof b2DeleteChapterImgxPageArtifactsIfUnreferenced === "function") {
+      try {
+        await b2DeleteChapterImgxPageArtifactsIfUnreferenced({
+          prefix,
+          keepPages: 0,
+          pageFilePrefix: chapterRow.pages_file_prefix,
+          reason: "admin-chapter-pages-target-imgx-prefix",
+          ignoreChapterIds: [chapterRow.id]
+        });
+      } catch (err) {
+        console.warn("Chapter IMGX page cleanup failed", err);
+      }
+    }
+    if (useImgxDirectUpload && oldPrefix !== prefix) {
+      try {
+        await b2DeleteChapterExtraPages({
+          prefix,
+          keepPages: uploadedPageCount,
+          pageFilePrefix: chapterRow.pages_file_prefix,
+          extensions: [imgxStorageExt]
+        });
+        await b2DeleteChapterExtraPages({
+          prefix,
+          keepPages: 0,
+          pageFilePrefix: chapterRow.pages_file_prefix,
+          extensions: getStaleImgxStorageExts(imgxStorageExt)
+        });
+      } catch (err) {
+        console.warn("Chapter IMGX page cleanup failed", err);
+      }
+    }
+    if (useImgxDirectUpload && typeof b2DeleteChapterExtraPagePreviews === "function") {
+      try {
+        await b2DeleteChapterExtraPagePreviews({
+          prefix,
+          keepPages: uploadedPageCount,
+          pageFilePrefix: chapterRow.pages_file_prefix
+        });
+      } catch (err) {
+        console.warn("Chapter preview cleanup failed", err);
       }
     }
     return res.redirect(`/admin/chapters/${chapterRow.id}/pages?status=uploaded`);
@@ -5527,50 +5735,77 @@ app.post(
     }
 
     const isWebtoonManga = await isMangaTaggedWebtoon({ mangaId: chapterRow.manga_id });
+    const useImgxDirectUpload = typeof uploadProtectedChapterPageBuffer === "function" && isImgxUploadEnabled();
+    const imgxStorageExt = getConfiguredImgxStorageExt();
     let sourceBuffer = Buffer.isBuffer(req.file.buffer) ? req.file.buffer : null;
     let webpBuffer = null;
     clearBufferedUploadFile(req.file);
-    try {
-      webpBuffer = await convertChapterUploadBufferToWebp({
-        inputBuffer: sourceBuffer,
-        isWebtoon: isWebtoonManga
-      });
-    } catch (_err) {
-      return res.status(400).send("Ảnh trang không hợp lệ.");
-    } finally {
-      sourceBuffer = null;
-      clearBufferedUploadFile(req.file);
-    }
 
     const prefix = `${config.chapterPrefix}/manga-${chapterRow.manga_id}/ch-${chapterRow.number}`;
     const pageName = buildChapterPageFileName({
       pageNumber: Math.floor(pageNumber),
       padLength,
-      extension: "webp",
+      extension: useImgxDirectUpload ? imgxStorageExt : "webp",
       pageFilePrefix: chapterRow.pages_file_prefix
     });
     if (!pageName) {
       return res.status(400).send("Tên trang không hợp lệ.");
     }
     const fileName = `${prefix}/${pageName}`;
+    const previewFileName =
+      useImgxDirectUpload && typeof buildChapterPagePreviewStorageKey === "function"
+        ? buildChapterPagePreviewStorageKey(fileName)
+        : "";
 
     try {
-      await b2UploadBuffer({
-        fileName,
-        buffer: webpBuffer,
-        contentType: "image/webp"
-      });
+      if (useImgxDirectUpload) {
+        await uploadProtectedChapterPageBuffer({
+          inputBuffer: sourceBuffer,
+          isWebtoon: isWebtoonManga,
+          storageKey: fileName,
+          previewStorageKey: previewFileName
+        });
+      } else {
+        try {
+          webpBuffer = await convertChapterUploadBufferToWebp({
+            inputBuffer: sourceBuffer,
+            isWebtoon: isWebtoonManga
+          });
+        } catch (_err) {
+          return res.status(400).send("Ảnh trang không hợp lệ.");
+        }
+        await b2UploadBuffer({
+          fileName,
+          buffer: webpBuffer,
+          contentType: "image/webp"
+        });
+      }
     } catch (err) {
       console.warn("Chapter page upload failed", err);
+      if (isInvalidChapterPageUploadError(err)) {
+        return res.status(400).send("\u1ea2nh trang kh\u00f4ng h\u1ee3p l\u1ec7.");
+      }
       return res.status(500).send("Upload ảnh thất bại.");
     } finally {
+      sourceBuffer = null;
       webpBuffer = null;
       clearBufferedUploadFile(req.file);
     }
 
-    const url = `${config.cdnBaseUrl}/${prefix}/${pageName}`;
+    const previewUrl =
+      useImgxDirectUpload && previewFileName && typeof buildChapterPagePreviewUrl === "function"
+        ? buildChapterPagePreviewUrl(previewFileName)
+        : "";
+    const url = useImgxDirectUpload ? previewUrl : `${config.cdnBaseUrl}/${prefix}/${pageName}`;
     if (wantsJson(req)) {
-      return res.json({ ok: true, page: Math.floor(pageNumber), url });
+      return res.json({
+        ok: true,
+        page: Math.floor(pageNumber),
+        url,
+        previewUrl,
+        previewFileName,
+        protected: useImgxDirectUpload
+      });
     }
     return res.send("OK");
   })
@@ -5612,6 +5847,8 @@ app.post(
 
     const config = getB2Config();
     const prefix = `${config.chapterPrefix}/manga-${chapterRow.manga_id}/ch-${chapterRow.number}`;
+    const useImgxDirectUpload = isImgxUploadEnabled();
+    const imgxStorageExt = getConfiguredImgxStorageExt();
     const updatedAt = Date.now();
     const chapterDate = new Date(updatedAt).toISOString();
     await dbRun(
@@ -5621,6 +5858,7 @@ app.post(
         pages = ?,
         pages_prefix = ?,
         pages_ext = ?,
+        page_delivery_mode = ?,
         pages_updated_at = ?,
         date = ?,
         processing_state = NULL,
@@ -5632,14 +5870,52 @@ app.post(
         processing_updated_at = ?
       WHERE id = ?
     `,
-      [pages, prefix, "webp", updatedAt, chapterDate, updatedAt, chapterRow.id]
+      [
+        pages,
+        prefix,
+        useImgxDirectUpload ? imgxStorageExt : "webp",
+        useImgxDirectUpload ? "imgx" : "legacy",
+        updatedAt,
+        chapterDate,
+        updatedAt,
+        chapterRow.id
+      ]
     );
 
     const oldPrefix = (chapterRow.pages_prefix || "").trim();
     if (oldPrefix) {
       if (isB2Ready(config)) {
         try {
-          if (oldPrefix !== prefix) {
+          if (useImgxDirectUpload) {
+            if (oldPrefix !== prefix && typeof b2DeleteChapterImgxPageArtifactsIfUnreferenced === "function") {
+              await b2DeleteChapterImgxPageArtifactsIfUnreferenced({
+                prefix: oldPrefix,
+                keepPages: 0,
+                pageFilePrefix: chapterRow.pages_file_prefix,
+                reason: "admin-chapter-pages-finalize-old-imgx-prefix",
+                ignoreChapterIds: [chapterRow.id]
+              });
+              await deleteLegacyChapterPagesIfUnreferenced({
+                prefix: oldPrefix,
+                pageFilePrefix: chapterRow.pages_file_prefix,
+                chapterId: chapterRow.id,
+                reason: "admin-chapter-pages-finalize-old-legacy-prefix"
+              });
+            } else {
+              await b2DeleteChapterExtraPages({
+                prefix,
+                keepPages: pages,
+                pageFilePrefix: chapterRow.pages_file_prefix,
+                extensions: [imgxStorageExt]
+              });
+              await b2DeleteChapterExtraPages({
+                prefix,
+                keepPages: 0,
+                pageFilePrefix: chapterRow.pages_file_prefix,
+                extensions: getStaleImgxStorageExts(imgxStorageExt)
+              });
+            }
+          } else if (oldPrefix !== prefix) {
             await deleteChapterPrefixIfUnreferenced(oldPrefix, {
               reason: "admin-chapter-pages-finalize-old-prefix",
               ignoreChapterIds: [chapterRow.id]
@@ -5648,7 +5924,8 @@ app.post(
             await b2DeleteChapterExtraPages({
               prefix,
               keepPages: pages,
-              pageFilePrefix: chapterRow.pages_file_prefix
+              pageFilePrefix: chapterRow.pages_file_prefix,
+              extensions: ["webp"]
             });
           }
         } catch (err) {
@@ -5656,6 +5933,59 @@ app.post(
         }
       } else {
         console.warn("Skip chapter page cleanup: missing storage config");
+      }
+    }
+    if (useImgxDirectUpload) {
+      try {
+        await deleteLegacyChapterPagesIfUnreferenced({
+          prefix,
+          pageFilePrefix: chapterRow.pages_file_prefix,
+          chapterId: chapterRow.id,
+          reason: "admin-chapter-pages-finalize-target-legacy-prefix"
+        });
+      } catch (err) {
+        console.warn("Chapter legacy page cleanup failed", err);
+      }
+    } else if (typeof b2DeleteChapterImgxPageArtifactsIfUnreferenced === "function") {
+      try {
+        await b2DeleteChapterImgxPageArtifactsIfUnreferenced({
+          prefix,
+          keepPages: 0,
+          pageFilePrefix: chapterRow.pages_file_prefix,
+          reason: "admin-chapter-pages-finalize-target-imgx-prefix",
+          ignoreChapterIds: [chapterRow.id]
+        });
+      } catch (err) {
+        console.warn("Chapter IMGX page cleanup failed", err);
+      }
+    }
+    if (useImgxDirectUpload && oldPrefix !== prefix) {
+      try {
+        await b2DeleteChapterExtraPages({
+          prefix,
+          keepPages: pages,
+          pageFilePrefix: chapterRow.pages_file_prefix,
+          extensions: [imgxStorageExt]
+        });
+        await b2DeleteChapterExtraPages({
+          prefix,
+          keepPages: 0,
+          pageFilePrefix: chapterRow.pages_file_prefix,
+          extensions: getStaleImgxStorageExts(imgxStorageExt)
+        });
+      } catch (err) {
+        console.warn("Chapter IMGX page cleanup failed", err);
+      }
+    }
+    if (useImgxDirectUpload && typeof b2DeleteChapterExtraPagePreviews === "function") {
+      try {
+        await b2DeleteChapterExtraPagePreviews({
+          prefix,
+          keepPages: pages,
+          pageFilePrefix: chapterRow.pages_file_prefix
+        });
+      } catch (err) {
+        console.warn("Chapter preview cleanup failed", err);
       }
     }
 

@@ -1,7 +1,3 @@
-# api_server
-
-Standalone API server for desktop bulk chapter uploads.
-
 ## Run
 
 1. Copy env template and fill values:
@@ -12,6 +8,13 @@ Standalone API server for desktop bulk chapter uploads.
      - `S3_BUCKET` is used for chapter page uploads
      - `S3_MEDIA_BUCKET` is used for avatar/cover uploads
    - `API_ALLOWED_ORIGINS` (optional) can restrict browser CORS origins; defaults to `WEB_BASE_URL`
+   - For web-side chapter image conversion offload, set web `.env`:
+     - `CHAPTER_UPLOAD_API_URL=http://127.0.0.1:3001`
+     - `CHAPTER_IMAGE_PROCESSING_API_URL=http://127.0.0.1:3001` (optional; defaults to `CHAPTER_UPLOAD_API_URL`)
+     - `CHAPTER_IMAGE_PROCESSING_API_REQUIRED=true` if you want the web server to fail instead of falling back to local image processing
+     - `CHAPTER_UPLOAD_SHARED_SECRET` must match api_server
+   - `IMGX_STORAGE_EXT=js` makes new protected chapter payloads use fake `.js` object names while still storing binary IMGX bytes. Use `bin` only for rollback/legacy behavior.
+   - If you serve chapter objects through a CDN, exclude `chapters/**` IMGX `.js` files from JavaScript minify/transform and keep their content type as `application/octet-stream`.
 
 2. Install deps:
 
@@ -38,3 +41,4 @@ API default: `http://127.0.0.1:3001`
 - `POST /v1/uploads/:sessionId/complete`
 - `DELETE /v1/uploads/:sessionId`
 - `POST /v1/internal/media/upload` (internal proof-based media upload for user/team/manga assets)
+- `POST /v1/internal/chapter-pages/transfer` (internal proof-based chapter page copy/transcode: `.webp <-> .js/.bin`)

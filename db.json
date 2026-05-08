@@ -300,6 +300,11 @@
           "is_nullable": true
         },
         {
+          "name": "page_delivery_mode",
+          "data_type": "text",
+          "is_nullable": true
+        },
+        {
           "name": "processing_state",
           "data_type": "text",
           "is_nullable": true

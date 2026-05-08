@@ -26,7 +26,7 @@ const createConvertChapterPageToWebp = ({ sharp }) => {
     throw new Error("sharp instance is required");
   }
 
-  return async (inputBuffer, options = {}) => {
+  const convertWithMetadata = async (inputBuffer, options = {}) => {
     if (!inputBuffer) return null;
 
     const pipeline = sharp(inputBuffer).rotate();
@@ -38,8 +38,24 @@ const createConvertChapterPageToWebp = ({ sharp }) => {
     });
     const transformed = resizeOptions ? pipeline.resize(resizeOptions) : pipeline;
 
-    return transformed.webp({ quality: CHAPTER_PAGE_WEBP_QUALITY, effort: 6 }).toBuffer();
+    const output = await transformed.webp({ quality: CHAPTER_PAGE_WEBP_QUALITY, effort: 6 }).toBuffer({
+      resolveWithObject: true
+    });
+    const info = output && output.info ? output.info : {};
+    return {
+      buffer: output ? output.data : null,
+      width: Number(info.width) || 0,
+      height: Number(info.height) || 0
+    };
   };
+
+  const convert = async (inputBuffer, options = {}) => {
+    const result = await convertWithMetadata(inputBuffer, options);
+    return result && result.buffer ? result.buffer : null;
+  };
+
+  convert.withMetadata = convertWithMetadata;
+  return convert;
 };
 
 module.exports = {
