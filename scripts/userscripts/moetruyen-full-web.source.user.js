@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MoeTruyen Full Web Unlock
 // @namespace    https://moetruyen.net/
-// @version      1.0.3
+// @version      1.0.4
 // @description  Cho phép mở đầy đủ website khi máy chủ đang bật WEB_ENABLED=false/forum-only.
 // @author       MoeTruyen
 // @match        https://moetruyen.net/*
@@ -23,7 +23,7 @@
   const RETURN_PARAM = "__moe_web_return";
   const UNLOCK_ATTEMPT_STORAGE_KEY = "moetruyen_full_web_unlock_attempt";
   const UNLOCK_DISABLED_STORAGE_KEY = "moetruyen_full_web_unlock_disabled";
-  const MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+  const MAX_AGE_SECONDS = 60 * 30;
 
   // Nếu server cấu hình WINTER_MODE_WEB_UNLOCK_TOKEN thì dán cùng token vào đây.
   // Nếu không cấu hình token, giữ chuỗi rỗng để script tự dùng giá trị "1".
