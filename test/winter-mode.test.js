@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const {
   WEB_UNLOCK_COOKIE_NAME,
@@ -13,6 +14,70 @@ const {
   isWinterModeAllowedPath,
   normalizePathname,
 } = require("../src/utils/winter-mode");
+
+const getUserscriptPath = () => path.join(__dirname, "..", "public", "userscripts", "moetruyen-full-web.user.js");
+
+const readUserscriptSource = () => fs.readFileSync(getUserscriptPath(), "utf8");
+
+const createMemoryStorage = () => {
+  const values = new Map();
+  return {
+    getItem(key) {
+      return values.has(String(key)) ? values.get(String(key)) : null;
+    },
+    setItem(key, value) {
+      values.set(String(key), String(value));
+    },
+    removeItem(key) {
+      values.delete(String(key));
+    }
+  };
+};
+
+const runFullWebUserscript = ({ href, storage = createMemoryStorage() }) => {
+  let currentHref = href;
+  const replacements = [];
+  const cookieWrites = [];
+  const location = {
+    get href() {
+      return currentHref;
+    },
+    get hostname() {
+      return new URL(currentHref).hostname;
+    },
+    get origin() {
+      return new URL(currentHref).origin;
+    },
+    replace(nextHref) {
+      replacements.push(nextHref);
+      currentHref = nextHref;
+    }
+  };
+  const document = {};
+  Object.defineProperty(document, "cookie", {
+    get() {
+      return cookieWrites.join("; ");
+    },
+    set(value) {
+      cookieWrites.push(String(value));
+    }
+  });
+
+  vm.runInNewContext(readUserscriptSource(), {
+    document,
+    encodeURIComponent,
+    URL,
+    window: {
+      location,
+      sessionStorage: storage
+    }
+  }, { filename: getUserscriptPath() });
+
+  return {
+    cookieWrites,
+    replacements
+  };
+};
 
 test("normalizePathname keeps routing decisions path-only and slash-prefixed", () => {
   assert.equal(normalizePathname("forum?tab=hot"), "/forum");
@@ -116,12 +181,62 @@ test("winter mode bypass request accepts userscript cookie or configured token",
 });
 
 test("Tampermonkey userscript stays aligned with server unlock markers", () => {
-  const scriptPath = path.join(__dirname, "..", "public", "userscripts", "moetruyen-full-web.user.js");
-  const scriptSource = fs.readFileSync(scriptPath, "utf8");
+  const scriptSource = readUserscriptSource();
 
   assert.match(scriptSource, new RegExp(`COOKIE_NAME = "${WEB_UNLOCK_COOKIE_NAME}"`));
   assert.match(scriptSource, new RegExp(`RETURN_PARAM = "${WEB_UNLOCK_RETURN_PARAM}"`));
+  assert.match(scriptSource, /UNLOCK_ATTEMPT_STORAGE_KEY/);
+  assert.match(scriptSource, /UNLOCK_DISABLED_STORAGE_KEY/);
+  assert.match(scriptSource, /@match\s+https:\/\/truyen\.moe\/\*/);
+  assert.match(scriptSource, /@match\s+https:\/\/\*\.truyen\.moe\/\*/);
   assert.match(scriptSource, /@run-at\s+document-start/);
+});
+
+test("Tampermonkey userscript also unlocks truyen.moe hosts", () => {
+  const rootRun = runFullWebUserscript({
+    href: `https://truyen.moe/forum?${WEB_UNLOCK_RETURN_PARAM}=%2Fmanga%2Fdemo`
+  });
+  assert.deepEqual(rootRun.replacements, ["https://truyen.moe/manga/demo"]);
+  assert.match(rootRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=1;`));
+
+  const subdomainRun = runFullWebUserscript({
+    href: `https://cdn.truyen.moe/forum?${WEB_UNLOCK_RETURN_PARAM}=%2Fnews`
+  });
+  assert.deepEqual(subdomainRun.replacements, ["https://cdn.truyen.moe/news"]);
+  assert.match(subdomainRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=1;`));
+});
+
+test("Tampermonkey userscript stops restoring after a rejected unlock attempt", () => {
+  const storage = createMemoryStorage();
+  const forumReturnHref = `https://moetruyen.net/forum?${WEB_UNLOCK_RETURN_PARAM}=%2Fmanga%2Fdemo%3Fchapter%3D12`;
+  const targetHref = "https://moetruyen.net/manga/demo?chapter=12";
+
+  const firstRun = runFullWebUserscript({ href: forumReturnHref, storage });
+  assert.deepEqual(firstRun.replacements, [targetHref]);
+  assert.match(firstRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=1;`));
+
+  const bouncedRun = runFullWebUserscript({ href: forumReturnHref, storage });
+  assert.deepEqual(bouncedRun.replacements, []);
+  assert.match(bouncedRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=; Max-Age=0;`));
+
+  const inactiveRun = runFullWebUserscript({ href: targetHref, storage });
+  assert.deepEqual(inactiveRun.replacements, []);
+  assert.match(inactiveRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=; Max-Age=0;`));
+});
+
+test("Tampermonkey userscript clears pending restore after a successful full-web page load", () => {
+  const storage = createMemoryStorage();
+  const forumReturnHref = `https://moetruyen.net/forum?${WEB_UNLOCK_RETURN_PARAM}=%2Fmanga%2Fdemo`;
+  const targetHref = "https://moetruyen.net/manga/demo";
+
+  assert.deepEqual(runFullWebUserscript({ href: forumReturnHref, storage }).replacements, [targetHref]);
+
+  const acceptedRun = runFullWebUserscript({ href: targetHref, storage });
+  assert.deepEqual(acceptedRun.replacements, []);
+  assert.match(acceptedRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=1;`));
+
+  const nextRestoreRun = runFullWebUserscript({ href: forumReturnHref, storage });
+  assert.deepEqual(nextRestoreRun.replacements, [targetHref]);
 });
 
 test("winter mode middleware is transparent when disabled or path is allowed", () => {

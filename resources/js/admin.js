@@ -7346,9 +7346,27 @@
     const previewUrl = (data.previewUrl || data.url || "").toString().trim();
     if (!previewUrl) return;
     item.previewUrl = previewUrl;
-    item.imgEl.src = previewUrl;
-    revokeLocalObjectUrl(item.objectUrl);
-    item.objectUrl = "";
+    const localObjectUrl = (item.objectUrl || "").toString();
+    const remoteDisplayUrl = `${previewUrl}${previewUrl.includes("?") ? "&" : "?"}t=${encodeURIComponent(
+      String(Date.now())
+    )}`;
+    if (!localObjectUrl.startsWith("blob:")) {
+      item.imgEl.src = remoteDisplayUrl;
+      return;
+    }
+
+    const remoteImage = new Image();
+    remoteImage.addEventListener("load", () => {
+      if (item.previewUrl !== previewUrl || item.objectUrl !== localObjectUrl) return;
+      item.imgEl.src = remoteDisplayUrl;
+      revokeLocalObjectUrl(localObjectUrl);
+      item.objectUrl = "";
+    });
+    remoteImage.addEventListener("error", () => {
+      if (item.previewUrl !== previewUrl || item.objectUrl !== localObjectUrl) return;
+      item.imgEl.src = localObjectUrl;
+    });
+    remoteImage.src = remoteDisplayUrl;
   };
 
   const updateHiddenPages = () => {
