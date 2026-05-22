@@ -1,8 +1,15 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
+  WEB_UNLOCK_COOKIE_NAME,
+  WEB_UNLOCK_HEADER_NAME,
+  WEB_UNLOCK_RETURN_PARAM,
+  buildWinterModeRedirectPath,
   createWinterModeMiddleware,
+  isWinterModeBypassRequest,
   isWinterModeAllowedPath,
   normalizePathname,
 } = require("../src/utils/winter-mode");
@@ -63,6 +70,60 @@ test("winter mode middleware redirects HTML traffic to forum", () => {
   ]);
 });
 
+test("winter mode redirect carries original path for the userscript restore flow", () => {
+  const redirectPath = buildWinterModeRedirectPath({
+    forumPath: "/forum",
+    originalUrl: "/manga/demo?chapter=12"
+  });
+
+  assert.equal(redirectPath, `/forum?${WEB_UNLOCK_RETURN_PARAM}=%2Fmanga%2Fdemo%3Fchapter%3D12`);
+  assert.equal(buildWinterModeRedirectPath({ forumPath: "/forum", originalUrl: "/forum/post/12" }), "/forum");
+  assert.equal(buildWinterModeRedirectPath({ forumPath: "/forum", originalUrl: "https://evil.test/" }), "/forum");
+});
+
+test("winter mode bypass request accepts userscript cookie or configured token", () => {
+  assert.equal(
+    isWinterModeBypassRequest({
+      headers: {
+        cookie: `${WEB_UNLOCK_COOKIE_NAME}=1`
+      }
+    }),
+    true
+  );
+  assert.equal(
+    isWinterModeBypassRequest(
+      {
+        headers: {
+          [WEB_UNLOCK_HEADER_NAME]: "secret-token"
+        }
+      },
+      { token: "secret-token" }
+    ),
+    true
+  );
+  assert.equal(
+    isWinterModeBypassRequest(
+      {
+        headers: {
+          cookie: `${WEB_UNLOCK_COOKIE_NAME}=wrong`
+        }
+      },
+      { token: "secret-token" }
+    ),
+    false
+  );
+  assert.equal(isWinterModeBypassRequest({ headers: {} }), false);
+});
+
+test("Tampermonkey userscript stays aligned with server unlock markers", () => {
+  const scriptPath = path.join(__dirname, "..", "public", "userscripts", "moetruyen-full-web.user.js");
+  const scriptSource = fs.readFileSync(scriptPath, "utf8");
+
+  assert.match(scriptSource, new RegExp(`COOKIE_NAME = "${WEB_UNLOCK_COOKIE_NAME}"`));
+  assert.match(scriptSource, new RegExp(`RETURN_PARAM = "${WEB_UNLOCK_RETURN_PARAM}"`));
+  assert.match(scriptSource, /@run-at\s+document-start/);
+});
+
 test("winter mode middleware is transparent when disabled or path is allowed", () => {
   const disabledMiddleware = createWinterModeMiddleware({ enabled: false });
   const allowedMiddleware = createWinterModeMiddleware({ enabled: true });
@@ -81,6 +142,47 @@ test("winter mode middleware is transparent when disabled or path is allowed", (
 
   assert.equal(disabledNextCount, 1);
   assert.equal(allowedNextCount, 2);
+});
+
+test("winter mode middleware bypasses full web traffic when userscript marker is present", () => {
+  const calls = [];
+  const middleware = createWinterModeMiddleware({
+    enabled: true,
+    onBypass(req, res) {
+      req.unlocked = true;
+      res.locals.webEnabled = true;
+      calls.push(["onBypass"]);
+    }
+  });
+  const req = {
+    path: "/manga/demo",
+    method: "GET",
+    query: {},
+    headers: {
+      cookie: `${WEB_UNLOCK_COOKIE_NAME}=1`
+    }
+  };
+  const res = {
+    locals: {},
+    set(name, value) {
+      calls.push(["set", name, value]);
+      return this;
+    },
+    redirect(status, path) {
+      calls.push(["redirect", status, path]);
+      return this;
+    }
+  };
+
+  middleware(req, res, () => calls.push(["next"]));
+
+  assert.equal(req.unlocked, true);
+  assert.equal(res.locals.webEnabled, true);
+  assert.deepEqual(calls, [
+    ["set", "X-Web-Winter-Mode-Bypass", "1"],
+    ["onBypass"],
+    ["next"]
+  ]);
 });
 
 test("winter mode middleware rejects non-forum JSON/write traffic", () => {

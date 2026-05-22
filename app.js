@@ -42,7 +42,11 @@ const { normalizeHomepageBannerLink } = require("./src/utils/homepage-banner-lin
 const { buildMangaSlug } = require("./src/utils/manga-slug");
 const publicOriginUtils = require("./src/utils/public-origin");
 const { createRedisCache } = require("./src/utils/redis-cache");
-const { createWinterModeMiddleware } = require("./src/utils/winter-mode");
+const {
+  WEB_UNLOCK_COOKIE_NAME,
+  WEB_UNLOCK_HEADER_NAME,
+  createWinterModeMiddleware
+} = require("./src/utils/winter-mode");
 const viewCoverHelpers = require("./src/utils/view-cover-helpers");
 const { loadSiteConfig } = require("./src/config/site-config");
 require("dotenv").config();
@@ -156,9 +160,11 @@ const isForumFrontendAvailable = fs.existsSync(forumDistIndexPath);
 
 const isWebEnabled = parseEnvBoolean(process.env.WEB_ENABLED, true);
 const isWinterModeEnabled = !isWebEnabled;
-const isNewsPageEnabled = !isWinterModeEnabled && parseEnvBoolean(process.env.NEWS_PAGE_ENABLED, true);
+const isNewsPageConfigured = parseEnvBoolean(process.env.NEWS_PAGE_ENABLED, true);
+const isNewsPageEnabled = !isWinterModeEnabled && isNewsPageConfigured;
 const isForumPageEnabled = isWinterModeEnabled || parseEnvBoolean(process.env.FORUM_PAGE_ENABLED, false);
 const isForumPageAvailable = isForumPageEnabled && isForumFrontendAvailable;
+const winterModeWebUnlockToken = (process.env.WINTER_MODE_WEB_UNLOCK_TOKEN || "").toString().trim();
 const isGoogleDriveUploadEnabled = parseEnvBoolean(process.env.GOOGLE_DRIVE_UPLOAD_ENABLED, false);
 const isAdultContentControlBypassed = parseEnvBoolean(process.env.ADULT_CONTENT_CONTROL, true);
 const isAdultContentControlEnabled = !isAdultContentControlBypassed;
@@ -171,6 +177,7 @@ app.locals.isForumPageEnabled = isForumPageEnabled;
 app.locals.isForumPageAvailable = isForumPageAvailable;
 app.locals.isWebEnabled = isWebEnabled;
 app.locals.isWinterModeEnabled = isWinterModeEnabled;
+app.locals.isNewsPageConfigured = isNewsPageConfigured;
 app.locals.isNewsPageEnabled = isNewsPageEnabled;
 app.locals.webEnabled = isWebEnabled;
 app.locals.winterModeEnabled = isWinterModeEnabled;
@@ -2611,6 +2618,7 @@ const getAuthPublicConfigForRequest = (_req) => ({
 });
 
 app.locals.authPublicConfig = getAuthPublicConfigForRequest(null);
+app.locals.isNewsPageConfigured = isNewsPageConfigured;
 app.locals.newsPageEnabled = isNewsPageEnabled;
 app.locals.forumPageEnabled = isForumPageAvailable;
 app.locals.webEnabled = isWebEnabled;
@@ -4649,6 +4657,7 @@ const appContainer = {
   newsDbAll,
   newsDbGet,
   isNewsDatabaseConfigured,
+  isNewsPageConfigured,
   isNewsPageEnabled,
   ensureCommentNotDuplicateRecently,
   ensureCommentPostCooldown,
@@ -4842,13 +4851,34 @@ const appContainer = {
 if (isWinterModeEnabled && !isForumPageAvailable) {
   console.warn("WEB_ENABLED=false đang bật chế độ nghỉ đông nhưng forum frontend chưa sẵn sàng tại sampleforum/dist.");
 }
+
+const markWinterModeWebUnlockedRequest = (req, res) => {
+  if (req) {
+    req.winterModeWebUnlocked = true;
+  }
+
+  if (!res || !res.locals) return;
+
+  res.locals.isWebEnabled = true;
+  res.locals.webEnabled = true;
+  res.locals.isWinterModeEnabled = false;
+  res.locals.winterModeEnabled = false;
+  res.locals.isNewsPageEnabled = Boolean(isNewsPageConfigured);
+  res.locals.newsPageEnabled = Boolean(isNewsPageConfigured);
+  res.locals.winterModeWebUnlocked = true;
+};
+
 app.use(createWinterModeMiddleware({
+  bypassCookieName: WEB_UNLOCK_COOKIE_NAME,
+  bypassHeaderName: WEB_UNLOCK_HEADER_NAME,
+  bypassToken: winterModeWebUnlockToken,
   enabled: isWinterModeEnabled,
+  onBypass: markWinterModeWebUnlockedRequest,
   wantsJson
 }));
 
 registerSiteRoutes(app, appContainer);
-if (isNewsPageEnabled) {
+if (isNewsPageConfigured) {
   registerNewsRoutes(app, appContainer);
 }
 if (isForumPageAvailable) {
@@ -4878,7 +4908,7 @@ if (isForumPageAvailable) {
         description: forumDescription,
         twitterSite: forumTwitterSite,
         imagePath: FORUM_DEFAULT_SOCIAL_IMAGE_PATH,
-        newsPageEnabled: Boolean(isNewsPageEnabled),
+        newsPageEnabled: Boolean(req && req.winterModeWebUnlocked ? isNewsPageConfigured : isNewsPageEnabled),
         shareOrigin: getShareOriginFromRequest(req) || ""
       }
     });
