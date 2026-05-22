@@ -5,6 +5,10 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const {
+  buildEncodedUserscript,
+  parseUserscriptSource,
+} = require("../scripts/encode-userscript");
+const {
   WEB_UNLOCK_COOKIE_NAME,
   WEB_UNLOCK_HEADER_NAME,
   WEB_UNLOCK_RETURN_PARAM,
@@ -16,8 +20,29 @@ const {
 } = require("../src/utils/winter-mode");
 
 const getUserscriptPath = () => path.join(__dirname, "..", "public", "userscripts", "moetruyen-full-web.user.js");
+const getSourceUserscriptPath = () => path.join(__dirname, "..", "scripts", "userscripts", "moetruyen-full-web.source.user.js");
 
 const readUserscriptSource = () => fs.readFileSync(getUserscriptPath(), "utf8");
+const readSourceUserscriptSource = () => fs.readFileSync(getSourceUserscriptPath(), "utf8");
+
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const readSourceUnlockMarker = () => {
+  const sourceScript = readSourceUserscriptSource();
+  const match = sourceScript.match(/const SERVER_TOKEN = ("(?:\\.|[^"\\])*");/);
+  assert.ok(match, "source userscript exposes SERVER_TOKEN for test parity");
+
+  return JSON.parse(match[1]).trim() || "1";
+};
+
+const encodeUserscriptCookieValue = (value) =>
+  encodeURIComponent(value || "1")
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29");
+
+const getExpectedUserscriptCookiePattern = () => new RegExp(
+  `^${escapeRegExp(WEB_UNLOCK_COOKIE_NAME)}=${escapeRegExp(encodeUserscriptCookieValue(readSourceUnlockMarker()))};`
+);
 
 const createMemoryStorage = () => {
   const values = new Map();
@@ -182,14 +207,36 @@ test("winter mode bypass request accepts userscript cookie or configured token",
 
 test("Tampermonkey userscript stays aligned with server unlock markers", () => {
   const scriptSource = readUserscriptSource();
+  const sourceScript = readSourceUserscriptSource();
+  const obfuscatedRuntime = parseUserscriptSource(scriptSource).runtime;
+  const sourceRuntime = parseUserscriptSource(sourceScript).runtime;
 
-  assert.match(scriptSource, new RegExp(`COOKIE_NAME = "${WEB_UNLOCK_COOKIE_NAME}"`));
-  assert.match(scriptSource, new RegExp(`RETURN_PARAM = "${WEB_UNLOCK_RETURN_PARAM}"`));
-  assert.match(scriptSource, /UNLOCK_ATTEMPT_STORAGE_KEY/);
-  assert.match(scriptSource, /UNLOCK_DISABLED_STORAGE_KEY/);
+  assert.notEqual(obfuscatedRuntime, sourceRuntime);
+  assert.match(obfuscatedRuntime, /function _0x/);
+  assert.doesNotMatch(scriptSource, /const encodedRuntime = \[/);
+  assert.doesNotMatch(scriptSource, /Function\(encodedRuntime\.split\(","\)\.map/);
+  assert.doesNotMatch(scriptSource, new RegExp(`COOKIE_NAME = "${WEB_UNLOCK_COOKIE_NAME}"`));
+  assert.doesNotMatch(scriptSource, new RegExp(`RETURN_PARAM = "${WEB_UNLOCK_RETURN_PARAM}"`));
+  assert.doesNotMatch(scriptSource, /UNLOCK_ATTEMPT_STORAGE_KEY/);
+  assert.doesNotMatch(scriptSource, /UNLOCK_DISABLED_STORAGE_KEY/);
+  assert.doesNotMatch(scriptSource, /SERVER_TOKEN/);
+  if (readSourceUnlockMarker() !== "1") {
+    assert.doesNotMatch(scriptSource, new RegExp(escapeRegExp(readSourceUnlockMarker())));
+  }
+  assert.match(sourceScript, new RegExp(`COOKIE_NAME = "${WEB_UNLOCK_COOKIE_NAME}"`));
+  assert.match(sourceScript, new RegExp(`RETURN_PARAM = "${WEB_UNLOCK_RETURN_PARAM}"`));
+  assert.match(sourceScript, /UNLOCK_ATTEMPT_STORAGE_KEY/);
+  assert.match(sourceScript, /UNLOCK_DISABLED_STORAGE_KEY/);
   assert.match(scriptSource, /@match\s+https:\/\/truyen\.moe\/\*/);
   assert.match(scriptSource, /@match\s+https:\/\/\*\.truyen\.moe\/\*/);
   assert.match(scriptSource, /@run-at\s+document-start/);
+});
+
+test("encoded userscript is generated from the readable source userscript", () => {
+  const sourceScript = readSourceUserscriptSource();
+  const encodedScript = readUserscriptSource().replace(/\r\n/g, "\n");
+
+  assert.equal(buildEncodedUserscript(sourceScript), encodedScript);
 });
 
 test("Tampermonkey userscript also unlocks truyen.moe hosts", () => {
@@ -197,13 +244,13 @@ test("Tampermonkey userscript also unlocks truyen.moe hosts", () => {
     href: `https://truyen.moe/forum?${WEB_UNLOCK_RETURN_PARAM}=%2Fmanga%2Fdemo`
   });
   assert.deepEqual(rootRun.replacements, ["https://truyen.moe/manga/demo"]);
-  assert.match(rootRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=1;`));
+  assert.match(rootRun.cookieWrites[0], getExpectedUserscriptCookiePattern());
 
   const subdomainRun = runFullWebUserscript({
     href: `https://cdn.truyen.moe/forum?${WEB_UNLOCK_RETURN_PARAM}=%2Fnews`
   });
   assert.deepEqual(subdomainRun.replacements, ["https://cdn.truyen.moe/news"]);
-  assert.match(subdomainRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=1;`));
+  assert.match(subdomainRun.cookieWrites[0], getExpectedUserscriptCookiePattern());
 });
 
 test("Tampermonkey userscript stops restoring after a rejected unlock attempt", () => {
@@ -213,7 +260,7 @@ test("Tampermonkey userscript stops restoring after a rejected unlock attempt", 
 
   const firstRun = runFullWebUserscript({ href: forumReturnHref, storage });
   assert.deepEqual(firstRun.replacements, [targetHref]);
-  assert.match(firstRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=1;`));
+  assert.match(firstRun.cookieWrites[0], getExpectedUserscriptCookiePattern());
 
   const bouncedRun = runFullWebUserscript({ href: forumReturnHref, storage });
   assert.deepEqual(bouncedRun.replacements, []);
@@ -233,7 +280,7 @@ test("Tampermonkey userscript clears pending restore after a successful full-web
 
   const acceptedRun = runFullWebUserscript({ href: targetHref, storage });
   assert.deepEqual(acceptedRun.replacements, []);
-  assert.match(acceptedRun.cookieWrites[0], new RegExp(`^${WEB_UNLOCK_COOKIE_NAME}=1;`));
+  assert.match(acceptedRun.cookieWrites[0], getExpectedUserscriptCookiePattern());
 
   const nextRestoreRun = runFullWebUserscript({ href: forumReturnHref, storage });
   assert.deepEqual(nextRestoreRun.replacements, [targetHref]);
